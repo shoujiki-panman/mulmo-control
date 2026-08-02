@@ -160,10 +160,13 @@ final class ControlModel: ObservableObject {
     private var notifiedSelfUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-self-update-key")
     private var pendingUpdateReport: [MulmoUpdateItem]?
     private var pendingUpdateReportTitle: String?
+    private var lastAutomaticUpdateCheck = Date.distantPast
+    private var automaticUpdateCheckRunning = false
 
     init() {
         requestNotificationPermission()
         refresh()
+        checkUpdatesSilentlyIfNeeded(force: true)
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -214,6 +217,7 @@ final class ControlModel: ObservableObject {
         familyInstalled = Dictionary(uniqueKeysWithValues: familyPackages.map { package in
             (package.id, familyCommandPath(package) != nil)
         })
+        checkUpdatesSilentlyIfNeeded()
     }
 
     func openMT() {
@@ -410,6 +414,36 @@ final class ControlModel: ObservableObject {
                     self.pendingUpdateReportTitle = nil
                 }
                 self.actionText = succeeded ? nil : "失敗しました。ログを確認してください"
+            }
+        }
+    }
+
+    private func checkUpdatesSilentlyIfNeeded(force: Bool = false) {
+        guard !automaticUpdateCheckRunning else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastAutomaticUpdateCheck) > 21_600 else { return }
+
+        lastAutomaticUpdateCheck = now
+        automaticUpdateCheckRunning = true
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = [
+                "-lc",
+                """
+                "\(toolsDir)/mulmo-check-updates"
+                "\(toolsDir)/mulmo-control-self-update" check
+                """
+            ]
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                try? "silent update check failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
+            }
+            await MainActor.run {
+                self.automaticUpdateCheckRunning = false
+                self.refresh()
             }
         }
     }
