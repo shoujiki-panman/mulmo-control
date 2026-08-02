@@ -82,7 +82,9 @@ fi
     osascript -e 'tell application "Mulmo Control" to quit' >/dev/null 2>&1 || true
     sleep 1
     "${source_dir}/install.sh"
-    open "/Applications/Mulmo Control.app" >/dev/null 2>&1 || true
+    if ! open "/Applications/Mulmo Control.app" >/dev/null 2>&1; then
+      "/Applications/Mulmo Control.app/Contents/MacOS/MulmoControl" >/dev/null 2>&1 &
+    fi
   } >>"${LOG}" 2>&1
 ) &
 
