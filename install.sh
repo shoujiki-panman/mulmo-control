@@ -158,3 +158,19 @@ PY
 
 echo "Installed: /Applications/Mulmo Control.app"
 echo "Open it from Finder, or run: open '/Applications/Mulmo Control.app'"
+echo ""
+echo "このアプリはウィンドウも Dock アイコンも出しません。"
+echo "画面右上のメニューバーに '>_' アイコンが増えるので、そこをクリックしてください。"
+echo "（メニューバーの項目が多い Mac やノッチ付きの Mac では、隠れて見えないことがあります）"
+echo "起動しているか確認: pgrep -lf MulmoControl"
+
+# ターミナルの出力を読まない人がいるので、同じことをダイアログでも出す。
+# 出せない環境（SSH など）でも install は成功扱いのままにする。
+/usr/bin/osascript >/dev/null 2>&1 <<'OSA' || true
+display dialog "インストールが完了しました。
+
+このアプリはウィンドウも Dock アイコンも出しません。
+画面右上のメニューバーに >_ アイコンが増えるので、そこをクリックしてください。
+
+メニューバーの項目が多い Mac やノッチ付きの Mac では、アイコンが隠れて見えないことがあります。" with title "Mulmo Control" buttons {"OK"} default button "OK"
+OSA
