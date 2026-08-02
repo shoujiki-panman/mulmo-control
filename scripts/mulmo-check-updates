@@ -1,0 +1,145 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+CACHE="${LOG_DIR}/mulmo-updates.json"
+NPM_CACHE="/private/tmp/npm-cache-mulmo-control"
+MULMOCLAUDE_DIR="${HOME}/mulmoclaude"
+
+mkdir -p "${LOG_DIR}" "${NPM_CACHE}"
+
+NPM="$(command -v npm || true)"
+NODE="$(command -v node || true)"
+
+if [ -z "${NODE}" ]; then
+  echo '{"checkedAt":"","summary":"Node未検出","items":[]}' > "${CACHE}"
+  exit 0
+fi
+
+NPM="${NPM}" NODE="${NODE}" NPM_CACHE="${NPM_CACHE}" CACHE="${CACHE}" MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR}" /bin/zsh -lc '
+"${NODE}" <<'"'"'NODE'"'"'
+const fs = require("fs");
+const { execFileSync } = require("child_process");
+
+const npm = process.env.NPM;
+const npmCache = process.env.NPM_CACHE;
+const cache = process.env.CACHE;
+const mulmoClaudeDir = process.env.MULMOCLAUDE_DIR;
+
+function sh(file, args, options = {}) {
+  try {
+    return execFileSync(file, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: options.timeout ?? 30000,
+      env: { ...process.env, NPM_CONFIG_CACHE: npmCache },
+      cwd: options.cwd ?? process.cwd()
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function readJson(path) {
+  try {
+    return JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function npmLatest(name) {
+  if (!npm) return "unknown";
+  return sh(npm, ["view", name, "version"], { timeout: 8000 }) || "unknown";
+}
+
+function status(current, latest) {
+  if (!current || current === "unknown") return "missing";
+  if (!latest || latest === "unknown") return "unknown";
+  return current === latest ? "current" : "update";
+}
+
+function pkgVersion(pkgName) {
+  const root = readJson(`${mulmoClaudeDir}/package.json`);
+  if (!root) return "unknown";
+  if (root.name === pkgName) return root.version || "unknown";
+
+  const workspacePaths = [
+    `${mulmoClaudeDir}/packages/mulmoclaude/package.json`,
+    `${mulmoClaudeDir}/packages/core/package.json`,
+    `${mulmoClaudeDir}/packages/client/package.json`,
+    `${mulmoClaudeDir}/node_modules/${pkgName}/package.json`
+  ];
+  for (const p of workspacePaths) {
+    const data = readJson(p);
+    if (data?.name === pkgName) return data.version || "unknown";
+  }
+  const dep = root.dependencies?.[pkgName] || root.devDependencies?.[pkgName];
+  return dep ? dep.replace(/^[~^]/, "") : "unknown";
+}
+
+const mtRaw = sh(`${process.env.HOME}/.local/bin/mulmoterminal`, ["--version"], { timeout: 10000 });
+const mtCurrent = (mtRaw.match(/\d+\.\d+\.\d+/) || [])[0] || "unknown";
+
+const items = [
+  {
+    id: "mulmoterminal",
+    name: "MulmoTerminal",
+    current: mtCurrent,
+    latest: npmLatest("mulmoterminal")
+  },
+  {
+    id: "mulmoclaude",
+    name: "MulmoClaude",
+    current: pkgVersion("mulmoclaude"),
+    latest: npmLatest("mulmoclaude")
+  },
+  {
+    id: "mulmocast",
+    name: "mulmocast",
+    current: pkgVersion("mulmocast"),
+    latest: npmLatest("mulmocast")
+  },
+  {
+    id: "mulmocast-vision",
+    name: "mulmocast-vision",
+    current: pkgVersion("mulmocast-vision"),
+    latest: npmLatest("mulmocast-vision")
+  },
+  {
+    id: "mulmobridge-client",
+    name: "@mulmobridge/client",
+    current: pkgVersion("@mulmobridge/client"),
+    latest: npmLatest("@mulmobridge/client")
+  },
+  {
+    id: "mulmobridge-cli",
+    name: "@mulmobridge/cli",
+    current: pkgVersion("@mulmobridge/cli"),
+    latest: npmLatest("@mulmobridge/cli")
+  },
+  {
+    id: "mulmobridge-slack",
+    name: "@mulmobridge/slack",
+    current: pkgVersion("@mulmobridge/slack"),
+    latest: npmLatest("@mulmobridge/slack")
+  }
+].map((item) => ({ ...item, status: status(item.current, item.latest) }));
+
+const updateCount = items.filter((item) => item.status === "update").length;
+const unknownCount = items.filter((item) => item.status === "unknown").length;
+const summary = updateCount > 0
+  ? `更新あり: ${updateCount}件`
+  : unknownCount > 0
+    ? `一部未確認`
+    : `すべて最新`;
+
+fs.writeFileSync(cache, JSON.stringify({
+  checkedAt: new Date().toISOString(),
+  summary,
+  items
+}, null, 2));
+console.log(summary);
+NODE
+'

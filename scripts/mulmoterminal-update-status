@@ -1,0 +1,22 @@
+#!/bin/zsh
+set -u
+
+NODE="$(command -v node || true)"
+if [ -z "${NODE}" ]; then
+  echo "node was not found"
+  exit 0
+fi
+
+"${NODE}" - <<'NODE'
+const fs = require("fs");
+const p = `${process.env.HOME}/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json`;
+try {
+  const data = JSON.parse(fs.readFileSync(p, "utf8"));
+  console.log(`Current: ${data.current}`);
+  console.log(`Latest: ${data.latest}`);
+  console.log(`Status: ${data.status}`);
+  console.log(`Checked: ${new Date(data.checkedAt).toLocaleString("ja-JP")}`);
+} catch {
+  console.log("No update check has been run yet.");
+}
+NODE

@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -eu
+
+echo "== host.log =="
+/usr/bin/tail -n 80 "${HOME}/.mulmoterminal/logs/host.log" 2>/dev/null || true
+echo
+echo "== host-error.log =="
+/usr/bin/tail -n 80 "${HOME}/.mulmoterminal/logs/host-error.log" 2>/dev/null || true

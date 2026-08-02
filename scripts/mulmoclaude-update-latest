@@ -1,0 +1,27 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+APP_DIR="${HOME}/mulmoclaude"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG="${LOG_DIR}/mulmoclaude-update.log"
+
+mkdir -p "${LOG_DIR}"
+
+if [ ! -d "${APP_DIR}/.git" ]; then
+  echo "MulmoClaude repo was not found: ${APP_DIR}" | tee -a "${LOG}"
+  exit 1
+fi
+
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] update requested" | tee -a "${LOG}"
+cd "${APP_DIR}"
+
+"${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-stop" >>"${LOG}" 2>&1 || true
+/usr/bin/git pull --ff-only >>"${LOG}" 2>&1 || true
+
+if command -v yarn >/dev/null 2>&1; then
+  yarn install >>"${LOG}" 2>&1 || true
+fi
+
+MULMO_CONTROL_NO_OPEN=1 "${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-start" >>"${LOG}" 2>&1 || true
+echo "MulmoClaude: update requested" | tee -a "${LOG}"

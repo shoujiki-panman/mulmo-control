@@ -1,0 +1,4 @@
+#!/bin/zsh
+set -eu
+
+/usr/bin/open "http://localhost:34567"

@@ -1,0 +1,16 @@
+#!/bin/zsh
+set -eu
+
+label="com.shutanuma.mulmoterminal"
+domain="gui/$(id -u)"
+
+if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
+  echo "MulmoTerminal: loaded"
+  /bin/launchctl print "${domain}/${label}" | /usr/bin/awk '
+    /state =/ { print "state: " $3 }
+    /pid =/ { print "pid: " $3 }
+    /last exit code =/ { print "last exit code: " $5 }
+  '
+else
+  echo "MulmoTerminal: not loaded"
+fi

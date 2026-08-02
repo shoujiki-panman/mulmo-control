@@ -1,0 +1,34 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+APP_DIR="${HOME}/mulmoclaude"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+OUT_LOG="${LOG_DIR}/mulmoclaude.log"
+ERR_LOG="${LOG_DIR}/mulmoclaude-error.log"
+
+mkdir -p "${LOG_DIR}"
+
+if /usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN >/dev/null 2>&1 || \
+   /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "MulmoClaude: already running"
+  if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
+    /usr/bin/open "http://127.0.0.1:5173"
+  fi
+  exit 0
+fi
+
+cd "${APP_DIR}"
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] starting MulmoClaude" >>"${OUT_LOG}"
+YARN="$(command -v yarn || true)"
+if [ -z "${YARN}" ]; then
+  echo "yarn was not found" >>"${ERR_LOG}"
+  exit 1
+fi
+nohup "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
+
+sleep 2
+if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
+  /usr/bin/open "http://127.0.0.1:5173"
+fi
+echo "MulmoClaude: started"

@@ -1,0 +1,6 @@
+#!/bin/zsh
+set -eu
+
+"${HOME}/.local/bin/mulmoterminal-stop" || true
+sleep 1
+"${HOME}/.local/bin/mulmoterminal-start"

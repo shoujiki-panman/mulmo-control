@@ -1,0 +1,32 @@
+#!/bin/zsh
+set -eu
+
+label="com.shutanuma.mulmoterminal"
+plist="${HOME}/Library/LaunchAgents/${label}.plist"
+domain="gui/$(id -u)"
+enabled="${HOME}/.mulmoterminal/keepalive-enabled"
+
+mkdir -p "${HOME}/.mulmoterminal/logs"
+touch "${enabled}"
+
+if /usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "MulmoTerminal: already running"
+  echo "Open: http://localhost:34567"
+  exit 0
+fi
+
+if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
+  /bin/launchctl kickstart -k "${domain}/${label}" >/dev/null 2>&1 || true
+elif [ -f "${plist}" ]; then
+  /bin/launchctl bootstrap "${domain}" "${plist}" >/dev/null 2>&1 || true
+fi
+
+sleep 1
+if ! /usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN >/dev/null 2>&1; then
+  nohup "${HOME}/.local/bin/start-mulmoterminal.sh" \
+    >>"${HOME}/.mulmoterminal/logs/host.log" \
+    2>>"${HOME}/.mulmoterminal/logs/host-error.log" &
+fi
+
+echo "MulmoTerminal: started"
+echo "Open: http://localhost:34567"

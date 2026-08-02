@@ -1,0 +1,37 @@
+#!/bin/zsh
+set -eu
+
+label="com.shutanuma.mulmoterminal"
+domain="gui/$(id -u)"
+enabled="${HOME}/.mulmoterminal/keepalive-enabled"
+stopped=0
+
+rm -f "${enabled}"
+
+if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
+  /bin/launchctl bootout "${domain}/${label}"
+  stopped=1
+else
+  echo "MulmoTerminal LaunchAgent: not loaded"
+fi
+
+pids=$(/usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN 2>/dev/null || true)
+if [ -n "${pids}" ]; then
+  for pid in ${(f)pids}; do
+    /bin/kill -TERM "${pid}" 2>/dev/null || true
+  done
+  sleep 1
+  remaining=$(/usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN 2>/dev/null || true)
+  if [ -n "${remaining}" ]; then
+    echo "MulmoTerminal: stop requested, but port 34567 is still in use by ${remaining}"
+  else
+    echo "MulmoTerminal: stopped port 34567 process"
+    stopped=1
+  fi
+fi
+
+if [ "${stopped}" = "1" ]; then
+  echo "MulmoTerminal: stopped"
+else
+  echo "MulmoTerminal: not running"
+fi

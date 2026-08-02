@@ -1,0 +1,34 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG="${LOG_DIR}/mulmoterminal-update.log"
+NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
+
+mkdir -p "${LOG_DIR}" "${NPM_CACHE}"
+NPM="$(command -v npm || true)"
+
+if [ -z "${NPM}" ]; then
+  echo "npm was not found" | tee -a "${LOG}"
+  exit 1
+fi
+
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] update requested" | tee -a "${LOG}"
+echo "Before: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
+
+"${HOME}/.local/bin/mulmoterminal-stop" | tee -a "${LOG}" || true
+
+NPM_CONFIG_CACHE="${NPM_CACHE}" "${NPM}" install \
+  --prefix "${HOME}/.local/share/mulmoterminal" \
+  mulmoterminal@latest 2>&1 | tee -a "${LOG}"
+
+/bin/ln -sf \
+  "${HOME}/.local/share/mulmoterminal/node_modules/.bin/mulmoterminal" \
+  "${HOME}/.local/bin/mulmoterminal"
+
+"${HOME}/Documents/Codex/SwiftBarTools/mulmoterminal-check-update" | tee -a "${LOG}" || true
+"${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
+
+echo "After: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
+echo "Open: http://localhost:34567" | tee -a "${LOG}"

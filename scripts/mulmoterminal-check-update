@@ -1,0 +1,51 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+CACHE="${HOME}/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
+NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
+
+mkdir -p "${HOME}/Documents/Codex/SwiftBarLogs" "${NPM_CACHE}"
+
+current="unknown"
+latest="unknown"
+NPM="$(command -v npm || true)"
+NODE="$(command -v node || true)"
+
+if [ -x "${HOME}/.local/bin/mulmoterminal" ]; then
+  current="$("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null | /usr/bin/awk '{print $2}')"
+fi
+
+if [ -n "${NPM}" ]; then
+  latest="$(NPM_CONFIG_CACHE="${NPM_CACHE}" "${NPM}" view mulmoterminal version 2>/dev/null || true)"
+fi
+
+if [ -z "${latest}" ]; then
+  latest="unknown"
+fi
+
+update_status="unknown"
+if [ "${current}" != "unknown" ] && [ "${latest}" != "unknown" ]; then
+  if [ "${current}" = "${latest}" ]; then
+    update_status="current"
+  else
+    update_status="update"
+  fi
+fi
+
+if [ -z "${NODE}" ]; then
+  printf '{"checkedAt":"","current":"%s","latest":"%s","status":"%s"}\n' "${current}" "${latest}" "${update_status}" > "${CACHE}"
+  exit 0
+fi
+
+CURRENT="${current}" LATEST="${latest}" UPDATE_STATUS="${update_status}" CACHE_PATH="${CACHE}" "${NODE}" - <<'NODE'
+const fs = require("fs");
+const data = {
+  checkedAt: new Date().toISOString(),
+  current: process.env.CURRENT,
+  latest: process.env.LATEST,
+  status: process.env.UPDATE_STATUS
+};
+fs.writeFileSync(process.env.CACHE_PATH, JSON.stringify(data, null, 2));
+console.log(`MulmoTerminal: ${data.current} / latest ${data.latest} (${data.status})`);
+NODE

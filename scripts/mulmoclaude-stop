@@ -1,0 +1,22 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+pids="$(/usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN 2>/dev/null; /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN 2>/dev/null)"
+pids="$(printf '%s\n' "${pids}" | /usr/bin/sort -u | /usr/bin/xargs 2>/dev/null || true)"
+
+if [ -z "${pids}" ]; then
+  echo "MulmoClaude: not running"
+  exit 0
+fi
+
+/bin/kill -TERM ${pids} 2>/dev/null || true
+sleep 2
+
+remaining="$(/usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN 2>/dev/null; /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN 2>/dev/null)"
+if [ -n "${remaining}" ]; then
+  /bin/kill -KILL ${remaining} 2>/dev/null || true
+fi
+
+echo "MulmoClaude: stopped"

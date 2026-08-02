@@ -1,0 +1,106 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+OUT="${LOG_DIR}/mulmo-control-last-update-summary.txt"
+ITEMS_B64="${MULMO_RELEASE_ITEMS_B64:-}"
+
+mkdir -p "${LOG_DIR}"
+: > "${OUT}"
+
+NODE="$(command -v node || true)"
+if [ -z "${NODE}" ] || [ -z "${ITEMS_B64}" ]; then
+  exit 0
+fi
+
+ITEMS="$(printf '%s' "${ITEMS_B64}" | /usr/bin/base64 --decode 2>/dev/null || true)"
+if [ -z "${ITEMS}" ]; then
+  exit 0
+fi
+
+ITEMS="${ITEMS}" OUT="${OUT}" "${NODE}" <<'NODE'
+const fs = require("fs");
+const https = require("https");
+
+const out = process.env.OUT;
+const items = (process.env.ITEMS || "")
+  .split(/\n/)
+  .map((line) => line.split(/\t/))
+  .filter((parts) => parts.length >= 3)
+  .map(([id, displayName, latest]) => ({ id, displayName, latest }));
+
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { "User-Agent": "Mulmo Control" } }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        reject(new Error(`HTTP ${res.statusCode}`));
+        res.resume();
+        return;
+      }
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { body += chunk; });
+      res.on("end", () => resolve(body));
+    }).on("error", reject);
+  });
+}
+
+function sectionFor(markdown, heading) {
+  const start = markdown.indexOf(heading);
+  if (start < 0) return "";
+  const rest = markdown.slice(start);
+  const next = rest.slice(heading.length).search(/\n## /);
+  if (next < 0) return rest;
+  return rest.slice(0, heading.length + next);
+}
+
+function summarizeMulmoTerminal(section) {
+  const bullets = [];
+  if (/GitLab/i.test(section)) {
+    bullets.push("PRs & IssuesでGitLab対応。GitLab issueから作業開始できます。");
+  }
+  if (/One worktree per issue/i.test(section)) {
+    bullets.push("同じissueのworktree/sessionを再利用し、重複作業を防ぎます。");
+  }
+  if (/Header tooltips/i.test(section)) {
+    bullets.push("ヘッダーのツールチップが即時表示になり、PR/issueタイトルも見やすくなりました。");
+  }
+  if (/\n### Phone/i.test(section)) {
+    bullets.push("スマホからissue作業を開始でき、初期プロンプトも自動実行されます。");
+  }
+  if (/\n### Antigravity/i.test(section)) {
+    bullets.push("Antigravityのワークスペース会話一覧に対応しました。");
+  }
+  if (/\n### Fixes/i.test(section)) {
+    bullets.push("ヘッダー表示、Windowsパス、検索漏れの原因を修正。");
+  }
+  return bullets.slice(0, 4);
+}
+
+async function main() {
+  const lines = [];
+  for (const item of items) {
+    if (item.id === "mulmoterminal") {
+      try {
+        const changelog = await fetchText("https://raw.githubusercontent.com/receptron/mulmoterminal/main/docs/ChangeLog.md");
+        const section = sectionFor(changelog, `## mulmoterminal@${item.latest}`);
+        const bullets = summarizeMulmoTerminal(section);
+        if (bullets.length > 0) {
+          lines.push("新機能");
+          for (const bullet of bullets) lines.push(`・${bullet}`);
+        } else {
+          lines.push("新機能: 公式Changelogを確認しましたが、要約できる見出しがありませんでした。");
+        }
+      } catch {
+        lines.push("新機能: 公式Changelogを取得できませんでした。");
+      }
+    }
+  }
+  fs.writeFileSync(out, lines.join("\n"));
+}
+
+main().catch(() => {
+  fs.writeFileSync(out, "新機能: 公式Changelogを取得できませんでした。");
+});
+NODE
