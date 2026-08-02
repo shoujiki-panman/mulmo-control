@@ -31,7 +31,9 @@ cd mulmo-control
 ./install.sh
 ```
 
-`install.sh` は、ログイン時に MulmoTerminal を起動する LaunchAgent を仕込み、`/Applications` にアプリを置きます。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+`install.sh` は `/Applications` にアプリを置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+
+定義ファイルを置くだけなので、インストールした時点ではまだ常駐しません。ログイン時起動と自動復帰が有効になるのは、アプリで `起動` を押したときです。`停止` を押すと解除されます。
 
 MulmoClaude を `~/mulmoclaude` 以外に置いている場合は、場所を渡してください。
 
@@ -51,7 +53,7 @@ MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
 
 - `開く`: 起動していなければ起動してからブラウザで開きます
 - `再起動`: サーバーを再起動します
-- `停止`: サーバーを止めます
+- `停止`: サーバーを止め、ログイン時起動も解除します
 - `ログ`: ログの場所を確認します
 
 ### 追加
@@ -98,7 +100,8 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 これは個人用途から切り出した実験版です。
 
 - Apple Developer ID 署名や notarization は未対応です
-- MulmoClaude の場所は `MULMOCLAUDE_DIR` で変えられますが、`claude` / `codex` は PATH から自動で探します
+- MulmoClaude の場所はインストール時に `MULMOCLAUDE_DIR` で変えられます
+- `claude` と `codex` は PATH から探すので、Homebrew でも npm global でも動きます
 - 補助スクリプトとログの置き場所（`~/Documents/Codex/...`）はまだ固定です
 - UI やセットアップ導線はまだ改善中です
 - macOS の `open` / LaunchServices の状態によっては、アプリの再認識に時間がかかることがあります
