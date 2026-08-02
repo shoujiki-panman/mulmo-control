@@ -20,12 +20,29 @@ fi
 echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] update requested" | tee -a "${LOG}"
 cd "${APP_DIR}"
 
-"${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-stop" >>"${LOG}" 2>&1 || true
-/usr/bin/git pull --ff-only >>"${LOG}" 2>&1 || true
+START="${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-start"
 
-if command -v yarn >/dev/null 2>&1; then
-  yarn install >>"${LOG}" 2>&1 || true
+# 更新のために止めているので、失敗して抜ける時も必ず起動し直す。
+fail() {
+  MULMO_CONTROL_NO_OPEN=1 "${START}" >>"${LOG}" 2>&1 || true
+  echo "$1" | tee -a "${LOG}"
+  echo "詳しくは ${LOG} を見てください" | tee -a "${LOG}"
+  exit 1
+}
+
+"${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-stop" >>"${LOG}" 2>&1 || true
+
+# 失敗を握りつぶさない。ここで黙って先へ進むと、1行も更新されていないのに
+# アプリが「一括更新しました」と報告してしまう。
+if ! /usr/bin/git pull --ff-only >>"${LOG}" 2>&1; then
+  fail "MulmoClaude: git pull に失敗したので、更新できませんでした"
 fi
 
-MULMO_CONTROL_NO_OPEN=1 "${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-start" >>"${LOG}" 2>&1 || true
-echo "MulmoClaude: update requested" | tee -a "${LOG}"
+if command -v yarn >/dev/null 2>&1; then
+  if ! yarn install >>"${LOG}" 2>&1; then
+    fail "MulmoClaude: yarn install に失敗したので、更新できませんでした"
+  fi
+fi
+
+MULMO_CONTROL_NO_OPEN=1 "${START}" >>"${LOG}" 2>&1 || true
+echo "MulmoClaude: updated" | tee -a "${LOG}"
