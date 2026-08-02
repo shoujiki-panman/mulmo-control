@@ -10,7 +10,22 @@ private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-up
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
 private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
 private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
-private let mulmoClaudeDir = "\(homeDir)/mulmoclaude"
+// install.sh が書き出す app-info.env から MulmoClaude の場所を読む
+private func configuredMulmoClaudeDir() -> String {
+    let fallback = "\(homeDir)/mulmoclaude"
+    let configPath = "\(homeDir)/Library/Application Support/Mulmo Control/app-info.env"
+    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return fallback }
+    let key = "MULMO_CONTROL_MULMOCLAUDE_DIR="
+    for line in text.split(separator: "\n") {
+        guard line.hasPrefix(key) else { continue }
+        let value = line.dropFirst(key.count)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "'\" "))
+        if !value.isEmpty { return value }
+    }
+    return fallback
+}
+
+private let mulmoClaudeDir = configuredMulmoClaudeDir()
 private let mulmoClaudeRepo = "https://github.com/receptron/mulmoclaude"
 
 struct MulmoUpdateItem: Identifiable, Decodable {
