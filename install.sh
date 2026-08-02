@@ -11,6 +11,24 @@ LABEL="com.shutanuma.mulmoterminal"
 PLIST="${LAUNCH_AGENT_DIR}/${LABEL}.plist"
 REPO_URL="$(git -C "${ROOT}" config --get remote.origin.url 2>/dev/null || echo "https://github.com/shoujiki-panman/mulmo-control.git")"
 COMMIT="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || echo "unknown")"
+MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+
+# 前提チェック: LaunchAgent を仕込む前に、足りないものがあればここで止める
+NPM="$(command -v npm || true)"
+if [ -z "${NPM}" ]; then
+  echo "npm が見つかりません。先に Node.js を入れてください。" >&2
+  exit 1
+fi
+
+if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
+  echo "MulmoClaude が ${MULMOCLAUDE_DIR} に見つかりません。" >&2
+  echo "先に MulmoClaude を clone するか、別の場所にあるなら次のように指定してください:" >&2
+  echo "  MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh" >&2
+  exit 1
+fi
+
+CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
+CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "${TOOLS_DIR}" "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
 
@@ -21,11 +39,6 @@ cp "${ROOT}/scripts/start-mulmoterminal.sh" "${LOCAL_BIN}/start-mulmoterminal.sh
 chmod +x "${TOOLS_DIR}"/* "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
 
 if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
-  NPM="$(command -v npm || true)"
-  if [ -z "${NPM}" ]; then
-    echo "npm was not found. Install Node.js first."
-    exit 1
-  fi
   mkdir -p "${HOME}/.local/share/mulmoterminal" /private/tmp/npm-cache-mulmo-control
   NPM_CONFIG_CACHE="/private/tmp/npm-cache-mulmo-control" "${NPM}" install \
     --prefix "${HOME}/.local/share/mulmoterminal" \
@@ -45,7 +58,7 @@ cat > "${PLIST}" <<PLIST
     <string>${LOCAL_BIN}/start-mulmoterminal.sh</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${HOME}/mulmoclaude</string>
+  <string>${MULMOCLAUDE_DIR}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -55,11 +68,11 @@ cat > "${PLIST}" <<PLIST
     <key>MULMOTERMINAL_HOST</key>
     <string>127.0.0.1</string>
     <key>CLAUDE_CWD</key>
-    <string>${HOME}/mulmoclaude</string>
+    <string>${MULMOCLAUDE_DIR}</string>
     <key>CLAUDE_BIN</key>
-    <string>${LOCAL_BIN}/claude</string>
+    <string>${CLAUDE_BIN}</string>
     <key>CODEX_BIN</key>
-    <string>${LOCAL_BIN}/codex</string>
+    <string>${CODEX_BIN}</string>
     <key>MULMOTERMINAL_NO_UPDATE_CHECK</key>
     <string>1</string>
   </dict>
@@ -88,6 +101,7 @@ MULMO_CONTROL_REPO_URL='${REPO_URL}'
 MULMO_CONTROL_SOURCE_DIR='${ROOT}'
 MULMO_CONTROL_INSTALLED_COMMIT='${COMMIT}'
 MULMO_CONTROL_BRANCH='main'
+MULMO_CONTROL_MULMOCLAUDE_DIR='${MULMOCLAUDE_DIR}'
 INFO
 
 SELF_STATUS="${LOG_DIR}/mulmo-control-self-update.json"

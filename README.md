@@ -21,7 +21,7 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 - macOS 14 以降
 - Node.js / npm が入っているMac
 - MulmoTerminal を `localhost:34567` で使いたい人
-- MulmoClaude を `~/mulmoclaude` に置いて使う人
+- MulmoClaude を使う人（既定は `~/mulmoclaude`。別の場所も指定できます）
 
 ## インストール
 
@@ -29,6 +29,14 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
+```
+
+`install.sh` は、ログイン時に MulmoTerminal を起動する LaunchAgent を仕込み、`/Applications` にアプリを置きます。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+
+MulmoClaude を `~/mulmoclaude` 以外に置いている場合は、場所を渡してください。
+
+```bash
+MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
 ```
 
 インストール後、`/Applications/Mulmo Control.app` を開いてください。
@@ -90,7 +98,8 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 これは個人用途から切り出した実験版です。
 
 - Apple Developer ID 署名や notarization は未対応です
-- MulmoClaude は `~/mulmoclaude` にある前提です
+- MulmoClaude の場所は `MULMOCLAUDE_DIR` で変えられますが、`claude` / `codex` は PATH から自動で探します
+- 補助スクリプトとログの置き場所（`~/Documents/Codex/...`）はまだ固定です
 - UI やセットアップ導線はまだ改善中です
 - macOS の `open` / LaunchServices の状態によっては、アプリの再認識に時間がかかることがあります
 

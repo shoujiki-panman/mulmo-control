@@ -2,7 +2,11 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-APP_DIR="${HOME}/mulmoclaude"
+CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
+if [ -f "${CONFIG}" ]; then
+  . "${CONFIG}"
+fi
+APP_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
 LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
 LOG="${LOG_DIR}/mulmoclaude-update.log"
 
