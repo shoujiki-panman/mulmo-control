@@ -43,6 +43,20 @@ MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
 
 インストール後、`/Applications/Mulmo Control.app` を開いてください。
 
+**このアプリはウィンドウも Dock アイコンも出しません。** 画面右上のメニューバーに、ターミナルの形をした `>_` アイコンが増えるだけです。そこをクリックすると操作画面が開きます。メニューバーの項目が多い Mac やノッチ付きの Mac では、アイコンが表示しきれずに隠れることがあります。
+
+起動しているか分からないときは、次で確認できます。
+
+```bash
+pgrep -lf MulmoControl
+```
+
+何も返らない場合は、直接実行するとエラーが読めます。
+
+```bash
+"/Applications/Mulmo Control.app/Contents/MacOS/MulmoControl"
+```
+
 初回は macOS の「ログイン項目と機能拡張」やセキュリティ設定で許可が必要になることがあります。
 
 ## アプリの見方
