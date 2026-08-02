@@ -313,20 +313,34 @@ final class ControlModel: ObservableObject {
     }
     func updateAllInstalled() {
         var commands: [String] = []
+        // 実際に走らせるコマンドと同じ範囲で報告する。未導入の物は更新していないので載せない。
+        var updated: [FamilyPackage] = []
+        var updatedIds: Set<String> = []
         if mtInstalled {
             commands.append("\"\(toolsDir)/mulmoterminal-update-latest\"")
+            updatedIds.insert("mulmoterminal")
         }
         if mcInstalled {
             commands.append("\"\(toolsDir)/mulmoclaude-update-latest\"")
+            updatedIds.insert("mulmoclaude")
         }
-        if let familyCommand = familyInstallCommand(for: familyPackages.filter({ $0.isInstallable && familyCommandPath($0) != nil })) {
+        let installedFamily = familyPackages.filter { $0.isInstallable && familyCommandPath($0) != nil }
+        if let familyCommand = familyInstallCommand(for: installedFamily) {
             commands.append(familyCommand)
+            updated = installedFamily
         }
         guard !commands.isEmpty else {
             showMessage(title: "更新対象がありません", text: "先にインストールしてください。")
             return
         }
-        prepareUpdateReport(title: "一括更新しました", items: updateItems.filter { $0.status == "update" })
+        prepareUpdateReport(
+            title: "一括更新しました",
+            items: updateItems.filter { item in
+                guard item.status == "update" else { return false }
+                if updatedIds.contains(item.id) { return true }
+                return updated.contains(where: { $0.id == item.id || $0.packageName == item.name })
+            }
+        )
         run(updateCommand(commands.joined(separator: "\n")), label: "まとめて更新中")
     }
     func startMC() { run("\(toolsDir)/mulmoclaude-start", label: "MulmoClaudeを起動中") }
@@ -389,10 +403,16 @@ final class ControlModel: ObservableObject {
     }
 
     private func updateCommand(_ command: String) -> String {
+        // 更新本体の終了コードを持ち越す。後ろの mulmo-check-updates が最後になると、
+        // 更新が失敗していても全体が成功扱いになり、run() の失敗処理が働かない。
         """
+        rc=0
+        (
         \(command)
+        ) || rc=$?
         "\(toolsDir)/mulmo-check-updates"
         \(releaseSummaryCommand())
+        exit $rc
         """
     }
 

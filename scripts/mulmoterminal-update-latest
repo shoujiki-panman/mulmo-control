@@ -19,9 +19,16 @@ echo "Before: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true
 
 "${HOME}/.local/bin/mulmoterminal-stop" | tee -a "${LOG}" || true
 
-NPM_CONFIG_CACHE="${NPM_CACHE}" "${NPM}" install \
+# tee に通すと終了コードが tee のものになり、npm の失敗が伝わらない。
+# 黙って先へ進むと、更新できていないのにアプリが「更新しました」と報告する。
+if ! NPM_CONFIG_CACHE="${NPM_CACHE}" "${NPM}" install \
   --prefix "${HOME}/.local/share/mulmoterminal" \
-  mulmoterminal@latest 2>&1 | tee -a "${LOG}"
+  mulmoterminal@latest >>"${LOG}" 2>&1; then
+  "${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
+  echo "MulmoTerminal: npm install に失敗したので、更新できませんでした" | tee -a "${LOG}"
+  echo "詳しくは ${LOG} を見てください" | tee -a "${LOG}"
+  exit 1
+fi
 
 /bin/ln -sf \
   "${HOME}/.local/share/mulmoterminal/node_modules/.bin/mulmoterminal" \
