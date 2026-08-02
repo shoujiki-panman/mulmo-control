@@ -157,20 +157,32 @@ with open(os.environ["SELF_STATUS"], "w", encoding="utf-8") as f:
 PY
 
 echo "Installed: /Applications/Mulmo Control.app"
-echo "Open it from Finder, or run: open '/Applications/Mulmo Control.app'"
+
+# 案内より先に起動しておく。案内を読んだ時点でアイコンが実際に並んでいる方が探しやすい。
+open -a "/Applications/Mulmo Control.app" 2>/dev/null || true
+
 echo ""
 echo "このアプリはウィンドウも Dock アイコンも出しません。"
-echo "画面右上のメニューバーに '>_' アイコンが増えるので、そこをクリックしてください。"
+echo "画面いちばん上の帯の右のほう、時計や Wi-Fi の並びにアイコンが増えます。"
+echo "形は '>_' です。更新がある時は下向き矢印の丸いアイコンになります。"
 echo "（メニューバーの項目が多い Mac やノッチ付きの Mac では、隠れて見えないことがあります）"
 echo "起動しているか確認: pgrep -lf MulmoControl"
 
 # ターミナルの出力を読まない人がいるので、同じことをダイアログでも出す。
+# アイコンの絵柄を添えるのは、文章で形を説明するより探すのが速いから。
 # 出せない環境（SSH など）でも install は成功扱いのままにする。
 /usr/bin/osascript >/dev/null 2>&1 <<'OSA' || true
-display dialog "インストールが完了しました。
+display dialog "Mulmo Control をメニューバーに追加しました。
 
-このアプリはウィンドウも Dock アイコンも出しません。
-画面右上のメニューバーに >_ アイコンが増えるので、そこをクリックしてください。
+探す場所は、画面のいちばん上の帯の右のほう。
+時計や Wi-Fi のアイコンが並んでいるあたりです。
 
-メニューバーの項目が多い Mac やノッチ付きの Mac では、アイコンが隠れて見えないことがあります。" with title "Mulmo Control" buttons {"OK"} default button "OK"
+形は >_ です。
+更新がある時だけ、下向き矢印の丸いアイコンに変わります。
+
+クリックすると操作画面が開きます。
+ウィンドウや Dock アイコンは出ません。
+
+見当たらない時は、メニューバーが混んでいて隠れています。
+他のアプリを終了するか、ノッチのない外部ディスプレイで見てください。" with title "Mulmo Control" buttons {"OK"} default button "OK" with icon (POSIX file "/Applications/Mulmo Control.app/Contents/Resources/MulmoControl.icns")
 OSA
