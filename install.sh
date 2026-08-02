@@ -27,10 +27,21 @@ if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
   exit 1
 fi
 
+# アプリはその場で Swift ビルドするので、コンパイラが要る
+if ! xcrun --find swiftc >/dev/null 2>&1; then
+  echo "Swift コンパイラが見つかりません。アプリのビルドに必要です。" >&2
+  echo "次を実行して Xcode Command Line Tools を入れてから、やり直してください:" >&2
+  echo "  xcode-select --install" >&2
+  exit 1
+fi
+
 CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
 CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "${TOOLS_DIR}" "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
+
+# 一番落ちやすいのはビルドなので、先に済ませてから各所へ書き込む
+APP_PATH="$("${ROOT}/build-app.sh")"
 
 cp "${ROOT}/scripts"/mulmo* "${TOOLS_DIR}/"
 cp "${ROOT}/scripts"/open-swiftbar-logs "${TOOLS_DIR}/" 2>/dev/null || true
@@ -90,7 +101,6 @@ PLIST
 
 plutil -lint "${PLIST}" >/dev/null
 
-APP_PATH="$("${ROOT}/build-app.sh")"
 rm -rf "/Applications/Mulmo Control.app"
 ditto "${APP_PATH}" "/Applications/Mulmo Control.app"
 xattr -cr "/Applications/Mulmo Control.app"
