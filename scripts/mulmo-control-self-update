@@ -1,0 +1,89 @@
+#!/bin/zsh
+set -u
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
+CONFIG="${APP_SUPPORT}/app-info.env"
+STATUS="${HOME}/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
+LOG="${HOME}/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.log"
+DEFAULT_REPO="https://github.com/shoujiki-panman/mulmo-control.git"
+
+mkdir -p "${APP_SUPPORT}" "${HOME}/Documents/Codex/SwiftBarLogs"
+
+repo_url="${DEFAULT_REPO}"
+source_dir="${APP_SUPPORT}/source"
+installed_commit="unknown"
+branch="main"
+
+if [ -f "${CONFIG}" ]; then
+  source "${CONFIG}"
+  repo_url="${MULMO_CONTROL_REPO_URL:-${repo_url}}"
+  source_dir="${MULMO_CONTROL_SOURCE_DIR:-${source_dir}}"
+  installed_commit="${MULMO_CONTROL_INSTALLED_COMMIT:-${installed_commit}}"
+  branch="${MULMO_CONTROL_BRANCH:-${branch}}"
+fi
+
+write_status() {
+  local status_value="$1"
+  local latest_commit="$2"
+  local detail="$3"
+  STATUS_VALUE="${status_value}" \
+  INSTALLED_COMMIT="${installed_commit}" \
+  LATEST_COMMIT="${latest_commit}" \
+  DETAIL="${detail}" \
+  STATUS_PATH="${STATUS}" \
+  /usr/bin/python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+
+data = {
+    "checkedAt": datetime.now(timezone.utc).isoformat(),
+    "status": os.environ["STATUS_VALUE"],
+    "installedCommit": os.environ["INSTALLED_COMMIT"],
+    "latestCommit": os.environ["LATEST_COMMIT"],
+    "detail": os.environ["DETAIL"],
+}
+with open(os.environ["STATUS_PATH"], "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+PY
+}
+
+latest_commit="$(git ls-remote "${repo_url}" "refs/heads/${branch}" 2>/dev/null | /usr/bin/awk '{print $1}' || true)"
+if [ -z "${latest_commit}" ]; then
+  write_status "unknown" "unknown" "GitHubを確認できませんでした"
+  exit 0
+fi
+
+if [ "${installed_commit}" = "${latest_commit}" ]; then
+  write_status "current" "${latest_commit}" "最新版です"
+  exit 0
+fi
+
+write_status "update" "${latest_commit}" "アプリ更新があります"
+
+if [ "${1:-check}" != "apply" ]; then
+  exit 0
+fi
+
+(
+  {
+    echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] self update requested"
+    if [ -d "${source_dir}/.git" ]; then
+      git -C "${source_dir}" fetch origin "${branch}"
+      git -C "${source_dir}" checkout "${branch}"
+      git -C "${source_dir}" pull --ff-only origin "${branch}"
+    else
+      mkdir -p "$(dirname "${source_dir}")"
+      git clone "${repo_url}" "${source_dir}"
+      git -C "${source_dir}" checkout "${branch}"
+    fi
+
+    osascript -e 'tell application "Mulmo Control" to quit' >/dev/null 2>&1 || true
+    sleep 1
+    "${source_dir}/install.sh"
+    open "/Applications/Mulmo Control.app" >/dev/null 2>&1 || true
+  } >>"${LOG}" 2>&1
+) &
+
+echo "Mulmo Control: self update started"

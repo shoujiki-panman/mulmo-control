@@ -7,6 +7,7 @@ private let localBin = "\(homeDir)/.local/bin"
 private let toolsDir = "\(homeDir)/Documents/Codex/SwiftBarTools"
 private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
+private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
 private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
 private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
 private let mulmoClaudeDir = "\(homeDir)/mulmoclaude"
@@ -49,6 +50,14 @@ struct MulmoUpdates: Decodable {
     let checkedAt: String
     let summary: String
     let items: [MulmoUpdateItem]
+}
+
+struct SelfUpdateStatus: Decodable {
+    let checkedAt: String
+    let status: String
+    let installedCommit: String
+    let latestCommit: String
+    let detail: String
 }
 
 struct FamilyPackage: Identifiable {
@@ -140,6 +149,7 @@ final class ControlModel: ObservableObject {
     @Published var updateText = "更新: 未確認"
     @Published var updateSummary = "更新: 未確認"
     @Published var updateItems: [MulmoUpdateItem] = []
+    @Published var selfUpdate = readSelfUpdateStatus()
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -147,6 +157,7 @@ final class ControlModel: ObservableObject {
 
     private var timer: Timer?
     private var notifiedUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-update-key")
+    private var notifiedSelfUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-self-update-key")
     private var pendingUpdateReport: [MulmoUpdateItem]?
     private var pendingUpdateReportTitle: String?
 
@@ -159,22 +170,30 @@ final class ControlModel: ObservableObject {
     }
 
     var menuTitle: String {
-        hasAvailableUpdates ? "Mulmo 更新あり" : "\(mtRunning ? "MT on" : "MT off") / \(mcRunning ? "MC on" : "MC off")"
+        hasAnyUpdates ? "Mulmo 更新あり" : "\(mtRunning ? "MT on" : "MT off") / \(mcRunning ? "MC on" : "MC off")"
     }
 
     var titleColor: Color {
-        if hasAvailableUpdates {
+        if hasAnyUpdates {
             return Palette.warn
         }
         return (mtRunning || mcRunning) ? Color.green : Color.red
     }
 
     var menuIconName: String {
-        hasAvailableUpdates ? "arrow.down.circle.fill" : "terminal.fill"
+        hasAnyUpdates ? "arrow.down.circle.fill" : "terminal.fill"
     }
 
     var hasAvailableUpdates: Bool {
         updateItems.contains { $0.status == "update" }
+    }
+
+    var hasSelfUpdate: Bool {
+        selfUpdate.status == "update"
+    }
+
+    var hasAnyUpdates: Bool {
+        hasAvailableUpdates || hasSelfUpdate
     }
 
     func refresh() {
@@ -189,7 +208,9 @@ final class ControlModel: ObservableObject {
         let updates = readMulmoUpdates()
         updateSummary = updates.summary
         updateItems = updates.items
+        selfUpdate = readSelfUpdateStatus()
         notifyIfNeeded(for: updates.items)
+        notifySelfUpdateIfNeeded(selfUpdate)
         familyInstalled = Dictionary(uniqueKeysWithValues: familyPackages.map { package in
             (package.id, familyCommandPath(package) != nil)
         })
@@ -222,7 +243,15 @@ final class ControlModel: ObservableObject {
     func stopMT() { run("\(localBin)/mulmoterminal-stop") }
     func restartMT() { run("\(localBin)/mulmoterminal-restart") }
     func checkUpdate() { run("\(toolsDir)/mulmoterminal-check-update", label: "更新を確認中") }
-    func checkAllUpdates() { run("\(toolsDir)/mulmo-check-updates", label: "更新を確認中") }
+    func checkAllUpdates() {
+        run("""
+        "\(toolsDir)/mulmo-check-updates"
+        "\(toolsDir)/mulmo-control-self-update" check
+        """, label: "更新を確認中")
+    }
+    func updateSelfApp() {
+        run("\"\(toolsDir)/mulmo-control-self-update\" apply", label: "Mulmo Controlを更新中")
+    }
     func updateMT() {
         prepareUpdateReport(
             title: "MulmoTerminalを更新しました",
@@ -512,6 +541,30 @@ final class ControlModel: ObservableObject {
             }
         }
     }
+
+    private func notifySelfUpdateIfNeeded(_ status: SelfUpdateStatus) {
+        guard status.status == "update" else { return }
+        let key = "\(status.installedCommit)->\(status.latestCommit)"
+        guard key != notifiedSelfUpdateKey else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Mulmo Control の更新があります"
+        content.body = "メニューバーからアプリ更新できます"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "mulmo-control-self-update-\(abs(key.hashValue))",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            guard error == nil else { return }
+            UserDefaults.standard.set(key, forKey: "mulmo-control.notified-self-update-key")
+            Task { @MainActor in
+                self.notifiedSelfUpdateKey = key
+            }
+        }
+    }
 }
 
 @main
@@ -669,12 +722,16 @@ struct UpdateToolbar: View {
         model.updateItems.filter { $0.status == "update" }
     }
 
+    private var hasSelfUpdate: Bool {
+        model.selfUpdate.status == "update"
+    }
+
     private var isUnknown: Bool {
-        model.updateItems.isEmpty || model.updateSummary.contains("未確認")
+        (model.updateItems.isEmpty || model.updateSummary.contains("未確認")) && model.selfUpdate.status == "unknown"
     }
 
     private var statusTitle: String {
-        if !updateTargets.isEmpty {
+        if hasSelfUpdate || !updateTargets.isEmpty {
             return "更新あり"
         }
         if isUnknown {
@@ -684,8 +741,12 @@ struct UpdateToolbar: View {
     }
 
     private var statusDetail: String {
-        if !updateTargets.isEmpty {
-            return updateTargets.map(\.displayName).joined(separator: "、")
+        if hasSelfUpdate || !updateTargets.isEmpty {
+            var names = updateTargets.map(\.displayName)
+            if hasSelfUpdate {
+                names.insert("Mulmo Control", at: 0)
+            }
+            return names.joined(separator: "、")
         }
         if isUnknown {
             return "通知前にここで確認できます"
@@ -694,7 +755,7 @@ struct UpdateToolbar: View {
     }
 
     private var statusColor: Color {
-        if !updateTargets.isEmpty {
+        if hasSelfUpdate || !updateTargets.isEmpty {
             return Palette.warn
         }
         if isUnknown {
@@ -725,8 +786,14 @@ struct UpdateToolbar: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
                 .background(isUnknown ? Palette.accent : Palette.controlFill, in: Capsule())
-            if !updateTargets.isEmpty {
-                Button("一括更新", action: model.updateAllInstalled)
+            if hasSelfUpdate || !updateTargets.isEmpty {
+                Button(hasSelfUpdate ? "アプリ更新" : "一括更新") {
+                    if hasSelfUpdate {
+                        model.updateSelfApp()
+                    } else {
+                        model.updateAllInstalled()
+                    }
+                }
                     .buttonStyle(.plain)
                     .font(AppFont.action)
                     .foregroundStyle(.white)
@@ -1016,6 +1083,7 @@ struct SetupPanel: View {
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
             VStack(spacing: 7) {
+                SetupRow(title: "Mulmo Control", detail: selfUpdateDetail(model.selfUpdate), ok: model.selfUpdate.status == "current")
                 ForEach(model.updateItems.filter { $0.id == "mulmoterminal" || $0.id == "mulmoclaude" }) { item in
                     UpdateRow(item: item)
                 }
@@ -1035,6 +1103,19 @@ struct SetupPanel: View {
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func selfUpdateDetail(_ status: SelfUpdateStatus) -> String {
+        switch status.status {
+        case "current":
+            return "最新"
+        case "update":
+            return "更新あり"
+        case "unknown":
+            return "未確認"
+        default:
+            return status.detail.isEmpty ? "未確認" : status.detail
+        }
     }
 }
 
@@ -1441,6 +1522,20 @@ func readLastUpdateReport() -> String {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? "まだありません" : trimmed
+}
+
+func readSelfUpdateStatus() -> SelfUpdateStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: selfUpdatePath)),
+          let status = try? JSONDecoder().decode(SelfUpdateStatus.self, from: data) else {
+        return SelfUpdateStatus(
+            checkedAt: "",
+            status: "unknown",
+            installedCommit: "unknown",
+            latestCommit: "unknown",
+            detail: "未確認"
+        )
+    }
+    return status
 }
 
 func readLastUpdateSummary() -> String {

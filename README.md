@@ -11,6 +11,7 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 - MulmoTerminal をログイン時に起動し、落ちたら再起動する LaunchAgent を設定
 - MulmoTerminal / MulmoClaude / Mulmo 系 npm パッケージの最新版確認
 - 更新があるとメニューバーアイコンで知らせる
+- Mulmo Control 自身の最新版確認と更新
 - 更新後に、公式 Changelog から短い新機能要約を表示
 - MulmoCast / MulmoCast Vision / MulmoBridge CLI / Slack Bridge の追加インストール
 - ログ確認
@@ -54,6 +55,8 @@ MulmoCast など、周辺ツールを追加します。
 ### 環境
 
 インストール状態、最新版、前回の更新内容を確認します。
+
+Mulmo Control 自身に更新がある場合もここで確認できます。更新があるとメニューバーアイコンが変わり、上部の `アプリ更新` から更新できます。
 
 ## 置き場所
 
