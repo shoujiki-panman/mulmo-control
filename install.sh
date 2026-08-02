@@ -26,11 +26,18 @@ if [ -z "${NPM}" ]; then
   exit 1
 fi
 
+# MulmoClaude が無くても Mulmo Control は入る。アプリ側に「未インストール」表示と
+# 「入手」ボタンの導線があるので、ここで止めるとそこへ辿り着けない。
+# LaunchAgent の作業ディレクトリだけは実在する場所が要るので $HOME に逃がす。
+WORK_DIR="${MULMOCLAUDE_DIR}"
 if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
-  echo "MulmoClaude が ${MULMOCLAUDE_DIR} に見つかりません。" >&2
-  echo "先に MulmoClaude を clone するか、別の場所にあるなら次のように指定してください:" >&2
+  WORK_DIR="${HOME}"
+  echo "MulmoClaude が ${MULMOCLAUDE_DIR} に見つかりません。このまま続けます。" >&2
+  echo "MulmoTerminal だけなら、このままで使えます。" >&2
+  echo "MulmoClaude も使う場合は、次で入れてから ./install.sh をやり直してください:" >&2
+  echo "  git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude" >&2
+  echo "既に別の場所にある場合は、その場所を渡してください:" >&2
   echo "  MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh" >&2
-  exit 1
 fi
 
 CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
@@ -93,7 +100,7 @@ cat > "${PLIST}" <<PLIST
     <string>${LOCAL_BIN}/start-mulmoterminal.sh</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${MULMOCLAUDE_DIR}</string>
+  <string>${WORK_DIR}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -103,7 +110,7 @@ cat > "${PLIST}" <<PLIST
     <key>MULMOTERMINAL_HOST</key>
     <string>127.0.0.1</string>
     <key>CLAUDE_CWD</key>
-    <string>${MULMOCLAUDE_DIR}</string>
+    <string>${WORK_DIR}</string>
     <key>CLAUDE_BIN</key>
     <string>${CLAUDE_BIN}</string>
     <key>CODEX_BIN</key>

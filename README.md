@@ -25,41 +25,33 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 
 ## インストール
 
-### 1. 先に MulmoClaude を入れる
-
-`install.sh` は MulmoClaude が無いと止まります。まだの場合は先に clone してください。
-
-```bash
-git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude
-```
-
-既に別の場所に置いている場合は、そのままで構いません。次の手順で場所を渡せます。
-
-### 2. Mulmo Control を入れる
-
 ```bash
 git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
 ```
 
-`MulmoClaude が ... に見つかりません` と出て止まった場合は、手順1がまだか、MulmoClaude を `~/mulmoclaude` 以外に置いています。実際の場所を確認してから、下の `MULMOCLAUDE_DIR` で渡してください。
+`install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm が見つからない場合は、何も書き込む前に理由を出して止まります。
+
+### MulmoClaude について
+
+**先に入れておく必要はありません。** 無ければ「見つかりません」と伝えたうえで、そのままインストールを続けます。MulmoTerminal だけならそれで使えます。
+
+MulmoClaude も使う場合は、次のどちらかです。
 
 ```bash
-ls -ld ~/mulmoclaude
+# まだ持っていない場合
+git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude
+
+# 既に ~/mulmoclaude 以外に置いている場合
+MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
 ```
 
-`install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+入れたあとに `./install.sh` をやり直すと、アプリが場所を覚えます。アプリの `運用` タブでも、未インストールなら `入手` ボタンから辿れます。
 
 ダウンロードできなかった場合は手元でビルドします（そのときだけ Xcode Command Line Tools が必要です）。`MULMO_CONTROL_BUILD=1 ./install.sh` で最初からビルドすることもできます。
 
 定義ファイルを置くだけなので、インストールした時点ではまだ常駐しません。ログイン時起動と自動復帰が有効になるのは、アプリで `起動` を押したときです。`停止` を押すと解除されます。
-
-MulmoClaude を `~/mulmoclaude` 以外に置いている場合は、場所を渡してください。
-
-```bash
-MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
-```
 
 インストールが終わると、アプリを起動して、どこを見ればいいかを案内するダイアログが出ます。
 
