@@ -14,6 +14,12 @@ COMMIT="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || echo "unknown")"
 MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
 
 # 前提チェック: LaunchAgent を仕込む前に、足りないものがあればここで止める
+OS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
+if [ "${OS_MAJOR}" -lt 14 ]; then
+  echo "この macOS ($(sw_vers -productVersion)) では動きません。macOS 14 (Sonoma) 以降が必要です。" >&2
+  exit 1
+fi
+
 NPM="$(command -v npm || true)"
 if [ -z "${NPM}" ]; then
   echo "npm が見つかりません。先に Node.js を入れてください。" >&2
