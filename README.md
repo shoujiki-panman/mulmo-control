@@ -25,10 +25,28 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 
 ## インストール
 
+### 1. 先に MulmoClaude を入れる
+
+`install.sh` は MulmoClaude が無いと止まります。まだの場合は先に clone してください。
+
+```bash
+git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude
+```
+
+既に別の場所に置いている場合は、そのままで構いません。次の手順で場所を渡せます。
+
+### 2. Mulmo Control を入れる
+
 ```bash
 git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
+```
+
+`MulmoClaude が ... に見つかりません` と出て止まった場合は、手順1がまだか、MulmoClaude を `~/mulmoclaude` 以外に置いています。実際の場所を確認してから、下の `MULMOCLAUDE_DIR` で渡してください。
+
+```bash
+ls -ld ~/mulmoclaude
 ```
 
 `install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
@@ -43,9 +61,13 @@ MulmoClaude を `~/mulmoclaude` 以外に置いている場合は、場所を渡
 MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh
 ```
 
-インストール後、`/Applications/Mulmo Control.app` を開いてください。
+インストールが終わると、アプリを起動して、どこを見ればいいかを案内するダイアログが出ます。
 
-**このアプリはウィンドウも Dock アイコンも出しません。** 画面右上のメニューバーに、ターミナルの形をした `>_` アイコンが増えるだけです。そこをクリックすると操作画面が開きます。メニューバーの項目が多い Mac やノッチ付きの Mac では、アイコンが表示しきれずに隠れることがあります。
+**このアプリはウィンドウも Dock アイコンも出しません。** 画面いちばん上の帯の右のほう、時計や Wi-Fi が並んでいるあたりに、ターミナルの形をした `>_` アイコンが増えるだけです。そこをクリックすると操作画面が開きます。
+
+更新がある時は、このアイコンが下向き矢印の丸いアイコンに変わります。入れたての状態では更新ありになっていることが多いので、`>_` が見当たらない時はそちらを探してください。
+
+メニューバーの項目が多い Mac やノッチ付きの Mac では、アイコンが表示しきれずに隠れることがあります。
 
 起動しているか分からないときは、次で確認できます。
 
