@@ -31,7 +31,9 @@ cd mulmo-control
 ./install.sh
 ```
 
-`install.sh` は `/Applications` にアプリを置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+`install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。
+
+ダウンロードできなかった場合は手元でビルドします（そのときだけ Xcode Command Line Tools が必要です）。`MULMO_CONTROL_BUILD=1 ./install.sh` で最初からビルドすることもできます。
 
 定義ファイルを置くだけなので、インストールした時点ではまだ常駐しません。ログイン時起動と自動復帰が有効になるのは、アプリで `起動` を押したときです。`停止` を押すと解除されます。
 

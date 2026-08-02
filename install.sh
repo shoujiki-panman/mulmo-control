@@ -27,21 +27,39 @@ if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
   exit 1
 fi
 
-# アプリはその場で Swift ビルドするので、コンパイラが要る
-if ! xcrun --find swiftc >/dev/null 2>&1; then
-  echo "Swift コンパイラが見つかりません。アプリのビルドに必要です。" >&2
-  echo "次を実行して Xcode Command Line Tools を入れてから、やり直してください:" >&2
-  echo "  xcode-select --install" >&2
-  exit 1
-fi
-
 CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
 CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "${TOOLS_DIR}" "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
 
-# 一番落ちやすいのはビルドなので、先に済ませてから各所へ書き込む
-APP_PATH="$("${ROOT}/build-app.sh")"
+# アプリの入手: まずビルド済みを GitHub Releases から取る（Xcode 不要）。
+# 取れなければ手元でビルドする（Xcode Command Line Tools が要る）。
+# MULMO_CONTROL_BUILD=1 で最初からビルドもできる。
+ZIP_URL="${MULMO_CONTROL_ZIP_URL:-https://github.com/shoujiki-panman/mulmo-control/releases/latest/download/MulmoControl.zip}"
+APP_PATH=""
+if [ "${MULMO_CONTROL_BUILD:-0}" != "1" ]; then
+  DL_DIR="$(mktemp -d /private/tmp/mulmo-control-dl.XXXXXX)"
+  if curl -fsSL --connect-timeout 15 -o "${DL_DIR}/MulmoControl.zip" "${ZIP_URL}"; then
+    ditto -x -k "${DL_DIR}/MulmoControl.zip" "${DL_DIR}"
+    if [ -x "${DL_DIR}/Mulmo Control.app/Contents/MacOS/MulmoControl" ]; then
+      APP_PATH="${DL_DIR}/Mulmo Control.app"
+      echo "ビルド済みアプリをダウンロードしました"
+    fi
+  fi
+  if [ -z "${APP_PATH}" ]; then
+    echo "ビルド済みアプリを取得できなかったので、手元でビルドします"
+  fi
+fi
+
+if [ -z "${APP_PATH}" ]; then
+  if ! xcrun --find swiftc >/dev/null 2>&1; then
+    echo "Swift コンパイラが見つかりません。アプリのビルドに必要です。" >&2
+    echo "次を実行して Xcode Command Line Tools を入れてから、やり直してください:" >&2
+    echo "  xcode-select --install" >&2
+    exit 1
+  fi
+  APP_PATH="$("${ROOT}/build-app.sh")"
+fi
 
 cp "${ROOT}/scripts"/mulmo* "${TOOLS_DIR}/"
 cp "${ROOT}/scripts"/open-swiftbar-logs "${TOOLS_DIR}/" 2>/dev/null || true
