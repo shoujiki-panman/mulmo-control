@@ -25,10 +25,28 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 
 ## インストール
 
+### 1. 先に MulmoClaude を入れる
+
+`install.sh` は MulmoClaude が無いと止まります。まだの場合は先に clone してください。
+
+```bash
+git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude
+```
+
+既に別の場所に置いている場合は、そのままで構いません。次の手順で場所を渡せます。
+
+### 2. Mulmo Control を入れる
+
 ```bash
 git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
+```
+
+`MulmoClaude が ... に見つかりません` と出て止まった場合は、手順1がまだか、MulmoClaude を `~/mulmoclaude` 以外に置いています。実際の場所を確認してから、下の `MULMOCLAUDE_DIR` で渡してください。
+
+```bash
+ls -ld ~/mulmoclaude
 ```
 
 `install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm や MulmoClaude が見つからない場合は、何も書き込む前に理由を出して止まります。

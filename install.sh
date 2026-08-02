@@ -139,22 +139,22 @@ MULMO_CONTROL_MULMOCLAUDE_DIR='${MULMOCLAUDE_DIR}'
 INFO
 
 SELF_STATUS="${LOG_DIR}/mulmo-control-self-update.json"
-COMMIT="${COMMIT}" SELF_STATUS="${SELF_STATUS}" /usr/bin/python3 - <<'PY'
-import json
-import os
-from datetime import datetime, timezone
-
-commit = os.environ["COMMIT"]
-data = {
-    "checkedAt": datetime.now(timezone.utc).isoformat(),
-    "status": "current" if commit != "unknown" else "unknown",
-    "installedCommit": commit,
-    "latestCommit": commit,
-    "detail": "最新版です" if commit != "unknown" else "未確認",
+if [ "${COMMIT}" = "unknown" ]; then
+  SELF_STATE="unknown"
+  SELF_DETAIL="未確認"
+else
+  SELF_STATE="current"
+  SELF_DETAIL="最新版です"
+fi
+cat > "${SELF_STATUS}" <<JSON
+{
+  "checkedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "${SELF_STATE}",
+  "installedCommit": "${COMMIT}",
+  "latestCommit": "${COMMIT}",
+  "detail": "${SELF_DETAIL}"
 }
-with open(os.environ["SELF_STATUS"], "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-PY
+JSON
 
 echo "Installed: /Applications/Mulmo Control.app"
 
@@ -170,7 +170,10 @@ echo "起動しているか確認: pgrep -lf MulmoControl"
 
 # ターミナルの出力を読まない人がいるので、同じことをダイアログでも出す。
 # アイコンの絵柄を添えるのは、文章で形を説明するより探すのが速いから。
+# 端末から手で叩いた時だけ出す。アプリの自己更新はこの install.sh をログに
+# リダイレクトして呼ぶので、更新のたびに初回案内が出ることはない。
 # 出せない環境（SSH など）でも install は成功扱いのままにする。
+if [ -t 1 ]; then
 /usr/bin/osascript >/dev/null 2>&1 <<'OSA' || true
 display dialog "Mulmo Control をメニューバーに追加しました。
 
@@ -186,3 +189,4 @@ display dialog "Mulmo Control をメニューバーに追加しました。
 見当たらない時は、メニューバーが混んでいて隠れています。
 他のアプリを終了するか、ノッチのない外部ディスプレイで見てください。" with title "Mulmo Control" buttons {"OK"} default button "OK" with icon (POSIX file "/Applications/Mulmo Control.app/Contents/Resources/MulmoControl.icns")
 OSA
+fi

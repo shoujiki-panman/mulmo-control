@@ -27,26 +27,15 @@ write_status() {
   local status_value="$1"
   local latest_commit="$2"
   local detail="$3"
-  STATUS_VALUE="${status_value}" \
-  INSTALLED_COMMIT="${installed_commit}" \
-  LATEST_COMMIT="${latest_commit}" \
-  DETAIL="${detail}" \
-  STATUS_PATH="${STATUS}" \
-  /usr/bin/python3 - <<'PY'
-import json
-import os
-from datetime import datetime, timezone
-
-data = {
-    "checkedAt": datetime.now(timezone.utc).isoformat(),
-    "status": os.environ["STATUS_VALUE"],
-    "installedCommit": os.environ["INSTALLED_COMMIT"],
-    "latestCommit": os.environ["LATEST_COMMIT"],
-    "detail": os.environ["DETAIL"],
+  cat > "${STATUS}" <<JSON
+{
+  "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "${status_value}",
+  "installedCommit": "${installed_commit}",
+  "latestCommit": "${latest_commit}",
+  "detail": "${detail}"
 }
-with open(os.environ["STATUS_PATH"], "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-PY
+JSON
 }
 
 latest_commit="$(git ls-remote "${repo_url}" "refs/heads/${branch}" 2>/dev/null | /usr/bin/awk '{print $1}' || true)"
