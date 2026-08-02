@@ -26,7 +26,7 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 ## インストール
 
 ```bash
-git clone https://github.com/YOUR_NAME/mulmo-control.git
+git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
 ```
