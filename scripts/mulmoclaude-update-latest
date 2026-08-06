@@ -32,11 +32,39 @@ fail() {
 
 "${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-stop" >>"${LOG}" 2>&1 || true
 
+# MulmoClaude は普通に使っているだけで CLAUDE.md や .claude/settings.json が
+# 書き換わる。放っておくと git pull が必ず止まるので、退避はこちらで面倒を見る。
+# ターミナルを開かせないのがこのアプリの役目なので、ここで git stash を求めない。
+STASHED=0
+if [ -n "$(/usr/bin/git status --porcelain)" ]; then
+  STAMP="$(/bin/date '+%Y-%m-%d %H:%M:%S')"
+  echo "MulmoClaude: ローカルに変更があるので、いったん退避します" | tee -a "${LOG}"
+  if /usr/bin/git stash push -u -m "mulmo-control auto-stash ${STAMP}" >>"${LOG}" 2>&1; then
+    STASHED=1
+  else
+    fail "MulmoClaude: ローカルの変更を退避できなかったので、更新を中止しました"
+  fi
+fi
+
+# 退避したものは、どの道でも必ず戻す。
+restore_stash() {
+  [ "${STASHED}" = "1" ] || return 0
+  if /usr/bin/git stash pop >>"${LOG}" 2>&1; then
+    echo "MulmoClaude: 退避した変更を戻しました" | tee -a "${LOG}"
+  else
+    echo "MulmoClaude: 退避した変更を戻せませんでした（git stash list に残しています）" | tee -a "${LOG}"
+  fi
+  STASHED=0
+}
+
 # 失敗を握りつぶさない。ここで黙って先へ進むと、1行も更新されていないのに
 # アプリが「一括更新しました」と報告してしまう。
 if ! /usr/bin/git pull --ff-only >>"${LOG}" 2>&1; then
+  restore_stash
   fail "MulmoClaude: git pull に失敗したので、更新できませんでした"
 fi
+
+restore_stash
 
 if command -v yarn >/dev/null 2>&1; then
   if ! yarn install >>"${LOG}" 2>&1; then
