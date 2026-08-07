@@ -1,0 +1,49 @@
+#!/bin/zsh
+set -u
+
+# 切れたスマホ連携を繋ぎ直す。
+# 初回接続はブラウザでの Google サインイン（idToken）が要るのでここでは代われない。
+# 一度繋がっていれば session が発行されているので、それを送れば戻せる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG="${LOG_DIR}/remote-host.log"
+BASE="http://127.0.0.1:34567"
+
+mkdir -p "${LOG_DIR}"
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] reconnect requested" >>"${LOG}"
+
+STATUS="$(/usr/bin/curl -s -m 6 "${BASE}/api/remote-host/status" 2>/dev/null || true)"
+if [ -z "${STATUS}" ]; then
+  echo "MulmoTerminal が動いていません。先に起動してください。" | tee -a "${LOG}"
+  exit 1
+fi
+
+SESSION="$(STATUS="${STATUS}" /usr/bin/python3 -c "
+import json, os
+try:
+    print(json.loads(os.environ['STATUS']).get('session') or '')
+except ValueError:
+    print('')
+")"
+
+if [ -z "${SESSION}" ]; then
+  echo "繋ぎ直す手がかりがありません。MulmoTerminal の画面から一度接続してください。" | tee -a "${LOG}"
+  exit 2
+fi
+
+CODE="$(/usr/bin/curl -s -m 15 -o /dev/null -w "%{http_code}" \
+  -X POST -H "Content-Type: application/json" \
+  -d "$(SESSION="${SESSION}" /usr/bin/python3 -c "
+import json, os
+print(json.dumps({'session': os.environ['SESSION']}))
+")" \
+  "${BASE}/api/remote-host/reconnect" 2>/dev/null || echo 000)"
+
+case "${CODE}" in
+  200) echo "スマホ連携を繋ぎ直しました" | tee -a "${LOG}" ;;
+  401) echo "接続の有効期限が切れています。MulmoTerminal の画面から繋ぎ直してください。" | tee -a "${LOG}"; exit 2 ;;
+  *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
+esac
+
+"${HOME}/Documents/Codex/SwiftBarTools/mulmo-check-remote-host" >/dev/null 2>&1 || true

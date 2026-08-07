@@ -1,0 +1,64 @@
+#!/bin/zsh
+set -u
+
+# スマホ連携（RemoteHost）が繋がっているかを見る。
+# 切れても MulmoTerminal 自体は動き続けるので、画面のどこにも出ない。
+# 上流でも「切れたことに気づけない」不具合が繰り返し直されている
+# （receptron/mulmoterminal#823, #1045）。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+OUT="${LOG_DIR}/remote-host.json"
+BASE="http://127.0.0.1:34567"
+
+mkdir -p "${LOG_DIR}"
+
+write() {
+  cat > "${OUT}" <<JSON
+{
+  "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "state": "$1",
+  "hasSession": $2,
+  "detail": "$3"
+}
+JSON
+}
+
+RAW="$(/usr/bin/curl -s -m 6 "${BASE}/api/remote-host/status" 2>/dev/null || true)"
+if [ -z "${RAW}" ]; then
+  # MulmoTerminal が動いていない。connected を騙るより「不明」が正しい。
+  write "unknown" "false" "MulmoTerminal が動いていません"
+  exit 0
+fi
+
+RAW="${RAW}" OUT="${OUT}" /usr/bin/python3 <<'PY'
+import json, os, datetime
+
+raw = os.environ["RAW"]
+out = os.environ["OUT"]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+try:
+    data = json.loads(raw)
+except ValueError:
+    state, has_session, detail = "unknown", False, "状態を読めませんでした"
+else:
+    connected = bool(data.get("status", {}).get("connected"))
+    has_session = bool(data.get("session"))
+    health = (data.get("health") or {}).get("state") or ""
+    last_error = (data.get("health") or {}).get("lastError")
+    if connected:
+        state, detail = "online", "スマホから使えます"
+    elif has_session:
+        # 一度繋がったが落ちた。session があるので再接続できる。
+        state = "offline"
+        detail = f"切れています（{last_error}）" if last_error else "切れています"
+    else:
+        # 一度も繋いでいない。再接続する対象がないので、案内に回す。
+        state = "never"
+        detail = "まだ繋いでいません"
+
+with open(out, "w", encoding="utf-8") as f:
+    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail},
+              f, ensure_ascii=False, indent=2)
+PY
