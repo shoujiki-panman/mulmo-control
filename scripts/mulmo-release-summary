@@ -55,27 +55,36 @@ function sectionFor(markdown, heading) {
   return rest.slice(0, heading.length + next);
 }
 
+// 上流の語彙を当てにいくと、書き方が変わった時点で黙って動かなくなる。
+// 実際、この関数は 4.1.1 以降ずっと空振りしていた。構造だけを頼りに取り出す。
+
+/// その版の要点は、節の先頭にある太字の一文に書かれている。
+function leadSentence(section) {
+  const body = section
+    .split(/\n/)
+    .slice(1)                                  // 見出しの行を落とす
+    .filter((line) => !line.startsWith(">"))   // Setup guide の引用を飛ばす
+    .join("\n");
+  const bold = body.match(/\*\*([\s\S]+?)\*\*/);
+  if (!bold) return "";
+  return bold[1].replace(/\s+/g, " ").trim();
+}
+
+/// 日本語のセットアップガイドへのリンク。各版の節が自分で持っている。
+function japaneseGuideURL(section) {
+  const ja = section.match(/\[日本語\]\((https:\/\/[^)]+)\)/);
+  if (ja) return ja[1];
+  const en = section.match(/(https:\/\/receptron\.github\.io\/mulmoterminal\/guide\/)en\/([^)\s]+)/);
+  return en ? `${en[1]}ja/${en[2]}` : "";
+}
+
 function summarizeMulmoTerminal(section) {
-  const bullets = [];
-  if (/GitLab/i.test(section)) {
-    bullets.push("PRs & IssuesでGitLab対応。GitLab issueから作業開始できます。");
-  }
-  if (/One worktree per issue/i.test(section)) {
-    bullets.push("同じissueのworktree/sessionを再利用し、重複作業を防ぎます。");
-  }
-  if (/Header tooltips/i.test(section)) {
-    bullets.push("ヘッダーのツールチップが即時表示になり、PR/issueタイトルも見やすくなりました。");
-  }
-  if (/\n### Phone/i.test(section)) {
-    bullets.push("スマホからissue作業を開始でき、初期プロンプトも自動実行されます。");
-  }
-  if (/\n### Antigravity/i.test(section)) {
-    bullets.push("Antigravityのワークスペース会話一覧に対応しました。");
-  }
-  if (/\n### Fixes/i.test(section)) {
-    bullets.push("ヘッダー表示、Windowsパス、検索漏れの原因を修正。");
-  }
-  return bullets.slice(0, 4);
+  const lines = [];
+  const lead = leadSentence(section);
+  if (lead) lines.push(`・${lead}`);
+  const guide = japaneseGuideURL(section);
+  if (guide) lines.push(`ガイド: ${guide}`);
+  return lines;
 }
 
 async function main() {
