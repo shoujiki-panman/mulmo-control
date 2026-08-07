@@ -288,9 +288,9 @@ final class ControlModel: ObservableObject {
             return
         }
         if mcRunning {
-            openURL("http://127.0.0.1:5173")
+            openURL("http://localhost:5173")
         } else {
-            runThenOpen("\(toolsDir)/mulmoclaude-start", url: "http://127.0.0.1:5173")
+            runThenOpen("\(toolsDir)/mulmoclaude-start", url: "http://localhost:5173")
         }
     }
     func startMT() { run("\(localBin)/mulmoterminal-start") }
