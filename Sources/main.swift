@@ -1022,6 +1022,46 @@ struct ClaudeLoginCard: View {
     }
 }
 
+/// 本文をそのまま出しつつ、「ガイド: https://…」の行だけは押せるリンクにする。
+/// 新機能の説明は公式ガイドにあるので、そこへ1クリックで行けた方がいい。
+struct LinkedText: View {
+    let text: String
+
+    private var blocks: [(body: String, url: URL?)] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let raw = String(line)
+            guard let range = raw.range(of: "https://"),
+                  let url = URL(string: String(raw[range.lowerBound...]).trimmingCharacters(in: .whitespaces))
+            else { return (raw, nil) }
+            return (String(raw[..<range.lowerBound]).trimmingCharacters(in: .whitespaces), url)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                if let url = block.url {
+                    HStack(spacing: 4) {
+                        if !block.body.isEmpty {
+                            Text(block.body)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                        Link("新機能を見る", destination: url)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.accent)
+                    }
+                } else if !block.body.isEmpty {
+                    Text(block.body)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
 struct NoticeCard: View {
     let notice: NoticeMessage
     let close: () -> Void
@@ -1036,10 +1076,7 @@ struct NoticeCard: View {
                 Text(notice.title)
                     .font(AppFont.rowTitle)
                     .foregroundStyle(Palette.primaryText)
-                Text(notice.text)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                LinkedText(text: notice.text)
             }
             Spacer()
             Button(action: close) {
@@ -1317,10 +1354,7 @@ struct SetupPanel: View {
             Text("前回の更新")
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
-            Text(model.lastUpdateReport)
-                .font(AppFont.small)
-                .foregroundStyle(Palette.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            LinkedText(text: model.lastUpdateReport)
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
