@@ -175,6 +175,8 @@ final class ControlModel: ObservableObject {
     private var notifiedSelfUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-self-update-key")
     private var pendingUpdateReport: [MulmoUpdateItem]?
     private var pendingUpdateReportTitle: String?
+    /// 更新を走らせる直前の実測バージョン（id → version）。
+    private var beforeVersions: [String: String] = [:]
     private var lastAutomaticUpdateCheck = Date.distantPast
     private var automaticUpdateCheckRunning = false
 
@@ -442,12 +444,10 @@ final class ControlModel: ObservableObject {
             let succeeded = process.terminationStatus == 0
             await MainActor.run {
                 self.refresh()
-                if succeeded {
-                    self.recordPendingUpdateReport()
-                } else {
-                    self.pendingUpdateReport = nil
-                    self.pendingUpdateReportTitle = nil
-                }
+                // 終了コードが非0でも報告は出す。一部だけ失敗したときに黙って
+                // 消すと、上がった物まで無かったことになる。何が動いて何が
+                // 動かなかったかは、更新後の実測値が知っている。
+                self.recordPendingUpdateReport()
                 self.actionText = succeeded ? nil : "失敗しました。ログを確認してください"
             }
         }
@@ -541,25 +541,59 @@ final class ControlModel: ObservableObject {
     private func prepareUpdateReport(title: String, items: [MulmoUpdateItem]) {
         pendingUpdateReportTitle = title
         pendingUpdateReport = items
+        // 走らせる前の実測値を控える。報告はこれと更新後の値の差で作る。
+        // 「これから上がるはずの版」を報告に使うと、上がらなかった物まで
+        // 上がったことになってしまう。
+        beforeVersions = Dictionary(
+            updateItems.map { ($0.id, $0.current) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    /// 更新後に実測し、動いた物と動かなかった物を分けて返す。
+    private func measureUpdateOutcome() -> (moved: [String], stalled: [String]) {
+        guard let attempted = pendingUpdateReport else { return ([], []) }
+        var moved: [String] = []
+        var stalled: [String] = []
+        for item in attempted {
+            let before = beforeVersions[item.id] ?? item.current
+            let after = updateItems.first(where: { $0.id == item.id })?.current ?? before
+            if after != before {
+                moved.append("\(item.displayName): \(before) → \(after)")
+            } else {
+                stalled.append("\(item.displayName): \(before) のまま")
+            }
+        }
+        return (moved, stalled)
     }
 
     private func recordPendingUpdateReport() {
-        guard let items = pendingUpdateReport else { return }
-        let title = pendingUpdateReportTitle ?? "更新しました"
+        guard pendingUpdateReport != nil else { return }
+        let outcome = measureUpdateOutcome()
+        let title: String
+        if outcome.moved.isEmpty {
+            title = "更新できませんでした"
+        } else if outcome.stalled.isEmpty {
+            title = pendingUpdateReportTitle ?? "更新しました"
+        } else {
+            title = "一部だけ更新しました"
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "M/d H:mm"
 
-        let detail: String
-        if items.isEmpty {
-            detail = "変更内容は確認できませんでした"
-        } else {
-            detail = items
-                .map { "\($0.displayName): \($0.current) → \($0.latest)" }
-                .joined(separator: "\n")
+        var lines: [String] = []
+        if !outcome.moved.isEmpty {
+            lines.append(contentsOf: outcome.moved)
         }
+        if !outcome.stalled.isEmpty {
+            lines.append("更新されなかったもの:")
+            lines.append(contentsOf: outcome.stalled)
+            lines.append("ログ: \(homeDir)/Documents/Codex/SwiftBarLogs")
+        }
+        let detail = lines.isEmpty ? "変更内容は確認できませんでした" : lines.joined(separator: "\n")
 
-        let summary = items.isEmpty ? "" : readLastUpdateSummary()
+        let summary = outcome.moved.isEmpty ? "" : readLastUpdateSummary()
         let noticeText = [detail, summary]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
@@ -575,6 +609,7 @@ final class ControlModel: ObservableObject {
         try? report.write(toFile: lastUpdateReportPath, atomically: true, encoding: .utf8)
         pendingUpdateReport = nil
         pendingUpdateReportTitle = nil
+        beforeVersions = [:]
     }
 
     private func requestNotificationPermission() {
