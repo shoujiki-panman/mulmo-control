@@ -1,0 +1,48 @@
+#!/bin/zsh
+set -u
+
+# claude CLI のログインが生きているかを見る。
+# MulmoClaude は内部で claude を呼ぶので、ここが切れるとチャットだけが死ぬ。
+# サーバーは動いたまま、コレクションの閲覧もできるので、外からは分かりにくい。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+OUT="${LOG_DIR}/claude-login.json"
+
+mkdir -p "${LOG_DIR}"
+
+write() {
+  cat > "${OUT}" <<JSON
+{
+  "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "state": "$1",
+  "detail": "$2"
+}
+JSON
+}
+
+CLAUDE="$(command -v claude || true)"
+if [ -z "${CLAUDE}" ]; then
+  write "unknown" "claude が見つかりません"
+  exit 0
+fi
+
+# claude auth status はトークンを消費せず、ブラウザも開かない。
+# 既定で JSON を返す（--json / --text で切り替えられる）。
+RAW="$("${CLAUDE}" auth status --json 2>/dev/null || true)"
+if [ -z "${RAW}" ]; then
+  write "unknown" "確認できませんでした"
+  exit 0
+fi
+
+case "${RAW}" in
+  *'"loggedIn": true'*|*'"loggedIn":true'*)
+    write "ok" "ログイン中"
+    ;;
+  *'"loggedIn": false'*|*'"loggedIn":false'*)
+    write "expired" "ログインが切れています"
+    ;;
+  *)
+    write "unknown" "確認できませんでした"
+    ;;
+esac

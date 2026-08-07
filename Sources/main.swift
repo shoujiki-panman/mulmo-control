@@ -8,6 +8,7 @@ private let toolsDir = "\(homeDir)/Documents/Codex/SwiftBarTools"
 private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
+private let claudeLoginPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/claude-login.json"
 private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
 private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
 // install.sh が書き出す app-info.env から MulmoClaude の場所を読む
@@ -65,6 +66,16 @@ struct MulmoUpdates: Decodable {
     let checkedAt: String
     let summary: String
     let items: [MulmoUpdateItem]
+}
+
+/// claude CLI のログイン状態。MulmoClaude は内部で claude を呼ぶので、
+/// ここが切れるとチャットだけが死ぬ。サーバーは動いたままなので気づきにくい。
+struct ClaudeLoginStatus: Decodable {
+    let checkedAt: String
+    let state: String   // ok / expired / unknown
+    let detail: String
+
+    var isExpired: Bool { state == "expired" }
 }
 
 struct SelfUpdateStatus: Decodable {
@@ -165,6 +176,7 @@ final class ControlModel: ObservableObject {
     @Published var updateSummary = "更新: 未確認"
     @Published var updateItems: [MulmoUpdateItem] = []
     @Published var selfUpdate = readSelfUpdateStatus()
+    @Published var claudeLogin = readClaudeLoginStatus()
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -173,6 +185,7 @@ final class ControlModel: ObservableObject {
     private var timer: Timer?
     private var notifiedUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-update-key")
     private var notifiedSelfUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-self-update-key")
+    private var notifiedClaudeLoginAt = UserDefaults.standard.string(forKey: "mulmo-control.notified-claude-login-at")
     private var pendingUpdateReport: [MulmoUpdateItem]?
     private var pendingUpdateReportTitle: String?
     /// 更新を走らせる直前の実測バージョン（id → version）。
@@ -201,7 +214,10 @@ final class ControlModel: ObservableObject {
     }
 
     var menuIconName: String {
-        hasAnyUpdates ? "arrow.down.circle.fill" : "terminal.fill"
+        // ログイン切れは更新より先に出す。更新は後回しにできるが、
+        // ログインが切れている間は MulmoClaude のチャットが使えない。
+        if claudeLogin.isExpired { return "exclamationmark.triangle.fill" }
+        return hasAnyUpdates ? "arrow.down.circle.fill" : "terminal.fill"
     }
 
     var hasAvailableUpdates: Bool {
@@ -229,8 +245,10 @@ final class ControlModel: ObservableObject {
         updateSummary = updates.summary
         updateItems = updates.items
         selfUpdate = readSelfUpdateStatus()
+        claudeLogin = readClaudeLoginStatus()
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
+        notifyClaudeLoginIfNeeded(claudeLogin)
         familyInstalled = Dictionary(uniqueKeysWithValues: familyPackages.map { package in
             (package.id, familyCommandPath(package) != nil)
         })
@@ -268,7 +286,32 @@ final class ControlModel: ObservableObject {
         run("""
         "\(toolsDir)/mulmo-check-updates"
         "\(toolsDir)/mulmo-control-self-update" check
+        "\(toolsDir)/mulmo-check-claude-login"
         """, label: "更新を確認中")
+    }
+
+    /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
+    /// サインインは本人がやる（OAuth なのでアプリが代われない）。
+    func openClaudeLogin() {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "cd \(mulmoClaudeDir) && claude"
+        end tell
+        """
+        var error: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
+        if error != nil {
+            showMessage(
+                title: "ターミナルを開けませんでした",
+                text: "ターミナルで次を実行してください:\ncd \(mulmoClaudeDir) && claude\nそのあと /login と入力します。"
+            )
+            return
+        }
+        showMessage(
+            title: "ターミナルを開きました",
+            text: "信頼を聞かれたら承認し、/login と入力してください。ブラウザでサインインすると復旧します。"
+        )
     }
     func updateSelfApp() {
         run("\"\(toolsDir)/mulmo-control-self-update\" apply", label: "Mulmo Controlを更新中")
@@ -646,6 +689,36 @@ final class ControlModel: ObservableObject {
         }
     }
 
+    private func notifyClaudeLoginIfNeeded(_ status: ClaudeLoginStatus) {
+        guard status.isExpired else {
+            // 直ったら、次に切れたときにまた知らせる。
+            if notifiedClaudeLoginAt != nil {
+                UserDefaults.standard.removeObject(forKey: "mulmo-control.notified-claude-login-at")
+                notifiedClaudeLoginAt = nil
+            }
+            return
+        }
+        guard status.checkedAt != notifiedClaudeLoginAt, notifiedClaudeLoginAt == nil else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Claude のログインが切れています"
+        content.body = "MulmoClaude のチャットが使えません。メニューバーから復旧できます"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "mulmo-control-claude-login",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            guard error == nil else { return }
+            UserDefaults.standard.set(status.checkedAt, forKey: "mulmo-control.notified-claude-login-at")
+            Task { @MainActor in
+                self.notifiedClaudeLoginAt = status.checkedAt
+            }
+        }
+    }
+
     private func notifySelfUpdateIfNeeded(_ status: SelfUpdateStatus) {
         guard status.status == "update" else { return }
         let key = "\(status.installedCommit)->\(status.latestCommit)"
@@ -714,6 +787,9 @@ struct ControlView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            if model.claudeLogin.isExpired {
+                ClaudeLoginCard(model: model)
             }
             if let notice = model.notice {
                 NoticeCard(notice: notice) {
@@ -909,6 +985,40 @@ struct UpdateToolbar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// ログインが切れている間だけ、運用タブの一番上に出る。
+/// 更新のバナーと違って、押さないと MulmoClaude のチャットが直らない。
+struct ClaudeLoginCard: View {
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Palette.warn)
+                .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Claude のログインが切れています")
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text("MulmoClaude のチャットが使えません")
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("ログインし直す", action: model.openClaudeLogin)
+                .buttonStyle(.plain)
+                .font(AppFont.action)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(Palette.accent, in: Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
@@ -1170,6 +1280,13 @@ struct SetupPanel: View {
                 )
                 if model.mcInstalled {
                     SetupRow(title: "MulmoClaude", detail: "インストール済み", ok: true)
+                    SetupRow(
+                        title: "Claude のログイン",
+                        detail: model.claudeLogin.detail,
+                        ok: !model.claudeLogin.isExpired,
+                        buttonTitle: model.claudeLogin.isExpired ? "ログインし直す" : nil,
+                        action: model.openClaudeLogin
+                    )
                 } else {
                     SetupRow(
                         title: "MulmoClaude",
@@ -1626,6 +1743,14 @@ func readLastUpdateReport() -> String {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? "まだありません" : trimmed
+}
+
+func readClaudeLoginStatus() -> ClaudeLoginStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeLoginPath)),
+          let status = try? JSONDecoder().decode(ClaudeLoginStatus.self, from: data) else {
+        return ClaudeLoginStatus(checkedAt: "", state: "unknown", detail: "未確認")
+    }
+    return status
 }
 
 func readSelfUpdateStatus() -> SelfUpdateStatus {
