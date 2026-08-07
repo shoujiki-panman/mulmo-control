@@ -17,7 +17,7 @@ if /usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN >/dev/null 2>&1 || \
    /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "MulmoClaude: already running"
   if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
-    /usr/bin/open "http://127.0.0.1:5173"
+    /usr/bin/open "http://localhost:5173"
   fi
   exit 0
 fi
@@ -33,6 +33,6 @@ nohup "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
 
 sleep 2
 if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
-  /usr/bin/open "http://127.0.0.1:5173"
+  /usr/bin/open "http://localhost:5173"
 fi
 echo "MulmoClaude: started"
