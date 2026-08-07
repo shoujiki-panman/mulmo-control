@@ -9,6 +9,7 @@ private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
 private let claudeLoginPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/claude-login.json"
+private let remoteHostPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/remote-host.json"
 private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
 private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
 // install.sh が書き出す app-info.env から MulmoClaude の場所を読む
@@ -66,6 +67,18 @@ struct MulmoUpdates: Decodable {
     let checkedAt: String
     let summary: String
     let items: [MulmoUpdateItem]
+}
+
+/// スマホ連携（RemoteHost）の状態。切れても MulmoTerminal は動き続けるので、
+/// 放っておくと気づけない。never = 一度も繋いでいない（再接続する先が無い）。
+struct RemoteHostStatus: Decodable {
+    let checkedAt: String
+    let state: String   // online / offline / never / unknown
+    let hasSession: Bool
+    let detail: String
+
+    var isOffline: Bool { state == "offline" }
+    var neverConnected: Bool { state == "never" }
 }
 
 /// claude CLI のログイン状態。MulmoClaude は内部で claude を呼ぶので、
@@ -177,6 +190,7 @@ final class ControlModel: ObservableObject {
     @Published var updateItems: [MulmoUpdateItem] = []
     @Published var selfUpdate = readSelfUpdateStatus()
     @Published var claudeLogin = readClaudeLoginStatus()
+    @Published var remoteHost = readRemoteHostStatus()
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -246,6 +260,7 @@ final class ControlModel: ObservableObject {
         updateItems = updates.items
         selfUpdate = readSelfUpdateStatus()
         claudeLogin = readClaudeLoginStatus()
+        remoteHost = readRemoteHostStatus()
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -287,7 +302,14 @@ final class ControlModel: ObservableObject {
         "\(toolsDir)/mulmo-check-updates"
         "\(toolsDir)/mulmo-control-self-update" check
         "\(toolsDir)/mulmo-check-claude-login"
+        "\(toolsDir)/mulmo-check-remote-host"
         """, label: "更新を確認中")
+    }
+
+    /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
+    /// 要る（idToken が作れない）ので、そちらは画面への案内に留める。
+    func reconnectRemoteHost() {
+        run("\(toolsDir)/mulmo-remote-host-reconnect", label: "スマホ連携を繋ぎ直しています")
     }
 
     /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
@@ -1324,6 +1346,14 @@ struct SetupPanel: View {
                         buttonTitle: model.claudeLogin.isExpired ? "ログインし直す" : nil,
                         action: model.openClaudeLogin
                     )
+                    SetupRow(
+                        title: "スマホ連携",
+                        detail: model.remoteHost.detail,
+                        ok: model.remoteHost.state == "online",
+                        buttonTitle: model.remoteHost.isOffline ? "繋ぎ直す"
+                            : (model.remoteHost.neverConnected ? "繋ぎ方を見る" : nil),
+                        action: model.remoteHost.isOffline ? model.reconnectRemoteHost : model.openMT
+                    )
                 } else {
                     SetupRow(
                         title: "MulmoClaude",
@@ -1777,6 +1807,14 @@ func readLastUpdateReport() -> String {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? "まだありません" : trimmed
+}
+
+func readRemoteHostStatus() -> RemoteHostStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: remoteHostPath)),
+          let status = try? JSONDecoder().decode(RemoteHostStatus.self, from: data) else {
+        return RemoteHostStatus(checkedAt: "", state: "unknown", hasSession: false, detail: "未確認")
+    }
+    return status
 }
 
 func readClaudeLoginStatus() -> ClaudeLoginStatus {
