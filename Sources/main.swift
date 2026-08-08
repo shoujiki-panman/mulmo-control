@@ -931,6 +931,11 @@ struct TopTabs: View {
                     .padding(.horizontal, 13)
                     .padding(.vertical, 7)
                     .background(selection == screen ? Palette.accent : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    // .buttonStyle(.plain) の当たり判定は描画された中身に従うので、
+                    // 未選択のタブ（背景が Color.clear）は文字とアイコンの上でしか
+                    // 反応しなかった。押したいのは常に未選択のタブなので、余白ごと
+                    // 当たるように形を明示する（Issue #34）。
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -1739,18 +1744,22 @@ struct FooterButton: View {
     let action: () -> Void
 
     var body: some View {
+        // 余白と背景は必ず label の中に置く。外側に付けると、見えているカプセルより
+        // 当たり判定が狭くなり（文字とアイコンの上だけ）、縁を押しても反応しない
+        // （Issue #34）。contentShape で形も明示しておく。
         Button(role: role, action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
                 Text(title)
             }
             .font(AppFont.action)
+            .foregroundStyle(role == .destructive ? Color.red.opacity(0.85) : Palette.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Palette.controlFill, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(role == .destructive ? Color.red.opacity(0.85) : Palette.secondaryText)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Palette.controlFill, in: Capsule())
     }
 }
 
