@@ -103,7 +103,7 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 このアプリは以下を使います。
 
 - アプリ: `/Applications/Mulmo Control.app`
-- 補助スクリプト: `~/Documents/Codex/SwiftBarTools`
+- 補助スクリプト: アプリの中（`Mulmo Control.app/Contents/Resources/scripts`）
 - ログ: `~/Documents/Codex/SwiftBarLogs`
 - MulmoTerminal データ: `~/.mulmoterminal`
 - MulmoTerminal 実行ファイル: `~/.local/bin/mulmoterminal`

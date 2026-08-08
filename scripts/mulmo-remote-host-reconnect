@@ -6,6 +6,8 @@ set -u
 # 一度繋がっていれば session が発行されているので、それを送れば戻せる。
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
 LOG="${LOG_DIR}/remote-host.log"
 BASE="http://127.0.0.1:34567"
@@ -46,4 +48,4 @@ case "${CODE}" in
   *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
 esac
 
-"${HOME}/Documents/Codex/SwiftBarTools/mulmo-check-remote-host" >/dev/null 2>&1 || true
+"${SCRIPT_DIR}/mulmo-check-remote-host" >/dev/null 2>&1 || true

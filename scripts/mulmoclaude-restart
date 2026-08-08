@@ -1,6 +1,11 @@
 #!/bin/zsh
 set -u
 
-"${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-stop" || true
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ。アプリに同梱された
+# Contents/Resources/scripts から実行されても、旧 SwiftBarTools から
+# 実行されても、同じ組み合わせで動く（Issue #11）。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+"${SCRIPT_DIR}/mulmoclaude-stop" || true
 sleep 1
-"${HOME}/Documents/Codex/SwiftBarTools/mulmoclaude-start"
+"${SCRIPT_DIR}/mulmoclaude-start"

@@ -4,7 +4,18 @@ import UserNotifications
 
 private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 private let localBin = "\(homeDir)/.local/bin"
-private let toolsDir = "\(homeDir)/Documents/Codex/SwiftBarTools"
+// 補助スクリプトの置き場所。build-app.sh が Contents/Resources/scripts に同梱するので、
+// 通常はそこを見る。zip を Applications にドラッグしただけでも全ボタンが動くのは
+// これが理由（Issue #11）。
+//
+// 旧 install.sh がコピーしていた ~/Documents/Codex/SwiftBarTools には、同梱版が
+// 見つからないときだけ落ちる。バンドルの外で生のバイナリを起動する開発時と、
+// 同梱前のバンドルが残っている場合のための保険で、通常の経路では使われない。
+private let toolsDir: String = {
+    let legacy = "\(homeDir)/Documents/Codex/SwiftBarTools"
+    guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts").path else { return legacy }
+    return FileManager.default.fileExists(atPath: bundled) ? bundled : legacy
+}()
 private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
