@@ -26,7 +26,7 @@ START="${SCRIPT_DIR}/mulmoclaude-start"
 
 # 更新のために止めているので、失敗して抜ける時も必ず起動し直す。
 fail() {
-  MULMO_CONTROL_NO_OPEN=1 "${START}" >>"${LOG}" 2>&1 || true
+  "${START}" >>"${LOG}" 2>&1 || true
   echo "$1" | tee -a "${LOG}"
   echo "詳しくは ${LOG} を見てください" | tee -a "${LOG}"
   exit 1
@@ -74,5 +74,5 @@ if command -v yarn >/dev/null 2>&1; then
   fi
 fi
 
-MULMO_CONTROL_NO_OPEN=1 "${START}" >>"${LOG}" 2>&1 || true
+"${START}" >>"${LOG}" 2>&1 || true
 echo "MulmoClaude: updated" | tee -a "${LOG}"
