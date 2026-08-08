@@ -32,6 +32,14 @@ lipo -create \
 
 cp "${ROOT}/Info.plist" "${APP_DIR}/Contents/Info.plist"
 cp "${ROOT}/Assets/MulmoControl.icns" "${APP_DIR}/Contents/Resources/MulmoControl.icns"
+
+# 補助スクリプトを同梱する。アプリのボタンはここを呼ぶので、外部にコピーされて
+# いなくても動く（Issue #11）。zip を Applications にドラッグしただけの状態を
+# 成立させるための前提。
+rm -rf "${APP_DIR}/Contents/Resources/scripts"
+mkdir -p "${APP_DIR}/Contents/Resources/scripts"
+cp "${ROOT}/scripts"/* "${APP_DIR}/Contents/Resources/scripts/"
+chmod +x "${APP_DIR}/Contents/Resources/scripts"/*
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 chmod +x "${APP_DIR}/Contents/MacOS/MulmoControl"
 xattr -cr "${APP_DIR}"

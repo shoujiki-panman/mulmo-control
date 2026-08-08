@@ -2,7 +2,6 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="${HOME}/Documents/Codex/SwiftBarTools"
 LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
 LOCAL_BIN="${HOME}/.local/bin"
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
@@ -43,7 +42,7 @@ fi
 CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
 CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
-mkdir -p "${TOOLS_DIR}" "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
+mkdir -p "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
 
 # アプリの入手: まずビルド済みを GitHub Releases から取る（Xcode 不要）。
 # 取れなければ手元でビルドする（Xcode Command Line Tools が要る）。
@@ -74,11 +73,13 @@ if [ -z "${APP_PATH}" ]; then
   APP_PATH="$("${ROOT}/build-app.sh")"
 fi
 
-cp "${ROOT}/scripts"/mulmo* "${TOOLS_DIR}/"
-cp "${ROOT}/scripts"/open-swiftbar-logs "${TOOLS_DIR}/" 2>/dev/null || true
+# アプリが使う補助スクリプトは build-app.sh が .app に同梱するので、ここでは
+# コピーしない（Issue #11）。外に置いた写しと二重管理になるのを避ける。
+# LaunchAgent は .app の外から起動されるため、そちらが呼ぶぶんだけ ~/.local/bin
+# に置く。
 cp "${ROOT}/scripts"/mulmoterminal-* "${LOCAL_BIN}/"
 cp "${ROOT}/scripts/start-mulmoterminal.sh" "${LOCAL_BIN}/start-mulmoterminal.sh"
-chmod +x "${TOOLS_DIR}"/* "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
+chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
 
 if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
   mkdir -p "${HOME}/.local/share/mulmoterminal" /private/tmp/npm-cache-mulmo-control

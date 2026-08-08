@@ -2,6 +2,18 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# このスクリプトはアプリに同梱されて /Applications/Mulmo Control.app の中から
+# 走る（Issue #11）。ところが apply が呼ぶ install.sh は、その .app を丸ごと
+# rm -rf してから置き直す。zsh はスクリプトを最後まで読み込まずに少しずつ読んで
+# 実行するので、消えたファイルの続きを読もうとすると途中で死ぬ。
+# バンドルの外に自分の写しを作り、そちらへ移ってから作業する。
+if [ "${1:-check}" = "apply" ] && [ "${MULMO_SELF_UPDATE_DETACHED:-0}" != "1" ]; then
+  detached="$(/usr/bin/mktemp -t mulmo-control-self-update)"
+  /bin/cat "$0" > "${detached}"
+  /bin/chmod +x "${detached}"
+  MULMO_SELF_UPDATE_DETACHED=1 exec "${detached}" "$@"
+fi
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 CONFIG="${APP_SUPPORT}/app-info.env"
 STATUS="${HOME}/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"

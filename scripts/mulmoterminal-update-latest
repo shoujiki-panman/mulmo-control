@@ -2,6 +2,8 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
 LOG="${LOG_DIR}/mulmoterminal-update.log"
 NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
@@ -34,7 +36,7 @@ fi
   "${HOME}/.local/share/mulmoterminal/node_modules/.bin/mulmoterminal" \
   "${HOME}/.local/bin/mulmoterminal"
 
-"${HOME}/Documents/Codex/SwiftBarTools/mulmoterminal-check-update" | tee -a "${LOG}" || true
+"${SCRIPT_DIR}/mulmoterminal-check-update" | tee -a "${LOG}" || true
 "${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
 
 echo "After: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
