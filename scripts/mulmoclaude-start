@@ -16,9 +16,6 @@ mkdir -p "${LOG_DIR}"
 if /usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN >/dev/null 2>&1 || \
    /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "MulmoClaude: already running"
-  if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
-    /usr/bin/open "http://localhost:5173"
-  fi
   exit 0
 fi
 
@@ -32,7 +29,7 @@ fi
 nohup "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
 
 sleep 2
-if [ "${MULMO_CONTROL_NO_OPEN:-0}" != "1" ]; then
-  /usr/bin/open "http://localhost:5173"
-fi
+# ブラウザを開くかどうかはアプリ側が決める（`開く` だけが開く）。
+# ここで開くと `開く` は二重に開き、`起動` と `再起動` は開かないつもりなのに
+# 開いてしまう。mulmoterminal-start と同じく、このスクリプトは開かない。
 echo "MulmoClaude: started"
