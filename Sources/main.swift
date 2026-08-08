@@ -16,6 +16,17 @@ private let toolsDir: String = {
     guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts").path else { return legacy }
     return FileManager.default.fileExists(atPath: bundled) ? bundled : legacy
 }()
+
+// zsh -lc に渡すコマンド文字列へスクリプトのパスを埋めるときは、必ずこの2つを通す。
+//
+// 同梱先が `/Applications/Mulmo Control.app/...` で空白を含むため、裸で埋め込むと
+// そこで切れて `/Applications/Mulmo` を実行しようとする（Issue #32）。旧 SwiftBarTools
+// には空白がなく、#11 で移すまで露見しなかった。localBin 側も、ユーザー名に空白が
+// あれば同じ壊れ方をする。
+//
+// FileManager に渡す「本物のパス」には使わないこと（引用符が名前の一部になる）。
+private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
+private func bin(_ name: String) -> String { "\"\(localBin)/\(name)\"" }
 private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
@@ -289,7 +300,7 @@ final class ControlModel: ObservableObject {
         if mtRunning {
             openURL("http://localhost:34567")
         } else {
-            runThenOpen("\(localBin)/mulmoterminal-start", url: "http://localhost:34567")
+            runThenOpen(bin("mulmoterminal-start"), url: "http://localhost:34567")
         }
     }
 
@@ -301,26 +312,26 @@ final class ControlModel: ObservableObject {
         if mcRunning {
             openURL("http://localhost:5173")
         } else {
-            runThenOpen("\(toolsDir)/mulmoclaude-start", url: "http://localhost:5173")
+            runThenOpen(tool("mulmoclaude-start"), url: "http://localhost:5173")
         }
     }
-    func startMT() { run("\(localBin)/mulmoterminal-start") }
-    func stopMT() { run("\(localBin)/mulmoterminal-stop") }
-    func restartMT() { run("\(localBin)/mulmoterminal-restart") }
-    func checkUpdate() { run("\(toolsDir)/mulmoterminal-check-update", label: "更新を確認中") }
+    func startMT() { run(bin("mulmoterminal-start")) }
+    func stopMT() { run(bin("mulmoterminal-stop")) }
+    func restartMT() { run(bin("mulmoterminal-restart")) }
+    func checkUpdate() { run(tool("mulmoterminal-check-update"), label: "更新を確認中") }
     func checkAllUpdates() {
         run("""
-        "\(toolsDir)/mulmo-check-updates"
-        "\(toolsDir)/mulmo-control-self-update" check
-        "\(toolsDir)/mulmo-check-claude-login"
-        "\(toolsDir)/mulmo-check-remote-host"
+        \(tool("mulmo-check-updates"))
+        \(tool("mulmo-control-self-update")) check
+        \(tool("mulmo-check-claude-login"))
+        \(tool("mulmo-check-remote-host"))
         """, label: "更新を確認中")
     }
 
     /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
     /// 要る（idToken が作れない）ので、そちらは画面への案内に留める。
     func reconnectRemoteHost() {
-        run("\(toolsDir)/mulmo-remote-host-reconnect", label: "スマホ連携を繋ぎ直しています")
+        run(tool("mulmo-remote-host-reconnect"), label: "スマホ連携を繋ぎ直しています")
     }
 
     /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
@@ -347,16 +358,16 @@ final class ControlModel: ObservableObject {
         )
     }
     func updateSelfApp() {
-        run("\"\(toolsDir)/mulmo-control-self-update\" apply", label: "Mulmo Controlを更新中")
+        run("\(tool("mulmo-control-self-update")) apply", label: "Mulmo Controlを更新中")
     }
     func updateMT() {
         prepareUpdateReport(
             title: "MulmoTerminalを更新しました",
             items: updateItems.filter { $0.id == "mulmoterminal" && $0.status == "update" }
         )
-        run(updateCommand("\(toolsDir)/mulmoterminal-update-latest"), label: "MulmoTerminalを更新中")
+        run(updateCommand(tool("mulmoterminal-update-latest")), label: "MulmoTerminalを更新中")
     }
-    func installMT() { run("\(toolsDir)/mulmoterminal-update-latest", label: "MulmoTerminalをインストール中") }
+    func installMT() { run(tool("mulmoterminal-update-latest"), label: "MulmoTerminalをインストール中") }
     func installFamily(_ package: FamilyPackage) {
         guard package.isInstallable else {
             showMessage(title: "\(package.title)はまだ未対応です", text: "npmで公開されていないため、この画面からはインストールできません。")
@@ -395,11 +406,11 @@ final class ControlModel: ObservableObject {
         var updated: [FamilyPackage] = []
         var updatedIds: Set<String> = []
         if mtInstalled {
-            commands.append("\"\(toolsDir)/mulmoterminal-update-latest\"")
+            commands.append(tool("mulmoterminal-update-latest"))
             updatedIds.insert("mulmoterminal")
         }
         if mcInstalled {
-            commands.append("\"\(toolsDir)/mulmoclaude-update-latest\"")
+            commands.append(tool("mulmoclaude-update-latest"))
             updatedIds.insert("mulmoclaude")
         }
         let installedFamily = familyPackages.filter { $0.isInstallable && familyCommandPath($0) != nil }
@@ -421,15 +432,15 @@ final class ControlModel: ObservableObject {
         )
         run(updateCommand(commands.joined(separator: "\n")), label: "まとめて更新中")
     }
-    func startMC() { run("\(toolsDir)/mulmoclaude-start", label: "MulmoClaudeを起動中") }
-    func stopMC() { run("\(toolsDir)/mulmoclaude-stop", label: "MulmoClaudeを停止中") }
-    func restartMC() { run("\(toolsDir)/mulmoclaude-restart", label: "MulmoClaudeを再起動中") }
+    func startMC() { run(tool("mulmoclaude-start"), label: "MulmoClaudeを起動中") }
+    func stopMC() { run(tool("mulmoclaude-stop"), label: "MulmoClaudeを停止中") }
+    func restartMC() { run(tool("mulmoclaude-restart"), label: "MulmoClaudeを再起動中") }
     func updateMC() {
         prepareUpdateReport(
             title: "MulmoClaudeを更新しました",
             items: updateItems.filter { $0.id == "mulmoclaude" && $0.status == "update" }
         )
-        run(updateCommand("\(toolsDir)/mulmoclaude-update-latest"), label: "MulmoClaudeを更新中")
+        run(updateCommand(tool("mulmoclaude-update-latest")), label: "MulmoClaudeを更新中")
     }
     func openMCRepo() { openURL(mulmoClaudeRepo) }
 
@@ -488,7 +499,7 @@ final class ControlModel: ObservableObject {
         (
         \(command)
         ) || rc=$?
-        "\(toolsDir)/mulmo-check-updates"
+        \(tool("mulmo-check-updates"))
         \(releaseSummaryCommand())
         exit $rc
         """
@@ -502,7 +513,7 @@ final class ControlModel: ObservableObject {
             .map { "\($0.id)\t\($0.displayName)\t\($0.latest)" }
             .joined(separator: "\n")
         let encoded = Data(payload.utf8).base64EncodedString()
-        return "MULMO_RELEASE_ITEMS_B64=\"\(encoded)\" \"\(toolsDir)/mulmo-release-summary\" || true"
+        return "MULMO_RELEASE_ITEMS_B64=\"\(encoded)\" \(tool("mulmo-release-summary")) || true"
     }
 
     private func run(_ command: String, label: String? = nil) {
@@ -542,8 +553,8 @@ final class ControlModel: ObservableObject {
             process.arguments = [
                 "-lc",
                 """
-                "\(toolsDir)/mulmo-check-updates"
-                "\(toolsDir)/mulmo-control-self-update" check
+                \(tool("mulmo-check-updates"))
+                \(tool("mulmo-control-self-update")) check
                 """
             ]
             do {
