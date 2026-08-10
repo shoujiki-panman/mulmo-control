@@ -25,6 +25,10 @@ private let toolsDir: String = {
 // あれば同じ壊れ方をする。
 //
 // FileManager に渡す「本物のパス」には使わないこと（引用符が名前の一部になる）。
+/// いま動いているアプリの版（Issue #10）。app-info.env のような記録ではなく、
+/// 実行中のバンドル自身から読む。リリースタグ v1.0.12 と同じ文字列になる。
+let appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+
 private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
 private func bin(_ name: String) -> String { "\"\(localBin)/\(name)\"" }
 private func shellQuoted(_ value: String) -> String {
@@ -1498,7 +1502,7 @@ struct SetupPanel: View {
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
             VStack(spacing: 7) {
-                SetupRow(title: "Mulmo Control", detail: selfUpdateDetail(model.selfUpdate), ok: model.selfUpdate.status == "current")
+                SetupRow(title: "Mulmo Control", detail: mulmoControlDetail(model.selfUpdate), ok: model.selfUpdate.status == "current")
                 ForEach(model.updateItems.filter { $0.id == "mulmoterminal" || $0.id == "mulmoclaude" }) { item in
                     UpdateRow(item: item)
                 }
@@ -1515,6 +1519,14 @@ struct SetupPanel: View {
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// 「1.0.12 ・ 最新」のように、いま動いている版と更新の有無を並べて出す
+    /// （Issue #10）。版は Bundle.main から読むので、記録ではなく実物を見ている。
+    private func mulmoControlDetail(_ status: SelfUpdateStatus) -> String {
+        let state = selfUpdateDetail(status)
+        guard !appVersion.isEmpty else { return state }
+        return "\(appVersion) ・ \(state)"
     }
 
     private func selfUpdateDetail(_ status: SelfUpdateStatus) -> String {
