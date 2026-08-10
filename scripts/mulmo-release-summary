@@ -87,22 +87,75 @@ function summarizeMulmoTerminal(section) {
   return lines;
 }
 
+/// MulmoClaude は GitHub のリリースノートに要点を書いている。
+///
+/// 拾うのは形式が保証している2つだけ。リリース名の em ダッシュ以降と、
+/// Highlights の下に並ぶ ### 見出しから括弧の issue 番号を落としたもの。
+/// 本文の段落は1項目で数千字あることがあるので持ち込まない。
+function summarizeMulmoClaude(release) {
+  const lines = [];
+
+  // "v1.13.1 — a Google Calendar collection finally receives the calendar"
+  const name = String(release.name || "");
+  const dash = name.indexOf("\u2014");
+  const lead = dash >= 0 ? name.slice(dash + 1).trim() : "";
+  if (lead) lines.push(`・${lead}`);
+
+  const body = String(release.body || "");
+  const start = body.search(/^##\s+Highlights\s*$/m);
+  if (start >= 0) {
+    const rest = body.slice(start);
+    const end = rest.slice(1).search(/^##\s+(?!#)/m);
+    const section = end < 0 ? rest : rest.slice(0, end + 1);
+    for (const line of section.split(/\n/)) {
+      const heading = line.match(/^###\s+(.+?)\s*$/);
+      if (!heading) continue;
+      // 番号は「(#2850)」だけでなく「(#2844, #2848, #2849)」の形もある。
+      // 実物で1行だけ取りこぼして気づいた。
+      const text = heading[1].replace(/\s*\(#\d+(?:\s*,\s*#\d+)*\)\s*$/, "").trim();
+      if (text && !lines.includes(`・${text}`)) lines.push(`・${text}`);
+      if (lines.length >= 4) break;              // 画面に収まる分だけ
+    }
+  }
+
+  if (release.html_url) lines.push(`詳しく: ${release.html_url}`);
+  return lines;
+}
+
 async function main() {
   const lines = [];
   for (const item of items) {
+    if (item.id === "mulmoclaude") {
+      try {
+        const json = await fetchText(
+          `https://api.github.com/repos/receptron/mulmoclaude/releases/tags/v${item.latest}`
+        );
+        const bullets = summarizeMulmoClaude(JSON.parse(json));
+        if (bullets.length > 0) {
+          lines.push(`新機能（${item.displayName}）`);
+          for (const bullet of bullets) lines.push(bullet);
+        } else {
+          lines.push(`新機能（${item.displayName}）: リリースノートを確認しましたが、要約できる見出しがありませんでした。`);
+        }
+      } catch {
+        lines.push(`新機能（${item.displayName}）: リリースノートを取得できませんでした。`);
+      }
+    }
     if (item.id === "mulmoterminal") {
       try {
         const changelog = await fetchText("https://raw.githubusercontent.com/receptron/mulmoterminal/main/docs/ChangeLog.md");
         const section = sectionFor(changelog, `## mulmoterminal@${item.latest}`);
         const bullets = summarizeMulmoTerminal(section);
         if (bullets.length > 0) {
-          lines.push("新機能");
-          for (const bullet of bullets) lines.push(`・${bullet}`);
+          // summarize 側が中黒を付けて返すので、ここでは付けない。
+          // 両方で付けていて「・・」と出ていた。
+          lines.push(`新機能（${item.displayName}）`);
+          for (const bullet of bullets) lines.push(bullet);
         } else {
-          lines.push("新機能: 公式Changelogを確認しましたが、要約できる見出しがありませんでした。");
+          lines.push(`新機能（${item.displayName}）: 公式Changelogを確認しましたが、要約できる見出しがありませんでした。`);
         }
       } catch {
-        lines.push("新機能: 公式Changelogを取得できませんでした。");
+        lines.push(`新機能（${item.displayName}）: 公式Changelogを取得できませんでした。`);
       }
     }
   }
