@@ -315,9 +315,9 @@ final class ControlModel: ObservableObject {
             runThenOpen(tool("mulmoclaude-start"), url: "http://localhost:5173")
         }
     }
-    func startMT() { run(bin("mulmoterminal-start")) }
-    func stopMT() { run(bin("mulmoterminal-stop")) }
-    func restartMT() { run(bin("mulmoterminal-restart")) }
+    func startMT() { run(bin("mulmoterminal-start"), label: "MulmoTerminalを起動中") }
+    func stopMT() { run(bin("mulmoterminal-stop"), label: "MulmoTerminalを停止中") }
+    func restartMT() { run(bin("mulmoterminal-restart"), label: "MulmoTerminalを再起動中") }
     func checkUpdate() { run(tool("mulmoterminal-check-update"), label: "更新を確認中") }
     func checkAllUpdates() {
         run("""
