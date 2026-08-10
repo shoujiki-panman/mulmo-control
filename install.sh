@@ -44,6 +44,12 @@ CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
 
+quote_env() {
+  printf "'"
+  printf '%s' "$1" | /usr/bin/sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
 # アプリの入手: まずビルド済みを GitHub Releases から取る（Xcode 不要）。
 # 取れなければ手元でビルドする（Xcode Command Line Tools が要る）。
 # MULMO_CONTROL_BUILD=1 で最初からビルドもできる。
@@ -142,11 +148,11 @@ xattr -cr "/Applications/Mulmo Control.app"
 codesign --force --deep --sign - "/Applications/Mulmo Control.app"
 
 cat > "${APP_SUPPORT}/app-info.env" <<INFO
-MULMO_CONTROL_REPO_URL='${REPO_URL}'
-MULMO_CONTROL_SOURCE_DIR='${ROOT}'
-MULMO_CONTROL_INSTALLED_COMMIT='${COMMIT}'
-MULMO_CONTROL_BRANCH='main'
-MULMO_CONTROL_MULMOCLAUDE_DIR='${MULMOCLAUDE_DIR}'
+MULMO_CONTROL_REPO_URL=$(quote_env "${REPO_URL}")
+MULMO_CONTROL_SOURCE_DIR=$(quote_env "${ROOT}")
+MULMO_CONTROL_INSTALLED_COMMIT=$(quote_env "${COMMIT}")
+MULMO_CONTROL_BRANCH=$(quote_env "main")
+MULMO_CONTROL_MULMOCLAUDE_DIR=$(quote_env "${MULMOCLAUDE_DIR}")
 INFO
 
 SELF_STATUS="${LOG_DIR}/mulmo-control-self-update.json"

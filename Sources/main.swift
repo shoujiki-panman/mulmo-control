@@ -27,6 +27,16 @@ private let toolsDir: String = {
 // FileManager に渡す「本物のパス」には使わないこと（引用符が名前の一部になる）。
 private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
 private func bin(_ name: String) -> String { "\"\(localBin)/\(name)\"" }
+private func shellQuoted(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+}
+private func appleScriptStringLiteral(_ value: String) -> String {
+    let escaped = value
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "\n", with: "\\n")
+    return "\"\(escaped)\""
+}
 private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
 private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
 private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
@@ -42,11 +52,27 @@ private func configuredMulmoClaudeDir() -> String {
     let key = "MULMO_CONTROL_MULMOCLAUDE_DIR="
     for line in text.split(separator: "\n") {
         guard line.hasPrefix(key) else { continue }
-        let value = line.dropFirst(key.count)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "'\" "))
+        let value = parseShellEnvValue(line.dropFirst(key.count))
         if !value.isEmpty { return value }
     }
     return fallback
+}
+
+private func parseShellEnvValue(_ raw: Substring) -> String {
+    var value = String(raw).trimmingCharacters(in: .whitespaces)
+    if value.hasPrefix("'"), value.hasSuffix("'"), value.count >= 2 {
+        value.removeFirst()
+        value.removeLast()
+        return value.replacingOccurrences(of: "'\\''", with: "'")
+    }
+    if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+        value.removeFirst()
+        value.removeLast()
+        return value
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\\\", with: "\\")
+    }
+    return value
 }
 
 private let mulmoClaudeDir = configuredMulmoClaudeDir()
@@ -403,10 +429,11 @@ final class ControlModel: ObservableObject {
     /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
     /// サインインは本人がやる（OAuth なのでアプリが代われない）。
     func openClaudeLogin() {
+        let command = "cd \(shellQuoted(mulmoClaudeDir)) && claude"
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(mulmoClaudeDir) && claude"
+            do script \(appleScriptStringLiteral(command))
         end tell
         """
         var error: NSDictionary?
@@ -414,7 +441,7 @@ final class ControlModel: ObservableObject {
         if error != nil {
             showMessage(
                 title: "ターミナルを開けませんでした",
-                text: "ターミナルで次を実行してください:\ncd \(mulmoClaudeDir) && claude\nそのあと /login と入力します。"
+                text: "ターミナルで次を実行してください:\n\(command)\nそのあと /login と入力します。"
             )
             return
         }
@@ -621,6 +648,8 @@ final class ControlModel: ObservableObject {
                 """
                 \(tool("mulmo-check-updates"))
                 \(tool("mulmo-control-self-update")) check
+                \(tool("mulmo-check-claude-login"))
+                \(tool("mulmo-check-remote-host"))
                 """
             ]
             do {
