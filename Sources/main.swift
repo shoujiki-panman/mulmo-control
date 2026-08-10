@@ -47,6 +47,9 @@ private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-cont
 private let claudeLoginPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/claude-login.json"
 private let remoteHostPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/remote-host.json"
 private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
+/// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
+/// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
+private let updateReasonsPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-update-reasons.txt"
 private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
 // install.sh が書き出す app-info.env から MulmoClaude の場所を読む
 private func configuredMulmoClaudeDir() -> String {
@@ -732,6 +735,8 @@ final class ControlModel: ObservableObject {
     private func prepareUpdateReport(title: String, items: [MulmoUpdateItem]) {
         pendingUpdateReportTitle = title
         pendingUpdateReport = items
+        // 前回の理由が残っていると、今回の結果として読まれてしまう。
+        try? FileManager.default.removeItem(atPath: updateReasonsPath)
         // 走らせる前の実測値を控える。報告はこれと更新後の値の差で作る。
         // 「これから上がるはずの版」を報告に使うと、上がらなかった物まで
         // 上がったことになってしまう。
@@ -741,9 +746,23 @@ final class ControlModel: ObservableObject {
         )
     }
 
+    /// 更新スクリプトが書き置いた理由を id ごとに読む（`id<TAB>理由`）。
+    /// 同じ id が複数あれば、最後に書かれたものを採る。
+    private func readUpdateReasons() -> [String: String] {
+        guard let text = try? String(contentsOfFile: updateReasonsPath, encoding: .utf8) else { return [:] }
+        var reasons: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            reasons[String(parts[0])] = String(parts[1])
+        }
+        return reasons
+    }
+
     /// 更新後に実測し、動いた物と動かなかった物を分けて返す。
     private func measureUpdateOutcome() -> (moved: [String], stalled: [String]) {
         guard let attempted = pendingUpdateReport else { return ([], []) }
+        let reasons = readUpdateReasons()
         var moved: [String] = []
         var stalled: [String] = []
         for item in attempted {
@@ -751,6 +770,8 @@ final class ControlModel: ObservableObject {
             let after = updateItems.first(where: { $0.id == item.id })?.current ?? before
             if after != before {
                 moved.append("\(item.displayName): \(before) → \(after)")
+            } else if let reason = reasons[item.id] {
+                stalled.append("\(item.displayName): \(before) のまま — \(reason)")
             } else {
                 stalled.append("\(item.displayName): \(before) のまま")
             }
@@ -780,7 +801,12 @@ final class ControlModel: ObservableObject {
         if !outcome.stalled.isEmpty {
             lines.append("更新されなかったもの:")
             lines.append(contentsOf: outcome.stalled)
-            lines.append("ログ: \(homeDir)/Documents/Codex/SwiftBarLogs")
+            // 理由が1つも取れなかったときだけログの場所を出す。理由が書いてある
+            // のにログへ誘導すると、読まなくていいものを読ませることになる
+            // （Issue #46）。
+            if !outcome.stalled.contains(where: { $0.contains(" — ") }) {
+                lines.append("ログ: \(homeDir)/Documents/Codex/SwiftBarLogs")
+            }
         }
         let detail = lines.isEmpty ? "変更内容は確認できませんでした" : lines.joined(separator: "\n")
 
