@@ -140,11 +140,16 @@ struct ClaudeLoginStatus: Decodable {
 }
 
 struct SelfUpdateStatus: Decodable {
-    let checkedAt: String
-    let status: String
-    let installedCommit: String
-    let latestCommit: String
-    let detail: String
+    // 全て省略可にしてある。項目が1つ足りないだけで丸ごと復号に失敗し、
+    // 画面が「未確認」に落ちるのを避けるため（Issue #31 で installedCommit を
+    // installedVersion に置き換えたとき、古い JSON が残っていても壊れない）。
+    var checkedAt: String = ""
+    var status: String = "unknown"
+    /// 実際に /Applications に入っているアプリの版。
+    var installedVersion: String = ""
+    /// 最新のリリースタグ。
+    var latestVersion: String = ""
+    var detail: String = ""
 }
 
 struct FamilyPackage: Identifiable {
@@ -860,7 +865,7 @@ final class ControlModel: ObservableObject {
 
     private func notifySelfUpdateIfNeeded(_ status: SelfUpdateStatus) {
         guard status.status == "update" else { return }
-        let key = "\(status.installedCommit)->\(status.latestCommit)"
+        let key = "\(status.installedVersion)->\(status.latestVersion)"
         guard key != notifiedSelfUpdateKey else { return }
 
         let content = UNMutableNotificationContent()
@@ -1970,13 +1975,7 @@ func readClaudeLoginStatus() -> ClaudeLoginStatus {
 func readSelfUpdateStatus() -> SelfUpdateStatus {
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: selfUpdatePath)),
           let status = try? JSONDecoder().decode(SelfUpdateStatus.self, from: data) else {
-        return SelfUpdateStatus(
-            checkedAt: "",
-            status: "unknown",
-            installedCommit: "unknown",
-            latestCommit: "unknown",
-            detail: "未確認"
-        )
+        return SelfUpdateStatus(status: "unknown", detail: "未確認")
     }
     return status
 }
