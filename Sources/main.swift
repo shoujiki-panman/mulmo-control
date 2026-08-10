@@ -229,13 +229,66 @@ final class ControlModel: ObservableObject {
     private var lastAutomaticUpdateCheck = Date.distantPast
     private var automaticUpdateCheckRunning = false
 
+    /// 画面（ポップオーバー）が開いているか。開いている間だけ細かく巡回する。
+    private var panelIsOpen = false
+
+    /// `commandPath` の結果。1回が `zsh -lc`（ログインシェル）なので、5秒ごとに
+    /// 呼ぶには高すぎた（Issue #38）。node や npm の場所は普段変わらないため
+    /// 憶えておき、何かを入れたあと（`run` の完了時）にだけ捨てる。
+    /// 値が nil の「見つからなかった」も憶える（`[String: String?]` の二重 Optional）。
+    private var commandPathCache: [String: String?] = [:]
+
+    func cachedCommandPath(_ name: String) -> String? {
+        if let hit = commandPathCache[name] { return hit }
+        let resolved = commandPath(name)
+        commandPathCache[name] = resolved
+        return resolved
+    }
+
+    private func invalidateCommandPathCache() { commandPathCache.removeAll() }
+
+    /// 何かを実行したあとの更新。ツールが増えたり消えたりしている可能性があるので、
+    /// 憶えているコマンドの場所は捨ててから読み直す。
+    private func refreshAfterAction() {
+        invalidateCommandPathCache()
+        refresh()
+    }
+
+    /// 開いている間の巡回間隔。画面の表示を追従させるための値。
+    private static let activeInterval: TimeInterval = 5
+    /// 閉じている間の巡回間隔。メニューバーのアイコン（起動状態・更新の有無）が
+    /// 保てればよいので、こちらは粗くてよい（Issue #38）。
+    private static let idleInterval: TimeInterval = 60
+
     init() {
         requestNotificationPermission()
         refresh()
         checkUpdatesSilentlyIfNeeded(force: true)
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        scheduleTimer()
+    }
+
+    /// ポップオーバーの開閉に合わせて巡回の粗さを切り替える。
+    ///
+    /// 閉じている間も 5 秒ごとに外部プロセスを8つ起動していて、macOS に
+    /// 「エネルギーを著しく消費中」と言われていた（Issue #38）。見ていない間は
+    /// 60 秒に落とし、UI にしか要らない調査（コマンドの場所）も省く。
+    func setPanelOpen(_ open: Bool) {
+        guard panelIsOpen != open else { return }
+        panelIsOpen = open
+        scheduleTimer()
+        if open { refresh() }
+    }
+
+    private func scheduleTimer() {
+        timer?.invalidate()
+        let interval = panelIsOpen ? Self.activeInterval : Self.idleInterval
+        let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        // 閉じている間は時刻がずれてもよいので、まとめて起こしてもらう。
+        // 単独で CPU を起こす回数が減る。
+        t.tolerance = interval / 2
+        timer = t
     }
 
     var menuTitle: String {
@@ -269,11 +322,11 @@ final class ControlModel: ObservableObject {
     }
 
     func refresh() {
+        // ポート確認とファイル読みだけ。メニューバーのアイコンはこれで足りるので、
+        // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(34567)
         mcRunning = portIsOpen(5173) || portIsOpen(3001)
         reviveEnabled = FileManager.default.fileExists(atPath: "\(homeDir)/.mulmoterminal/keepalive-enabled")
-        nodePath = commandPath("node")
-        npmPath = commandPath("npm")
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         mcInstalled = FileManager.default.fileExists(atPath: mulmoClaudeDir)
         updateText = readUpdateText()
@@ -286,10 +339,23 @@ final class ControlModel: ObservableObject {
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
+
+        // ここから下は画面にしか出ない情報で、コマンドの場所を調べる分だけ高くつく。
+        // 閉じている間は省く。
+        if panelIsOpen {
+            refreshToolPaths()
+        }
+        checkUpdatesSilentlyIfNeeded()
+    }
+
+    /// node / npm / 追加ツールの在り処。結果は憶えておくので、実際にコマンドを
+    /// 探しに行くのは初回と、何かを入れたあとだけ。
+    private func refreshToolPaths() {
+        nodePath = cachedCommandPath("node")
+        npmPath = cachedCommandPath("npm")
         familyInstalled = Dictionary(uniqueKeysWithValues: familyPackages.map { package in
             (package.id, familyCommandPath(package) != nil)
         })
-        checkUpdatesSilentlyIfNeeded()
     }
 
     func openMT() {
@@ -457,7 +523,7 @@ final class ControlModel: ObservableObject {
     }
 
     private func familyCommandPath(_ package: FamilyPackage) -> String? {
-        if let path = commandPath(package.commandName) {
+        if let path = cachedCommandPath(package.commandName) {
             return path
         }
         let localPath = "\(localBin)/\(package.commandName)"
@@ -530,7 +596,7 @@ final class ControlModel: ObservableObject {
             }
             let succeeded = process.terminationStatus == 0
             await MainActor.run {
-                self.refresh()
+                self.refreshAfterAction()
                 // 終了コードが非0でも報告は出す。一部だけ失敗したときに黙って
                 // 消すと、上がった物まで無かったことになる。何が動いて何が
                 // 動かなかったかは、更新後の実測値が知っている。
@@ -565,7 +631,7 @@ final class ControlModel: ObservableObject {
             }
             await MainActor.run {
                 self.automaticUpdateCheckRunning = false
-                self.refresh()
+                self.refreshAfterAction()
             }
         }
     }
@@ -584,7 +650,7 @@ final class ControlModel: ObservableObject {
             let succeeded = process.terminationStatus == 0
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run {
-                self.refresh()
+                self.refreshAfterAction()
                 if succeeded {
                     self.actionText = nil
                     self.openURL(url)
@@ -608,7 +674,7 @@ final class ControlModel: ObservableObject {
                 try? "failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
             }
             await MainActor.run {
-                self.refresh()
+                self.refreshAfterAction()
                 self.actionText = nil
                 NSWorkspace.shared.open(URL(fileURLWithPath: filePath))
             }
@@ -796,6 +862,11 @@ struct MulmoControlApp: App {
         MenuBarExtra {
             ControlView(model: model)
                 .frame(width: 370)
+                // 開いている間だけ細かく巡回する。閉じている間も5秒ごとに外部
+                // プロセスを起動し続けていて、macOS に「エネルギーを著しく消費中」
+                // と言われていた（Issue #38）。
+                .onAppear { model.setPanelOpen(true) }
+                .onDisappear { model.setPanelOpen(false) }
         } label: {
             Image(systemName: model.menuIconName)
                 .foregroundStyle(model.titleColor)
@@ -1763,21 +1834,32 @@ struct FooterButton: View {
     }
 }
 
+/// 127.0.0.1 の指定ポートで誰かが待ち受けているか。
+///
+/// 以前は `lsof` を起動していたが、全プロセスのファイルディスクリプタを走査する
+/// ので1回およそ 35ms かかっていた。これを5秒ごとに2〜3回やっていたのが、
+/// 「エネルギーを著しく消費中」の主因のひとつ（Issue #38）。
+/// ループバックへ繋いでみるだけなら桁違いに安く、プロセスも起動しない。
+///
+/// 繋がった接続はすぐ閉じる。待ち受け側から見ると、何も送らずに切れた接続が
+/// 1本増えるだけで、HTTP サーバーはこれを無視する。
 func portIsOpen(_ port: Int) -> Bool {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-    process.arguments = ["-tiTCP:\(port)", "-sTCP:LISTEN"]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
-    do {
-        try process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return !String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    } catch {
-        return false
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+
+    var addr = sockaddr_in()
+    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = UInt16(port).bigEndian
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+    let connected = withUnsafePointer(to: &addr) { raw in
+        raw.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+            connect(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
     }
+    return connected == 0
 }
 
 func commandPath(_ name: String) -> String? {
