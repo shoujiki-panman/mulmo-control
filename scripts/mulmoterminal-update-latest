@@ -9,10 +9,18 @@ LOG="${LOG_DIR}/mulmoterminal-update.log"
 NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
 
 mkdir -p "${LOG_DIR}" "${NPM_CACHE}"
+
+# 更新できなかった理由を、画面に出せる形で残す（Issue #46）。
+REASONS="${LOG_DIR}/mulmo-update-reasons.txt"
+say_reason() {
+  printf '%s\t%s\n' "mulmoterminal" "$1" >> "${REASONS}"
+}
+
 NPM="$(command -v npm || true)"
 
 if [ -z "${NPM}" ]; then
   echo "npm was not found" | tee -a "${LOG}"
+  say_reason "npm が見つかりませんでした。Node.js を入れ直してください"
   exit 1
 fi
 
@@ -28,7 +36,7 @@ if ! NPM_CONFIG_CACHE="${NPM_CACHE}" "${NPM}" install \
   mulmoterminal@latest >>"${LOG}" 2>&1; then
   "${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
   echo "MulmoTerminal: npm install に失敗したので、更新できませんでした" | tee -a "${LOG}"
-  echo "詳しくは ${LOG} を見てください" | tee -a "${LOG}"
+  say_reason "npm install に失敗しました。回線を確認して、もう一度お試しください"
   exit 1
 fi
 

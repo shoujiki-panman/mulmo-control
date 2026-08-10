@@ -24,11 +24,21 @@ cd "${APP_DIR}"
 
 START="${SCRIPT_DIR}/mulmoclaude-start"
 
+# 更新できなかった理由を、画面に出せる形で残す。
+#
+# 以前は「詳しくはログを見てください」で終わっていた。ターミナルを開かせない
+# ためのアプリなのに、git の出力を読めと言っているのと同じだった（Issue #46）。
+# アプリはこのファイルを読んで、版が変わらなかった行に理由を添える。
+REASONS="${LOG_DIR}/mulmo-update-reasons.txt"
+say_reason() {
+  printf '%s\t%s\n' "mulmoclaude" "$1" >> "${REASONS}"
+}
+
 # 更新のために止めているので、失敗して抜ける時も必ず起動し直す。
 fail() {
   "${START}" >>"${LOG}" 2>&1 || true
   echo "$1" | tee -a "${LOG}"
-  echo "詳しくは ${LOG} を見てください" | tee -a "${LOG}"
+  say_reason "$1"
   exit 1
 }
 
@@ -59,6 +69,28 @@ restore_stash() {
   STASHED=0
 }
 
+# 別のブランチを見ていると、git pull は「そのブランチとして」成功する。
+# 失敗しないので誰も気づかないまま、本体の更新だけが永遠に届かない。実際に
+# それで「更新できませんでした」が出た（Issue #46）。
+#
+# ターミナルを開かせないのがこのアプリの役目なので、ここで「main に戻して
+# ください」とは言わない。退避と同じく、こちらで戻す。
+DEFAULT_BRANCH="$(/usr/bin/git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | /usr/bin/sed 's|^origin/||')"
+[ -n "${DEFAULT_BRANCH}" ] || DEFAULT_BRANCH="main"
+CURRENT_BRANCH="$(/usr/bin/git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+
+if [ -n "${CURRENT_BRANCH}" ] && [ "${CURRENT_BRANCH}" != "${DEFAULT_BRANCH}" ]; then
+  echo "MulmoClaude: ${CURRENT_BRANCH} を見ていたので ${DEFAULT_BRANCH} に戻します" | tee -a "${LOG}"
+  if /usr/bin/git checkout "${DEFAULT_BRANCH}" >>"${LOG}" 2>&1; then
+    say_reason "${CURRENT_BRANCH} を見ていたので ${DEFAULT_BRANCH} に戻して更新しました"
+  else
+    restore_stash
+    fail "MulmoClaude: ${CURRENT_BRANCH} を見ており、${DEFAULT_BRANCH} に戻せなかったので更新できませんでした"
+  fi
+fi
+
+BEFORE_HEAD="$(/usr/bin/git rev-parse HEAD 2>/dev/null || echo "")"
+
 # 失敗を握りつぶさない。ここで黙って先へ進むと、1行も更新されていないのに
 # アプリが「一括更新しました」と報告してしまう。
 if ! /usr/bin/git pull --ff-only >>"${LOG}" 2>&1; then
@@ -67,6 +99,12 @@ if ! /usr/bin/git pull --ff-only >>"${LOG}" 2>&1; then
 fi
 
 restore_stash
+
+# 何も落ちてこなかったなら、そう言う。黙っていると「更新できませんでした」
+# だけが残り、壊れているのか元から最新なのか区別が付かない（Issue #46）。
+if [ "$(/usr/bin/git rev-parse HEAD 2>/dev/null || echo "")" = "${BEFORE_HEAD}" ]; then
+  say_reason "すでに最新でした"
+fi
 
 if command -v yarn >/dev/null 2>&1; then
   if ! yarn install >>"${LOG}" 2>&1; then
