@@ -1,32 +1,38 @@
 #!/bin/zsh
 set -eu
 
-label="com.shutanuma.mulmoterminal"
-plist="${HOME}/Library/LaunchAgents/${label}.plist"
-domain="gui/$(id -u)"
-enabled="${HOME}/.mulmoterminal/keepalive-enabled"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
 
-mkdir -p "${HOME}/.mulmoterminal/logs"
-touch "${enabled}"
+mkdir -p "${MULMO_AGENT_LOG_DIR}"
+touch "${MULMO_AGENT_ENABLED}"
 
-if /usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN >/dev/null 2>&1; then
+if /usr/sbin/lsof -tiTCP:"${MULMO_AGENT_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "MulmoTerminal: already running"
-  echo "Open: http://localhost:34567"
+  echo "Open: http://localhost:${MULMO_AGENT_PORT}"
   exit 0
 fi
 
-if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
-  /bin/launchctl kickstart -k "${domain}/${label}" >/dev/null 2>&1 || true
-elif [ -f "${plist}" ]; then
-  /bin/launchctl bootstrap "${domain}" "${plist}" >/dev/null 2>&1 || true
+# 定義ファイルが無ければここで作る（Issue #12）。
+# 以前は install.sh だけがこれを作っていたので、ターミナルを通っていない人は
+# 常駐を有効にできなかった。zip をドラッグしただけの Mac でも 起動 が効く
+# ようにするための要。
+if [ ! -f "${MULMO_AGENT_PLIST}" ]; then
+  "${SCRIPT_DIR}/mulmoterminal-install-agent" || true
+fi
+
+if /bin/launchctl print "${MULMO_AGENT_DOMAIN}/${MULMO_AGENT_LABEL}" >/dev/null 2>&1; then
+  /bin/launchctl kickstart -k "${MULMO_AGENT_DOMAIN}/${MULMO_AGENT_LABEL}" >/dev/null 2>&1 || true
+elif [ -f "${MULMO_AGENT_PLIST}" ]; then
+  /bin/launchctl bootstrap "${MULMO_AGENT_DOMAIN}" "${MULMO_AGENT_PLIST}" >/dev/null 2>&1 || true
 fi
 
 sleep 1
-if ! /usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN >/dev/null 2>&1; then
-  nohup "${HOME}/.local/bin/start-mulmoterminal.sh" \
-    >>"${HOME}/.mulmoterminal/logs/host.log" \
-    2>>"${HOME}/.mulmoterminal/logs/host-error.log" &
+if ! /usr/sbin/lsof -tiTCP:"${MULMO_AGENT_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  nohup "${SCRIPT_DIR}/start-mulmoterminal.sh" \
+    >>"${MULMO_AGENT_LOG_DIR}/host.log" \
+    2>>"${MULMO_AGENT_LOG_DIR}/host-error.log" &
 fi
 
 echo "MulmoTerminal: started"
-echo "Open: http://localhost:34567"
+echo "Open: http://localhost:${MULMO_AGENT_PORT}"

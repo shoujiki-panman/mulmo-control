@@ -1,12 +1,14 @@
 #!/bin/zsh
 set -eu
 
-label="com.shutanuma.mulmoterminal"
-domain="gui/$(id -u)"
-enabled="${HOME}/.mulmoterminal/keepalive-enabled"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
+
+label="${MULMO_AGENT_LABEL}"
+domain="${MULMO_AGENT_DOMAIN}"
 stopped=0
 
-rm -f "${enabled}"
+rm -f "${MULMO_AGENT_ENABLED}"
 
 if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
   /bin/launchctl bootout "${domain}/${label}"
@@ -15,17 +17,17 @@ else
   echo "MulmoTerminal LaunchAgent: not loaded"
 fi
 
-pids=$(/usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN 2>/dev/null || true)
+pids=$(/usr/sbin/lsof -tiTCP:"${MULMO_AGENT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
 if [ -n "${pids}" ]; then
   for pid in ${(f)pids}; do
     /bin/kill -TERM "${pid}" 2>/dev/null || true
   done
   sleep 1
-  remaining=$(/usr/sbin/lsof -tiTCP:34567 -sTCP:LISTEN 2>/dev/null || true)
+  remaining=$(/usr/sbin/lsof -tiTCP:"${MULMO_AGENT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
   if [ -n "${remaining}" ]; then
-    echo "MulmoTerminal: stop requested, but port 34567 is still in use by ${remaining}"
+    echo "MulmoTerminal: stop requested, but port ${MULMO_AGENT_PORT} is still in use by ${remaining}"
   else
-    echo "MulmoTerminal: stopped port 34567 process"
+    echo "MulmoTerminal: stopped port ${MULMO_AGENT_PORT} process"
     stopped=1
   fi
 fi

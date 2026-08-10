@@ -1,8 +1,11 @@
 #!/bin/zsh
 set -eu
 
-LABEL="com.shutanuma.mulmoterminal"
-DOMAIN="gui/$(id -u)"
+# ラベルは scripts/mulmoterminal-agent-env が持っている（Issue #7）。
+# 5箇所に散らばっていたのを1箇所に寄せたので、ここも読むだけにする。
+. "$(cd "$(dirname "$0")" && pwd)/scripts/mulmoterminal-agent-env"
+LABEL="${MULMO_AGENT_LABEL}"
+DOMAIN="${MULMO_AGENT_DOMAIN}"
 
 if /bin/launchctl print "${DOMAIN}/${LABEL}" >/dev/null 2>&1; then
   /bin/launchctl bootout "${DOMAIN}/${LABEL}" || true
