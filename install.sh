@@ -155,21 +155,25 @@ MULMO_CONTROL_BRANCH=$(quote_env "main")
 MULMO_CONTROL_MULMOCLAUDE_DIR=$(quote_env "${MULMOCLAUDE_DIR}")
 INFO
 
+# ここで「最新版です」と書かない（Issue #31）。
+#
+# 既定ではリリースの zip を落として入れるので、ソースが先に進んでいれば、
+# 入ったアプリはソースより古い。にもかかわらず以前はソースの HEAD を
+# 「入っている版」として記録し、そのまま current と書いていたので、
+# 入っていない版を「最新です」と報告していた。
+#
+# 実際に入った版だけを事実として書き、最新かどうかの判定は
+# mulmo-control-self-update に任せる。アプリは起動直後に確認を走らせるので、
+# 「確認中」が表示されるのは数秒だけ。
+INSTALLED_VERSION="$(defaults read "/Applications/Mulmo Control.app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "")"
 SELF_STATUS="${LOG_DIR}/mulmo-control-self-update.json"
-if [ "${COMMIT}" = "unknown" ]; then
-  SELF_STATE="unknown"
-  SELF_DETAIL="未確認"
-else
-  SELF_STATE="current"
-  SELF_DETAIL="最新版です"
-fi
 cat > "${SELF_STATUS}" <<JSON
 {
   "checkedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "status": "${SELF_STATE}",
-  "installedCommit": "${COMMIT}",
-  "latestCommit": "${COMMIT}",
-  "detail": "${SELF_DETAIL}"
+  "status": "unknown",
+  "installedVersion": "${INSTALLED_VERSION}",
+  "latestVersion": "",
+  "detail": "確認中"
 }
 JSON
 

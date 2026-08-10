@@ -22,46 +22,64 @@ DEFAULT_REPO="https://github.com/shoujiki-panman/mulmo-control.git"
 
 mkdir -p "${APP_SUPPORT}" "${HOME}/Documents/Codex/SwiftBarLogs"
 
+APP_PLIST="/Applications/Mulmo Control.app/Contents/Info.plist"
+
 repo_url="${DEFAULT_REPO}"
 source_dir="${APP_SUPPORT}/source"
-installed_commit="unknown"
 branch="main"
 
 if [ -f "${CONFIG}" ]; then
   source "${CONFIG}"
   repo_url="${MULMO_CONTROL_REPO_URL:-${repo_url}}"
   source_dir="${MULMO_CONTROL_SOURCE_DIR:-${source_dir}}"
-  installed_commit="${MULMO_CONTROL_INSTALLED_COMMIT:-${installed_commit}}"
   branch="${MULMO_CONTROL_BRANCH:-${branch}}"
 fi
 
 write_status() {
   local status_value="$1"
-  local latest_commit="$2"
+  local latest="$2"
   local detail="$3"
   cat > "${STATUS}" <<JSON
 {
   "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "${status_value}",
-  "installedCommit": "${installed_commit}",
-  "latestCommit": "${latest_commit}",
+  "installedVersion": "${installed_version:-}",
+  "latestVersion": "${latest}",
   "detail": "${detail}"
 }
 JSON
 }
 
-latest_commit="$(git ls-remote "${repo_url}" "refs/heads/${branch}" 2>/dev/null | /usr/bin/awk '{print $1}' || true)"
-if [ -z "${latest_commit}" ]; then
-  write_status "unknown" "unknown" "GitHubを確認できませんでした"
+# 実際に入っているアプリの版。ソースの HEAD ではなくアプリ自身から読む。
+# install.sh は既定でリリースの zip を落とすので、ソースが先に進んでいても
+# 入るアプリは古いことがある。ソースの HEAD で報告すると、入っていない版を
+# 「最新です」と言ってしまう（Issue #31）。
+installed_version="$(/usr/bin/defaults read "${APP_PLIST}" CFBundleShortVersionString 2>/dev/null || true)"
+
+# 比べる相手は「install.sh が実際に落としてくるもの」＝最新のリリースタグ。
+# ls-remote なので API トークンは要らない。
+latest_version="$(git ls-remote --tags --refs "${repo_url}" 2>/dev/null \
+  | /usr/bin/awk -F'refs/tags/v' 'NF > 1 { print $2 }' \
+  | /usr/bin/sort -V | /usr/bin/tail -1 || true)"
+
+if [ -z "${installed_version}" ]; then
+  write_status "unknown" "" "アプリの版を読めませんでした"
   exit 0
 fi
 
-if [ "${installed_commit}" = "${latest_commit}" ]; then
-  write_status "current" "${latest_commit}" "最新版です"
+if [ -z "${latest_version}" ]; then
+  write_status "unknown" "" "GitHubを確認できませんでした"
   exit 0
 fi
 
-write_status "update" "${latest_commit}" "アプリ更新があります"
+# 手元ビルドはリリースより先に進んでいることがある。その場合も「最新」でよい。
+newer="$(printf '%s\n%s\n' "${installed_version}" "${latest_version}" | /usr/bin/sort -V | /usr/bin/tail -1)"
+if [ "${installed_version}" = "${latest_version}" ] || [ "${newer}" = "${installed_version}" ]; then
+  write_status "current" "${latest_version}" "最新版です"
+  exit 0
+fi
+
+write_status "update" "${latest_version}" "アプリ更新があります"
 
 if [ "${1:-check}" != "apply" ]; then
   exit 0
