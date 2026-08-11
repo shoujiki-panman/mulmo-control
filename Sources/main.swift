@@ -486,7 +486,7 @@ final class ControlModel: ObservableObject {
         let binPath = "\(prefix)/node_modules/.bin/\(package.commandName)"
         run("""
         mkdir -p "\(prefix)" "\(localBin)" /private/tmp/npm-cache-mulmo-control
-        NPM_CONFIG_CACHE="/private/tmp/npm-cache-mulmo-control" "\(npmPath)" install --prefix "\(prefix)" "\(package.packageName)@latest"
+        MULMO_NPM="\(npmPath)" \(tool("mulmo-npm-install")) "\(prefix)" "\(package.packageName)@latest"
         if [ -x "\(binPath)" ]; then /bin/ln -sf "\(binPath)" "\(localBin)/\(package.commandName)"; fi
         """, label: "\(package.title)をインストール中")
     }
@@ -586,7 +586,7 @@ final class ControlModel: ObservableObject {
         let installLines = packages.map { package in
             let binPath = "\(prefix)/node_modules/.bin/\(package.commandName)"
             return """
-            NPM_CONFIG_CACHE="/private/tmp/npm-cache-mulmo-control" "\(npmPath)" install --prefix "\(prefix)" "\(package.packageName)@latest"
+            MULMO_NPM="\(npmPath)" \(tool("mulmo-npm-install")) "\(prefix)" "\(package.packageName)@latest"
             if [ -x "\(binPath)" ]; then /bin/ln -sf "\(binPath)" "\(localBin)/\(package.commandName)"; fi
             """
         }.joined(separator: "\n")
