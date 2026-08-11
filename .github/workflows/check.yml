@@ -1,0 +1,25 @@
+name: check
+
+# PR のたびに、配る前の確認を走らせる。
+#
+# これまでこの確認は release.sh の中にしかなく、動くのはリリースの瞬間だけ
+# だった。v1.0.9 はそこを素通りして、ほとんどのボタンが動かない版を配って
+# しまっている。気づく場所を PR まで前倒しするのが目的。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    # Swift のビルドと codesign が要るので macOS。公開リポジトリなので無料枠。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 配る前の確認
+        run: ./check.sh
