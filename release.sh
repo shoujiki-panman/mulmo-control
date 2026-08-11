@@ -95,24 +95,10 @@ step "ビルド"
 APP="$("${ROOT}/build-app.sh")"
 ok "$(basename "${APP}")"
 
+# 確認の中身は check.sh が持っている。同じことを2箇所に書くと、片方だけ
+# 直して安心する事故が起きる。PR でも同じものが走る。
 step "配る前の検証"
-BUILT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Contents/Info.plist")"
-[ "${BUILT_VERSION}" = "${VERSION}" ] || fail "ビルド結果の版が ${BUILT_VERSION} です（期待: ${VERSION}）"
-ok "版 ${BUILT_VERSION}"
-
-SCRIPT_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr -d ' ')"
-SOURCE_COUNT="$(ls "${ROOT}/scripts" | wc -l | tr -d ' ')"
-[ "${SCRIPT_COUNT}" = "${SOURCE_COUNT}" ] || fail "同梱スクリプトが ${SCRIPT_COUNT} 本です（scripts/ には ${SOURCE_COUNT} 本）"
-ok "同梱スクリプト ${SCRIPT_COUNT} 本"
-
-codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
-ok "署名"
-
-# アプリのパスには空白がある。コマンド組み立てで引用が漏れるとここで落ちる
-# （v1.0.9 の回帰。Issue #32）。
-/bin/zsh -c "\"${APP}/Contents/Resources/scripts/mulmoclaude-status\" >/dev/null" \
-  || fail "同梱スクリプトを空白入りパスから実行できません"
-ok "空白入りパスからの実行"
+"${ROOT}/check.sh" --no-build || fail "配る前の確認に落ちました"
 
 step "zip を作る"
 ZIP="${ROOT}/build/MulmoControl.zip"

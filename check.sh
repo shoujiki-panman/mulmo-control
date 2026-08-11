@@ -1,0 +1,112 @@
+#!/bin/zsh
+set -eu
+
+# 配る前に確かめること。
+#
+#   ./check.sh              ビルドしてから全部確かめる
+#   ./check.sh --no-build   既にある build/ を確かめる（release.sh 用）
+#
+# release.sh と GitHub Actions の両方がここを呼ぶ。同じことを2箇所に書くと、
+# 片方だけ直して安心する事故が起きるので、1箇所にまとめてある。
+#
+# ここに入っているのは全部、実際に配ってから見つかった不具合の再発よけ。
+# 「壊れていることに気づくのが遅い」のが積年の問題なので、気づく場所を
+# リリースの瞬間から PR の時点まで前倒しするのが狙い。
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "${ROOT}"
+
+BUILD=1
+[ "${1:-}" = "--no-build" ] && BUILD=0
+
+step() { printf '\n\033[1m▶ %s\033[0m\n' "$1"; }
+fail() { printf '\033[31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
+ok()   { printf '  ✓ %s\n' "$1"; }
+
+# ── シェルスクリプト ────────────────────────────────────────────
+step "スクリプトの構文"
+for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
+  [ -f "$f" ] || continue
+  case "$f" in *.mjs|*.md) continue ;; esac
+  head -1 "$f" | grep -q '^#!' || continue
+  zsh -n "$f" || fail "構文が壊れています: $(basename "$f")"
+done
+ok "$(ls "${ROOT}/scripts" | wc -l | tr -d ' ') 本 + ルートの .sh"
+
+# ── 置き場所の約束 ──────────────────────────────────────────────
+step "同梱スクリプトの自己完結"
+
+# install.sh を通していない Mac でも動く必要がある（Issue #51）。
+# ~/.local/bin は install.sh がコピーして初めて存在するので、兄弟スクリプトを
+# そこから呼んでいると zip だけで入れた人が動かせない。
+if grep -rn '\.local/bin/mulmoterminal-' "${ROOT}/scripts" 2>/dev/null; then
+  fail "兄弟スクリプトを ~/.local/bin から呼んでいます。SCRIPT_DIR を使ってください（Issue #51）"
+fi
+ok "兄弟スクリプトを ~/.local/bin から呼んでいない"
+
+# アプリのパスには空白がある（/Applications/Mulmo Control.app）。
+# コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
+#
+# toolsDir を文字列に埋めてよい箇所は1つも無い。必ず tool() を通す。
+# 定義そのもの（private func tool）だけ除く。
+BARE="$(grep -n 'toolsDir)' "${ROOT}/Sources/main.swift" | grep -v 'private func tool' || true)"
+if [ -n "${BARE}" ]; then
+  printf '%s\n' "${BARE}"
+  fail "toolsDir を裸で埋め込んでいます。tool() を通してください（Issue #32）"
+fi
+
+# localBin は例外がある。次の3つは正しい形なので除く。
+#   - FileManager に渡す本物のパス（引用すると名前の一部になる）
+#   - ディレクトリ自体を渡すもの: "\(localBin)" のように直後が閉じ引用符
+#   - 複数行のシェル文字列の中で ln -sf の宛先になっているもの
+# 逆に "\(localBin)/コマンド名" の形は、引用符があっても駄目。文字列全体を
+# zsh に渡すので、パスに空白があればそこで切れる（#32 で実際に起きた）。
+BARE_BIN="$(grep -n 'localBin)' "${ROOT}/Sources/main.swift" \
+  | grep -v 'private func bin' \
+  | grep -v 'isExecutableFile\|let localPath' \
+  | grep -v '"\\(localBin)"' \
+  | grep -v 'ln -sf' || true)"
+if [ -n "${BARE_BIN}" ]; then
+  printf '%s\n' "${BARE_BIN}"
+  fail "localBin を裸で埋め込んでいます。bin() を通してください（Issue #32）"
+fi
+ok "コマンド文字列は tool() / bin() を通している"
+
+# ── ビルドと配布物 ──────────────────────────────────────────────
+if [ "${BUILD}" = "1" ]; then
+  step "ビルド"
+  APP="$("${ROOT}/build-app.sh")"
+  ok "$(basename "${APP}")"
+else
+  APP="${ROOT}/build/Mulmo Control.app"
+  [ -d "${APP}" ] || fail "build/ にアプリがありません"
+fi
+
+step "配布物"
+
+SOURCE_COUNT="$(ls "${ROOT}/scripts" | wc -l | tr -d ' ')"
+BUNDLED_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr -d ' ')"
+[ "${BUNDLED_COUNT}" = "${SOURCE_COUNT}" ] \
+  || fail "同梱スクリプトが ${BUNDLED_COUNT} 本です（scripts/ には ${SOURCE_COUNT} 本）"
+ok "同梱スクリプト ${BUNDLED_COUNT} 本"
+
+codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
+ok "署名"
+
+# v1.0.9 はここが抜けていて、ほとんどのボタンが動かない版を配った。
+/bin/zsh -c "\"${APP}/Contents/Resources/scripts/mulmoclaude-status\" >/dev/null" \
+  || fail "同梱スクリプトを空白入りパスから実行できません（Issue #32）"
+ok "空白入りパスからの実行"
+
+# ── npm パッケージ ──────────────────────────────────────────────
+step "npm パッケージ"
+node --check "${ROOT}/bin/mulmo-control.mjs" || fail "bin/mulmo-control.mjs の構文が壊れています"
+ok "bin/mulmo-control.mjs"
+
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${ROOT}/Info.plist")"
+PKG_VERSION="$(node -p "require('${ROOT}/package.json').version")"
+[ "${APP_VERSION}" = "${PKG_VERSION}" ] \
+  || fail "Info.plist が ${APP_VERSION}、package.json が ${PKG_VERSION} でずれています"
+ok "版が揃っている（${APP_VERSION}）"
+
+printf '\n\033[32m✓ 全部通りました\033[0m\n'
