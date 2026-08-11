@@ -404,7 +404,7 @@ final class ControlModel: ObservableObject {
         if mtRunning {
             openURL("http://localhost:34567")
         } else {
-            runThenOpen(bin("mulmoterminal-start"), url: "http://localhost:34567")
+            runThenOpen(tool("mulmoterminal-start"), url: "http://localhost:34567")
         }
     }
 
@@ -419,9 +419,9 @@ final class ControlModel: ObservableObject {
             runThenOpen(tool("mulmoclaude-start"), url: "http://localhost:5173")
         }
     }
-    func startMT() { run(bin("mulmoterminal-start"), label: "MulmoTerminalを起動中") }
-    func stopMT() { run(bin("mulmoterminal-stop"), label: "MulmoTerminalを停止中") }
-    func restartMT() { run(bin("mulmoterminal-restart"), label: "MulmoTerminalを再起動中") }
+    func startMT() { run(tool("mulmoterminal-start"), label: "MulmoTerminalを起動中") }
+    func stopMT() { run(tool("mulmoterminal-stop"), label: "MulmoTerminalを停止中") }
+    func restartMT() { run(tool("mulmoterminal-restart"), label: "MulmoTerminalを再起動中") }
     func checkUpdate() { run(tool("mulmoterminal-check-update"), label: "更新を確認中") }
     func checkAllUpdates() {
         run("""

@@ -27,14 +27,14 @@ fi
 echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] update requested" | tee -a "${LOG}"
 echo "Before: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
 
-"${HOME}/.local/bin/mulmoterminal-stop" | tee -a "${LOG}" || true
+"${SCRIPT_DIR}/mulmoterminal-stop" | tee -a "${LOG}" || true
 
 # tee に通すと終了コードが tee のものになり、npm の失敗が伝わらない。
 # 黙って先へ進むと、更新できていないのにアプリが「更新しました」と報告する。
 if ! MULMO_NPM="${NPM}" MULMO_NPM_CACHE="${NPM_CACHE}" \
   "${SCRIPT_DIR}/mulmo-npm-install" \
   "${HOME}/.local/share/mulmoterminal" mulmoterminal@latest >>"${LOG}" 2>&1; then
-  "${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
+  "${SCRIPT_DIR}/mulmoterminal-start" | tee -a "${LOG}" || true
   echo "MulmoTerminal: npm install に失敗したので、更新できませんでした" | tee -a "${LOG}"
   say_reason "npm install に失敗しました。回線を確認して、もう一度お試しください"
   exit 1
@@ -45,7 +45,7 @@ fi
   "${HOME}/.local/bin/mulmoterminal"
 
 "${SCRIPT_DIR}/mulmoterminal-check-update" | tee -a "${LOG}" || true
-"${HOME}/.local/bin/mulmoterminal-start" | tee -a "${LOG}" || true
+"${SCRIPT_DIR}/mulmoterminal-start" | tee -a "${LOG}" || true
 
 echo "After: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
 echo "Open: http://localhost:34567" | tee -a "${LOG}"
