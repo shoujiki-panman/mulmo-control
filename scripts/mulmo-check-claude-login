@@ -6,7 +6,7 @@ set -u
 # サーバーは動いたまま、コレクションの閲覧もできるので、外からは分かりにくい。
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT="${LOG_DIR}/claude-login.json"
 
 mkdir -p "${LOG_DIR}"

@@ -2,7 +2,7 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 CACHE="${LOG_DIR}/mulmo-updates.json"
 NPM_CACHE="/private/tmp/npm-cache-mulmo-control"
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"

@@ -80,7 +80,7 @@ ok(APP_DEST);
 step("設定を書き出す");
 const support = join(homedir(), "Library/Application Support/Mulmo Control");
 mkdirSync(support, { recursive: true });
-mkdirSync(join(homedir(), "Documents/Codex/SwiftBarLogs"), { recursive: true });
+mkdirSync(join(homedir(), "Library/Logs/Mulmo Control"), { recursive: true });
 const q = (v) => `'${String(v).replaceAll("'", "'\\''")}'`;
 const mulmoClaudeDir = process.env.MULMOCLAUDE_DIR ?? join(homedir(), "mulmoclaude");
 writeFileSync(join(support, "app-info.env"), [
@@ -92,7 +92,7 @@ writeFileSync(join(support, "app-info.env"), [
 ].join("\n"));
 // 「最新です」とはここで書かない。実際に入った版だけを事実として残し、判定は
 // アプリの確認に任せる（Issue #31）。
-writeFileSync(join(homedir(), "Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"),
+writeFileSync(join(homedir(), "Library/Logs/Mulmo Control/mulmo-control-self-update.json"),
   JSON.stringify({
     checkedAt: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     status: "unknown", installedVersion: version, latestVersion: "", detail: "確認中",

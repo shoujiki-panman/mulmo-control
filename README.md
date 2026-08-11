@@ -135,7 +135,7 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 
 - アプリ: `/Applications/Mulmo Control.app`
 - 補助スクリプト: アプリの中（`Mulmo Control.app/Contents/Resources/scripts`）
-- ログ: `~/Documents/Codex/SwiftBarLogs`
+- ログ: `~/Library/Logs/Mulmo Control`
 - MulmoTerminal データ: `~/.mulmoterminal`
 - MulmoTerminal 実行ファイル: `~/.local/bin/mulmoterminal`
 - MulmoClaude リポジトリ: `~/mulmoclaude`
@@ -177,7 +177,6 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 - Apple Developer ID 署名や notarization は未対応です
 - MulmoClaude の場所はインストール時に `MULMOCLAUDE_DIR` で変えられます
 - `claude` と `codex` は PATH から探すので、Homebrew でも npm global でも動きます
-- 補助スクリプトとログの置き場所（`~/Documents/Codex/...`）はまだ固定です
 - UI やセットアップ導線はまだ改善中です
 - macOS の `open` / LaunchServices の状態によっては、アプリの再認識に時間がかかることがあります
 

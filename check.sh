@@ -72,6 +72,19 @@ if [ -n "${BARE_BIN}" ]; then
 fi
 ok "コマンド文字列は tool() / bin() を通している"
 
+# 置き場所を ~/Documents/Codex から移した（Issue #4）。1箇所でも戻ると
+# 「アプリは新しい場所を読み、スクリプトは古い場所に書く」形になり、
+# 画面が「未確認」に落ちる。実際に一度やっている。
+LEGACY="$(grep -rn 'Documents/Codex' "${ROOT}/Sources/main.swift" "${ROOT}/scripts" \
+  "${ROOT}/install.sh" "${ROOT}/bin" 2>/dev/null \
+  | grep -v 'legacyLogDir\|let legacy ' \
+  | grep -v ':[0-9]*: *//\|:[0-9]*: *#' || true)"
+if [ -n "${LEGACY}" ]; then
+  printf '%s\n' "${LEGACY}"
+  fail "~/Documents/Codex を参照しています。logDir を使ってください（Issue #4）"
+fi
+ok "~/Documents/Codex を参照していない"
+
 # ── ビルドと配布物 ──────────────────────────────────────────────
 if [ "${BUILD}" = "1" ]; then
   step "ビルド"

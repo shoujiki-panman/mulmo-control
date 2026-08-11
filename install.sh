@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOCAL_BIN="${HOME}/.local/bin"
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"

@@ -2,7 +2,7 @@
 set -u
 
 echo "== MulmoClaude stdout =="
-/usr/bin/tail -n 80 "${HOME}/Documents/Codex/SwiftBarLogs/mulmoclaude.log" 2>/dev/null || true
+/usr/bin/tail -n 80 "${HOME}/Library/Logs/Mulmo Control/mulmoclaude.log" 2>/dev/null || true
 echo
 echo "== MulmoClaude stderr =="
-/usr/bin/tail -n 80 "${HOME}/Documents/Codex/SwiftBarLogs/mulmoclaude-error.log" 2>/dev/null || true
+/usr/bin/tail -n 80 "${HOME}/Library/Logs/Mulmo Control/mulmoclaude-error.log" 2>/dev/null || true
