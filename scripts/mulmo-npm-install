@@ -1,0 +1,53 @@
+#!/bin/zsh
+set -u
+
+# npm install を1回だけやり直す（Issue #8）。
+#
+#   mulmo-npm-install <入れ先> <パッケージ@版>
+#
+# 旧 Air の実測（2026-08-02）で、mulmoterminal の取得中に npm が ECONNRESET で
+# 落ちてインストールが途中で止まった。再実行したら23秒で通っている。回線起因の
+# 一度きりの失敗で、利用者に「もう一度やってください」と言うのは筋が悪い。
+#
+# 失敗の種類は見ない。「ECONNRESET だったら」のように上流の文言を当てにいくと、
+# 書き方が変わった時点で黙って効かなくなる（判断ログ v1.0.5 と同じ轍）。
+# 一度だけやり直して、それでも駄目なら今までどおり止まる。無限には試さない。
+#
+# npm の場所は MULMO_NPM で差し替えられる。テストで「1回だけ失敗する偽の npm」
+# を渡せるようにするため。
+
+PREFIX="${1:-}"
+SPEC="${2:-}"
+if [ -z "${PREFIX}" ] || [ -z "${SPEC}" ]; then
+  echo "使い方: mulmo-npm-install <入れ先> <パッケージ@版>" >&2
+  exit 2
+fi
+
+NPM="${MULMO_NPM:-$(command -v npm || true)}"
+if [ -z "${NPM}" ]; then
+  echo "npm が見つかりません。先に Node.js を入れてください。" >&2
+  exit 1
+fi
+
+CACHE="${MULMO_NPM_CACHE:-/private/tmp/npm-cache-mulmo-control}"
+WAIT="${MULMO_NPM_RETRY_WAIT:-5}"
+mkdir -p "${CACHE}"
+
+attempt() {
+  NPM_CONFIG_CACHE="${CACHE}" "${NPM}" install --prefix "${PREFIX}" "${SPEC}"
+}
+
+if attempt; then
+  exit 0
+fi
+
+echo "npm が失敗しました。回線の一時的な不調かもしれないので、${WAIT}秒待ってもう一度だけ試します。"
+sleep "${WAIT}"
+
+if attempt; then
+  echo "2回目で通りました。"
+  exit 0
+fi
+
+echo "2回試しましたが npm install に失敗しました。" >&2
+exit 1

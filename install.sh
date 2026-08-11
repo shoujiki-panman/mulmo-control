@@ -89,9 +89,9 @@ chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
 
 if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
   mkdir -p "${HOME}/.local/share/mulmoterminal" /private/tmp/npm-cache-mulmo-control
-  NPM_CONFIG_CACHE="/private/tmp/npm-cache-mulmo-control" "${NPM}" install \
-    --prefix "${HOME}/.local/share/mulmoterminal" \
-    mulmoterminal@latest
+  # 回線の一時的な失敗で止まらないよう、1回だけやり直す（Issue #8）
+  MULMO_NPM="${NPM}" "${ROOT}/scripts/mulmo-npm-install" \
+    "${HOME}/.local/share/mulmoterminal" mulmoterminal@latest
   ln -sf "${HOME}/.local/share/mulmoterminal/node_modules/.bin/mulmoterminal" "${LOCAL_BIN}/mulmoterminal"
 fi
 
