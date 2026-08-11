@@ -76,6 +76,20 @@ else
   ok "${CURRENT} → ${VERSION}（build ${BUILD_NO} → $((BUILD_NO + 1))）"
 fi
 
+# ── npm パッケージの版も合わせる ────────────────────────────────
+step "package.json を ${VERSION} にする"
+
+# インストーラは常に最新リリースを取りに行くので、npm 上の版が古くても
+# 入るアプリは新しい。ただし npm のページを見た人は「1.0.18 が最新」と
+# 読むので、番号は揃えておく。
+NPM_CURRENT="$(node -p "require('./package.json').version")"
+if [ "${NPM_CURRENT}" = "${VERSION}" ]; then
+  ok "既に ${VERSION}"
+else
+  node -e "const f='package.json',j=require('./'+f);j.version=process.argv[1];require('fs').writeFileSync(f,JSON.stringify(j,null,2)+'\n')" "${VERSION}"
+  ok "${NPM_CURRENT} → ${VERSION}"
+fi
+
 # ── ビルドして、配る前に中身を確かめる ──────────────────────────
 step "ビルド"
 APP="$("${ROOT}/build-app.sh")"
@@ -108,14 +122,14 @@ ok "$(du -h "${ZIP}" | cut -f1 | tr -d ' ')"
 
 if [ "${DRY_RUN}" = "1" ]; then
   printf '\n\033[33m--dry-run なのでここまで。%s は作っていません。\033[0m\n' "${TAG}"
-  git checkout -- Info.plist 2>/dev/null || true
+  git checkout -- Info.plist package.json 2>/dev/null || true
   exit 0
 fi
 
 # ── ここから戻せない操作 ────────────────────────────────────────
 step "コミットして push"
-if [ -n "$(git status --porcelain Info.plist)" ]; then
-  git add Info.plist
+if [ -n "$(git status --porcelain Info.plist package.json)" ]; then
+  git add Info.plist package.json
   git commit -q -m "Bump to ${VERSION}
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
@@ -151,6 +165,15 @@ PUBLISHED_SCRIPTS="$(ls "${CHECK_DIR}/Mulmo Control.app/Contents/Resources/scrip
 [ "${PUBLISHED_SCRIPTS}" = "${SOURCE_COUNT}" ] || fail "配信物の同梱スクリプトが ${PUBLISHED_SCRIPTS} 本です"
 codesign --verify --deep --strict "${CHECK_DIR}/Mulmo Control.app" 2>/dev/null || fail "配信物の署名が通りません"
 ok "同梱スクリプト ${PUBLISHED_SCRIPTS} 本・署名"
+
+# npm 側は bin/ が変わったときだけ出し直せばよい。インストーラは常に最新
+# リリースを取りに行くので、版が古くても入るアプリは新しい。
+if [ "$(npm view mulmo-control version 2>/dev/null)" != "${VERSION}" ]; then
+  printf '\n\033[33m! npm 上の版が古いままです（%s）。番号を揃えるなら:\033[0m\n' \
+    "$(npm view mulmo-control version 2>/dev/null || echo '取得できず')"
+  printf '    npm publish\n'
+  printf '  bin/ を変えていないなら、急ぐ必要はありません。\n'
+fi
 
 printf '\n\033[32m✓ %s を公開しました\033[0m\n' "${TAG}"
 printf '  https://github.com/shoujiki-panman/mulmo-control/releases/tag/%s\n' "${TAG}"

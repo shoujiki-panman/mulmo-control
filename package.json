@@ -1,6 +1,6 @@
 {
   "name": "mulmo-control",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新する macOS アプリのインストーラ",
   "bin": {
     "mulmo-control": "bin/mulmo-control.mjs"
