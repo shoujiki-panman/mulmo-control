@@ -16,11 +16,11 @@ if [ "${1:-check}" = "apply" ] && [ "${MULMO_SELF_UPDATE_DETACHED:-0}" != "1" ];
 fi
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 CONFIG="${APP_SUPPORT}/app-info.env"
-STATUS="${HOME}/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
-LOG="${HOME}/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.log"
+STATUS="${HOME}/Library/Logs/Mulmo Control/mulmo-control-self-update.json"
+LOG="${HOME}/Library/Logs/Mulmo Control/mulmo-control-self-update.log"
 DEFAULT_REPO="https://github.com/shoujiki-panman/mulmo-control.git"
 
-mkdir -p "${APP_SUPPORT}" "${HOME}/Documents/Codex/SwiftBarLogs"
+mkdir -p "${APP_SUPPORT}" "${HOME}/Library/Logs/Mulmo Control"
 
 APP_PLIST="/Applications/Mulmo Control.app/Contents/Info.plist"
 

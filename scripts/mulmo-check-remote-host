@@ -7,7 +7,7 @@ set -u
 # （receptron/mulmoterminal#823, #1045）。
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT="${LOG_DIR}/remote-host.json"
 BASE="http://127.0.0.1:34567"
 

@@ -41,16 +41,43 @@ private func appleScriptStringLiteral(_ value: String) -> String {
         .replacingOccurrences(of: "\n", with: "\\n")
     return "\"\(escaped)\""
 }
-private let updatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
-private let mulmoUpdatesPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-updates.json"
-private let selfUpdatePath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-self-update.json"
-private let claudeLoginPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/claude-login.json"
-private let remoteHostPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/remote-host.json"
-private let lastUpdateReportPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update.txt"
+/// ログと状態ファイルの置き場所（Issue #4）。
+///
+/// 以前は ~/Documents/Codex/SwiftBarLogs だった。SwiftBar は Mulmo Control とは
+/// 別のツールで、作者の環境から持ち越した名前。他人の Mac に、入れた覚えのない
+/// 名前のフォルダが Documents にできていた。Documents を iCloud で同期している
+/// 人には同期対象にもなる。macOS が用意している場所へ移した。
+private let logDir = "\(homeDir)/Library/Logs/Mulmo Control"
+private let legacyLogDir = "\(homeDir)/Documents/Codex/SwiftBarLogs"
+
+/// 古い置き場所から一度だけ引き継ぐ。
+///
+/// やらないと、これまでの更新履歴が消えたように見える。上書きはしない
+/// （新しい場所に既にあるほうが新しい）。移し終えても古いフォルダは消さない。
+/// 中に SwiftBar 本体のログなど、こちらの与り知らぬものが混ざっている
+/// 可能性があるため。
+private func migrateLegacyLogsIfNeeded() {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: legacyLogDir) else { return }
+    try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
+    guard let names = try? fm.contentsOfDirectory(atPath: legacyLogDir) else { return }
+    for name in names where name.hasPrefix("mulmo") || name.hasPrefix("claude-") || name.hasPrefix("remote-host") {
+        let to = "\(logDir)/\(name)"
+        guard !fm.fileExists(atPath: to) else { continue }
+        try? fm.copyItem(atPath: "\(legacyLogDir)/\(name)", toPath: to)
+    }
+}
+
+private let updatePath = "\(logDir)/mulmoterminal-update.json"
+private let mulmoUpdatesPath = "\(logDir)/mulmo-updates.json"
+private let selfUpdatePath = "\(logDir)/mulmo-control-self-update.json"
+private let claudeLoginPath = "\(logDir)/claude-login.json"
+private let remoteHostPath = "\(logDir)/remote-host.json"
+private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
-private let updateReasonsPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-update-reasons.txt"
-private let lastUpdateSummaryPath = "\(homeDir)/Documents/Codex/SwiftBarLogs/mulmo-control-last-update-summary.txt"
+private let updateReasonsPath = "\(logDir)/mulmo-update-reasons.txt"
+private let lastUpdateSummaryPath = "\(logDir)/mulmo-control-last-update-summary.txt"
 // install.sh が書き出す app-info.env から MulmoClaude の場所を読む
 private func configuredMulmoClaudeDir() -> String {
     let fallback = "\(homeDir)/mulmoclaude"
@@ -299,6 +326,7 @@ final class ControlModel: ObservableObject {
     private static let idleInterval: TimeInterval = 60
 
     init() {
+        migrateLegacyLogsIfNeeded()
         requestNotificationPermission()
         refresh()
         checkUpdatesSilentlyIfNeeded(force: true)
@@ -554,7 +582,7 @@ final class ControlModel: ObservableObject {
     }
 
     func openMCLogs() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: "\(homeDir)/Documents/Codex/SwiftBarLogs"))
+        NSWorkspace.shared.open(URL(fileURLWithPath: logDir))
     }
 
     func openActionLog() {
@@ -805,7 +833,7 @@ final class ControlModel: ObservableObject {
             // のにログへ誘導すると、読まなくていいものを読ませることになる
             // （Issue #46）。
             if !outcome.stalled.contains(where: { $0.contains(" — ") }) {
-                lines.append("ログ: \(homeDir)/Documents/Codex/SwiftBarLogs")
+                lines.append("ログ: \(logDir)")
             }
         }
         let detail = lines.isEmpty ? "変更内容は確認できませんでした" : lines.joined(separator: "\n")

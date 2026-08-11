@@ -2,7 +2,7 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT="${LOG_DIR}/mulmo-control-last-update-summary.txt"
 ITEMS_B64="${MULMO_RELEASE_ITEMS_B64:-}"
 

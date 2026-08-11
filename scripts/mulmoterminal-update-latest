@@ -4,7 +4,7 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/mulmoterminal-update.log"
 NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
 

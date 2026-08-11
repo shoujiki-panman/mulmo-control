@@ -2,10 +2,10 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-CACHE="${HOME}/Documents/Codex/SwiftBarLogs/mulmoterminal-update.json"
+CACHE="${HOME}/Library/Logs/Mulmo Control/mulmoterminal-update.json"
 NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
 
-mkdir -p "${HOME}/Documents/Codex/SwiftBarLogs" "${NPM_CACHE}"
+mkdir -p "${HOME}/Library/Logs/Mulmo Control" "${NPM_CACHE}"
 
 current="unknown"
 latest="unknown"

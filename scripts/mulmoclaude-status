@@ -10,5 +10,5 @@ echo "Open:"
 echo "http://127.0.0.1:5173"
 echo
 echo "Logs:"
-echo "${HOME}/Documents/Codex/SwiftBarLogs/mulmoclaude.log"
-echo "${HOME}/Documents/Codex/SwiftBarLogs/mulmoclaude-error.log"
+echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude.log"
+echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude-error.log"

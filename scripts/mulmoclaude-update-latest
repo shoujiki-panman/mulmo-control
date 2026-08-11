@@ -9,7 +9,7 @@ if [ -f "${CONFIG}" ]; then
   . "${CONFIG}"
 fi
 APP_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
-LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/mulmoclaude-update.log"
 
 mkdir -p "${LOG_DIR}"
