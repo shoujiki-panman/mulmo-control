@@ -1,6 +1,11 @@
 #!/bin/zsh
 set -eu
 
-"${HOME}/.local/bin/mulmoterminal-stop" || true
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ。アプリに同梱された写しから
+# 実行されても、~/.local/bin の写しから実行されても、同じ組み合わせで動く
+# （Issue #51）。~/.local/bin は install.sh を通さないと存在しない。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+"${SCRIPT_DIR}/mulmoterminal-stop" || true
 sleep 1
-"${HOME}/.local/bin/mulmoterminal-start"
+"${SCRIPT_DIR}/mulmoterminal-start"
