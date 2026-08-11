@@ -45,6 +45,15 @@ npx mulmo-control
 
 Claude Code や MulmoTerminal と同じ流儀です。
 
+### 開発者向け: publish 前に手元で試す
+
+```bash
+npm pack
+npx --package=./mulmo-control-<版>.tgz -- mulmo-control
+```
+
+`npx ./mulmo-control-<版>.tgz` と書くと `Permission denied` になります。npx はパスを「実行するファイル」と解釈するので、`--package=` で入れる物を、`--` の後ろで実行するコマンド名を、分けて渡す必要があります。公開後の `npx mulmo-control` では起きません。
+
 ### 開発者向け: 手元でビルドして入れる
 
 ```bash
