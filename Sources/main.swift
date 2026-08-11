@@ -830,7 +830,40 @@ final class ControlModel: ObservableObject {
     }
 
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            Task { @MainActor in self.announceFirstLaunchIfNeeded(granted: granted) }
+        }
+    }
+
+    /// 初回だけ「メニューバーに入りました」と知らせる（Issue #9）。
+    ///
+    /// このアプリはウィンドウも Dock アイコンも出さないので、初回は本当に何も
+    /// 起きていないように見える。最初の外部利用者が「起動できない」と報告した
+    /// ときも、実際はインストールの失敗だったが、成功していても気づけなかった。
+    ///
+    /// npx で入れた人には特に効く。install.sh はダイアログを出すが、npx は
+    /// 端末に文字を出すだけで、ターミナルの出力を読まない人こそこのアプリの
+    /// 対象なので。
+    ///
+    /// 印は UserDefaults に置く。issue には app-info.env に置く案が書かれて
+    /// いたが、あれは install.sh が毎回書き直すので、更新のたびに通知が
+    /// 再発してしまう。
+    private func announceFirstLaunchIfNeeded(granted: Bool) {
+        let key = "mulmo-control.first-launch-announced"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        // 通知を出せたかに関わらず印を付ける。出せなかったからと言って毎回
+        // 試すと、許可しなかった人に許可を求め続けることになる。
+        UserDefaults.standard.set(true, forKey: key)
+        guard granted else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Mulmo Control をメニューバーに追加しました"
+        content.body = "画面いちばん上の帯の右のほう、時計や Wi-Fi の並びにある >_ アイコンから操作できます"
+        content.sound = .default
+
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "mulmo-control-first-launch", content: content, trigger: nil)
+        )
     }
 
     private func notifyIfNeeded(for items: [MulmoUpdateItem]) {
