@@ -147,8 +147,13 @@ PUBLISHED="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
 [ "${PUBLISHED}" = "${VERSION}" ] || fail "配信されているのは ${PUBLISHED} です（期待: ${VERSION}）"
 ok "latest が返すのは ${PUBLISHED}"
 
+# 本数は scripts/ を数え直す。以前は配る前の検証で作った変数を使い回して
+# いたが、その検証を check.sh に切り出したときに未定義になり、公開したあとの
+# 確認だけが落ちた（v1.0.20）。ここで完結させる。
+SOURCE_COUNT="$(ls "${ROOT}/scripts" | wc -l | tr -d ' ')"
 PUBLISHED_SCRIPTS="$(ls "${CHECK_DIR}/Mulmo Control.app/Contents/Resources/scripts" | wc -l | tr -d ' ')"
-[ "${PUBLISHED_SCRIPTS}" = "${SOURCE_COUNT}" ] || fail "配信物の同梱スクリプトが ${PUBLISHED_SCRIPTS} 本です"
+[ "${PUBLISHED_SCRIPTS}" = "${SOURCE_COUNT}" ] \
+  || fail "配信物の同梱スクリプトが ${PUBLISHED_SCRIPTS} 本です（scripts/ には ${SOURCE_COUNT} 本）"
 codesign --verify --deep --strict "${CHECK_DIR}/Mulmo Control.app" 2>/dev/null || fail "配信物の署名が通りません"
 ok "同梱スクリプト ${PUBLISHED_SCRIPTS} 本・署名"
 
