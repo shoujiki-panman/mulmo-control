@@ -32,12 +32,28 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 ## インストール
 
 ```bash
+npx mulmo-control
+```
+
+これだけです。GitHub Releases からビルド済みのアプリを取ってきて `/Applications` に置き、そのまま起動します。
+
+### なぜ zip をダウンロードして置く方式ではないのか
+
+ブラウザで zip を落とすと macOS が隔離マークを付け、Gatekeeper がダブルクリックを止めます。macOS 15 以降は右クリック → 開く の抜け道も塞がれていて、「マルウェアが含まれていないことを検証できませんでした」という表示をシステム設定から押し切ってもらうしかありません。
+
+隔離マークを付けるのはダウンロードしたアプリ（ブラウザ）であって、ファイルそのものの性質ではありません。`npx` が取ってきたものには付かないので、そのまま開けます。Apple Developer Program（年 99 USD）の署名は要りません。
+
+Claude Code や MulmoTerminal と同じ流儀です。
+
+### 開発者向け: 手元でビルドして入れる
+
+```bash
 git clone https://github.com/shoujiki-panman/mulmo-control.git
 cd mulmo-control
 ./install.sh
 ```
 
-`install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。npm が見つからない場合は、何も書き込む前に理由を出して止まります。
+`install.sh` は、ビルド済みのアプリを GitHub Releases からダウンロードして `/Applications` に置き、LaunchAgent の定義ファイルを用意します。`MULMO_CONTROL_BUILD=1 ./install.sh` で手元ビルドにもできます。
 
 ### MulmoClaude について
 

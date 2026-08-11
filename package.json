@@ -1,0 +1,35 @@
+{
+  "name": "mulmo-control",
+  "version": "1.0.18",
+  "description": "MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新する macOS アプリのインストーラ",
+  "bin": {
+    "mulmo-control": "bin/mulmo-control.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "keywords": [
+    "mulmoterminal",
+    "mulmoclaude",
+    "menubar",
+    "macos"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shoujiki-panman/mulmo-control.git"
+  },
+  "homepage": "https://github.com/shoujiki-panman/mulmo-control#readme",
+  "bugs": {
+    "url": "https://github.com/shoujiki-panman/mulmo-control/issues"
+  },
+  "license": "MIT",
+  "author": "shoujiki-panman"
+}
