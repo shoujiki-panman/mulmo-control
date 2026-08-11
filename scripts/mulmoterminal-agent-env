@@ -1,0 +1,23 @@
+#!/bin/zsh
+# LaunchAgent まわりの共有定義。実行するものではなく source して使う。
+#
+# ラベルとポートが5箇所に散らばっていて、変えるときに拾い漏れる形だった
+# （Issue #7）。ここ1箇所にまとめてある。
+#
+# 名前が mulmoterminal- で始まっているのは意図的で、install.sh が
+# scripts/mulmoterminal-* を ~/.local/bin へ配るときに一緒に付いてくる。
+# LaunchAgent から起動される側もこの定義を読める必要がある。
+
+# ラベルは変えると既存利用者の LaunchAgent を入れ替える必要があるので、
+# 値そのものは据え置き。作者名が入っているのは Issue #7 で扱う。
+MULMO_AGENT_LABEL="com.shutanuma.mulmoterminal"
+
+# 既に使われている場合の逃げ道として環境変数で上書きできる。
+# 既定を変えるとアプリ側の URL やポート監視とずれるので、まずはこのまま。
+MULMO_AGENT_PORT="${MULMOTERMINAL_PORT:-34567}"
+MULMO_AGENT_HOST="${MULMOTERMINAL_HOST:-127.0.0.1}"
+
+MULMO_AGENT_PLIST="${HOME}/Library/LaunchAgents/${MULMO_AGENT_LABEL}.plist"
+MULMO_AGENT_DOMAIN="gui/$(id -u)"
+MULMO_AGENT_ENABLED="${HOME}/.mulmoterminal/keepalive-enabled"
+MULMO_AGENT_LOG_DIR="${HOME}/.mulmoterminal/logs"

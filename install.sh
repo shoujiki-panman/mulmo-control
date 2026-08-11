@@ -6,8 +6,6 @@ LOG_DIR="${HOME}/Documents/Codex/SwiftBarLogs"
 LOCAL_BIN="${HOME}/.local/bin"
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
-LABEL="com.shutanuma.mulmoterminal"
-PLIST="${LAUNCH_AGENT_DIR}/${LABEL}.plist"
 REPO_URL="$(git -C "${ROOT}" config --get remote.origin.url 2>/dev/null || echo "https://github.com/shoujiki-panman/mulmo-control.git")"
 COMMIT="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || echo "unknown")"
 MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
@@ -28,9 +26,7 @@ fi
 # MulmoClaude が無くても Mulmo Control は入る。アプリ側に「未インストール」表示と
 # 「入手」ボタンの導線があるので、ここで止めるとそこへ辿り着けない。
 # LaunchAgent の作業ディレクトリだけは実在する場所が要るので $HOME に逃がす。
-WORK_DIR="${MULMOCLAUDE_DIR}"
 if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
-  WORK_DIR="${HOME}"
   echo "MulmoClaude が ${MULMOCLAUDE_DIR} に見つかりません。このまま続けます。" >&2
   echo "MulmoTerminal だけなら、このままで使えます。" >&2
   echo "MulmoClaude も使う場合は、次で入れてから ./install.sh をやり直してください:" >&2
@@ -39,8 +35,6 @@ if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
   echo "  MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh" >&2
 fi
 
-CLAUDE_BIN="$(command -v claude || echo "${LOCAL_BIN}/claude")"
-CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "${LOG_DIR}" "${LOCAL_BIN}" "${APP_SUPPORT}" "${HOME}/.mulmoterminal/logs" "${LAUNCH_AGENT_DIR}"
 
@@ -95,52 +89,11 @@ if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
   ln -sf "${HOME}/.local/share/mulmoterminal/node_modules/.bin/mulmoterminal" "${LOCAL_BIN}/mulmoterminal"
 fi
 
-cat > "${PLIST}" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${LOCAL_BIN}/start-mulmoterminal.sh</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${WORK_DIR}</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>${LOCAL_BIN}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>PORT</key>
-    <string>34567</string>
-    <key>MULMOTERMINAL_HOST</key>
-    <string>127.0.0.1</string>
-    <key>CLAUDE_CWD</key>
-    <string>${WORK_DIR}</string>
-    <key>CLAUDE_BIN</key>
-    <string>${CLAUDE_BIN}</string>
-    <key>CODEX_BIN</key>
-    <string>${CODEX_BIN}</string>
-    <key>MULMOTERMINAL_NO_UPDATE_CHECK</key>
-    <string>1</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>${HOME}/.mulmoterminal/logs/host.log</string>
-  <key>StandardErrorPath</key>
-  <string>${HOME}/.mulmoterminal/logs/host-error.log</string>
-</dict>
-</plist>
-PLIST
-
-plutil -lint "${PLIST}" >/dev/null
+# LaunchAgent の定義は mulmoterminal-install-agent が書く（Issue #12）。
+# 以前はここのヒアドキュメントが唯一の生成元で、ターミナルを通らない人は
+# 常駐を有効にできなかった。定義を1箇所に寄せたので、アプリの 起動 からも
+# 同じものが作られる。
+MULMO_CONTROL_MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR}" "${LOCAL_BIN}/mulmoterminal-install-agent" >/dev/null
 
 rm -rf "/Applications/Mulmo Control.app"
 ditto "${APP_PATH}" "/Applications/Mulmo Control.app"

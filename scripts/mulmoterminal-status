@@ -1,8 +1,11 @@
 #!/bin/zsh
 set -eu
 
-label="com.shutanuma.mulmoterminal"
-domain="gui/$(id -u)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
+
+label="${MULMO_AGENT_LABEL}"
+domain="${MULMO_AGENT_DOMAIN}"
 
 if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
   echo "MulmoTerminal: loaded"
