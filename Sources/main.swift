@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UserNotifications
+import ServiceManagement
 
 private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 private let localBin = "\(homeDir)/.local/bin"
@@ -857,6 +858,56 @@ final class ControlModel: ObservableObject {
         beforeVersions = [:]
     }
 
+    /// ログイン時に Mulmo Control 自身を立ち上げるか（Issue #60）。
+    ///
+    /// メニューバーに常駐するアプリなのに、再起動すると居なくなっていた。
+    /// これまで動いていたのは、利用者が SwiftBar 時代に手で置いた LaunchAgent が
+    /// 残っていたからで、アプリ名を変えたときに追随せず壊れていた。配った人には
+    /// そもそもその仕組みが無い。
+    ///
+    /// SMAppService.mainApp を使う。システム設定の「一般 → ログイン項目」に
+    /// 出るので、切りたい人が自分で切れる。plist を置く必要もない。
+    ///
+    /// 既定はオフ。入れた覚えのないものがログイン項目に増えるのは驚きが大きい。
+    var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+
+    /// 手で置かれた LaunchAgent。SwiftBar 時代の名残で、同じラベルを使っている
+    /// 人がいる（作者がそうだった）。両方を有効にすると、ログイン時に2つの経路から
+    /// 起動されることになる。気づける形にしておく。
+    private var legacyLoginAgent: String {
+        "\(homeDir)/Library/LaunchAgents/com.shutanuma.mulmocontrol.plist"
+    }
+    var hasLegacyLoginAgent: Bool { FileManager.default.fileExists(atPath: legacyLoginAgent) }
+
+    /// ログイン項目の登録は macOS が拒むことがある（利用者が設定で切った直後など）。
+    /// 黙って失敗すると、押したのに変わらない画面になるので理由を出す。
+    func toggleLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+                if hasLegacyLoginAgent {
+                    showMessage(
+                        title: "古い自動起動の設定が残っています",
+                        text: "以前どこかで置かれた設定ファイルが同じ役目を持っているので、ログイン時に二重で起動します。次を削除してください。\n\n\(legacyLoginAgent)"
+                    )
+                }
+            }
+        } catch {
+            showMessage(
+                title: "ログイン時の起動を切り替えられませんでした",
+                text: "システム設定の「一般 → ログイン項目」から Mulmo Control を切り替えてください。\n\n\(errorText(error))"
+            )
+        }
+        objectWillChange.send()
+    }
+
+    private func errorText(_ error: Error) -> String {
+        let ns = error as NSError
+        return ns.localizedDescription.isEmpty ? "\(ns.domain) \(ns.code)" : ns.localizedDescription
+    }
+
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             Task { @MainActor in self.announceFirstLaunchIfNeeded(granted: granted) }
@@ -1587,6 +1638,13 @@ struct SetupPanel: View {
                     )
                 }
                 SetupRow(title: "ログイン時起動・落ちたら再起動", detail: model.reviveEnabled ? "オン" : "オフ", ok: model.reviveEnabled)
+                SetupRow(
+                    title: "Mulmo Control をログイン時に開く",
+                    detail: model.launchAtLogin ? "オン" : "オフ",
+                    ok: model.launchAtLogin,
+                    buttonTitle: model.launchAtLogin ? "やめる" : "オンにする",
+                    action: model.toggleLaunchAtLogin
+                )
             }
             Hairline()
                 .padding(.vertical, 2)
