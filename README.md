@@ -155,6 +155,9 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 ```
 
 ビルド結果は `build/Mulmo Control.app` にできます。
+配る前と修正後の確認は `./check.sh` でまとめて実行します。
+セキュリティ観点と AI に修正させる時の流れは [SECURITY.md](SECURITY.md) にまとめています。
+AI エージェントに触らせる時は、最初に `./qa/diagnose`、`./qa/check`、`./qa/next` を実行させます。
 
 ### リリース
 

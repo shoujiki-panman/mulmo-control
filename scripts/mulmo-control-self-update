@@ -9,11 +9,14 @@ PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbi
 # 実行するので、消えたファイルの続きを読もうとすると途中で死ぬ。
 # バンドルの外に自分の写しを作り、そちらへ移ってから作業する。
 if [ "${1:-check}" = "apply" ] && [ "${MULMO_SELF_UPDATE_DETACHED:-0}" != "1" ]; then
+  original_script_dir="$(cd "$(dirname "$0")" && pwd)"
   detached="$(/usr/bin/mktemp -t mulmo-control-self-update)"
   /bin/cat "$0" > "${detached}"
   /bin/chmod +x "${detached}"
-  MULMO_SELF_UPDATE_DETACHED=1 exec "${detached}" "$@"
+  MULMO_SELF_UPDATE_SCRIPT_DIR="${original_script_dir}" MULMO_SELF_UPDATE_DETACHED=1 exec "${detached}" "$@"
 fi
+SCRIPT_DIR="${MULMO_SELF_UPDATE_SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+. "${SCRIPT_DIR}/mulmo-control-config"
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 CONFIG="${APP_SUPPORT}/app-info.env"
 STATUS="${HOME}/Library/Logs/Mulmo Control/mulmo-control-self-update.json"
@@ -28,11 +31,26 @@ repo_url="${DEFAULT_REPO}"
 source_dir="${APP_SUPPORT}/source"
 branch="main"
 
-if [ -f "${CONFIG}" ]; then
-  source "${CONFIG}"
-  repo_url="${MULMO_CONTROL_REPO_URL:-${repo_url}}"
-  source_dir="${MULMO_CONTROL_SOURCE_DIR:-${source_dir}}"
-  branch="${MULMO_CONTROL_BRANCH:-${branch}}"
+configured_repo_url="$(mulmo_control_config_value "MULMO_CONTROL_REPO_URL" "${CONFIG}")"
+configured_source_dir="$(mulmo_control_config_value "MULMO_CONTROL_SOURCE_DIR" "${CONFIG}")"
+configured_branch="$(mulmo_control_config_value "MULMO_CONTROL_BRANCH" "${CONFIG}")"
+
+repo_url="${configured_repo_url:-${repo_url}}"
+source_dir="${configured_source_dir:-${source_dir}}"
+branch="${configured_branch:-${branch}}"
+
+if [ "${MULMO_CONTROL_TEST_PRINT_CONFIG:-0}" = "1" ]; then
+  REPO_URL="${repo_url}" SOURCE_DIR="${source_dir}" BRANCH="${branch}" /usr/bin/python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "repoUrl": os.environ["REPO_URL"],
+    "sourceDir": os.environ["SOURCE_DIR"],
+    "branch": os.environ["BRANCH"],
+}, ensure_ascii=False))
+PY
+  exit 0
 fi
 
 write_status() {

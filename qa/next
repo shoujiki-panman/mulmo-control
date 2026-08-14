@@ -1,0 +1,32 @@
+#!/bin/zsh
+set -eu
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PATTERNS="${ROOT}/qa/patterns.tsv"
+
+PATTERNS="${PATTERNS}" /usr/bin/python3 - <<'PY'
+import csv
+import os
+
+priority = ["fast", "sandbox", "release", "manual", "governance"]
+
+with open(os.environ["PATTERNS"], encoding="utf-8", newline="") as f:
+    rows = list(csv.DictReader(f, delimiter="\t"))
+
+todos = [row for row in rows if row["status"] != "covered"]
+for gate in priority:
+    for row in todos:
+        if row["gate"] == gate:
+            print("Next QA item")
+            print(f"  id: {row['id']}")
+            print(f"  gate: {row['gate']}")
+            print(f"  title: {row['title']}")
+            print("\nHow to work:")
+            print("  1. Add or extend a failing deterministic check.")
+            print("  2. Make the smallest fix.")
+            print("  3. Run ./qa/check.")
+            print("  4. If this item is now covered, mark it covered in qa/patterns.tsv and lower the baseline if needed.")
+            raise SystemExit(0)
+
+print("No todo QA items remain.")
+PY

@@ -5,11 +5,11 @@ PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbi
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 CACHE="${LOG_DIR}/mulmo-updates.json"
 NPM_CACHE="/private/tmp/npm-cache-mulmo-control"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmo-control-config"
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-MULMOCLAUDE_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+configured_mulmoclaude_dir="$(mulmo_control_config_value "MULMO_CONTROL_MULMOCLAUDE_DIR" "${CONFIG}")"
+MULMOCLAUDE_DIR="${configured_mulmoclaude_dir:-${HOME}/mulmoclaude}"
 
 mkdir -p "${LOG_DIR}" "${NPM_CACHE}"
 

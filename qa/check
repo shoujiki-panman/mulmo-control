@@ -1,0 +1,72 @@
+#!/bin/zsh
+set -eu
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${ROOT}"
+
+MODE="${1:-auto}"
+case "${MODE}" in
+  --full|full)
+    ./check.sh
+    ;;
+  --no-build|no-build)
+    ./check.sh --no-build
+    ;;
+  auto)
+    if [ -d "${ROOT}/build/Mulmo Control.app" ]; then
+      ./check.sh --no-build
+    else
+      ./check.sh
+    fi
+    ;;
+  *)
+    echo "usage: ./qa/check [--full|--no-build]" >&2
+    exit 2
+    ;;
+esac
+
+PATTERNS="${ROOT}/qa/patterns.tsv" \
+BASELINE="${ROOT}/.mulmo-control-qa/baseline.json" \
+/usr/bin/python3 - <<'PY'
+import csv
+import json
+import os
+import sys
+from collections import Counter
+
+with open(os.environ["PATTERNS"], encoding="utf-8", newline="") as f:
+    rows = list(csv.DictReader(f, delimiter="\t"))
+
+with open(os.environ["BASELINE"], encoding="utf-8") as f:
+    baseline = json.load(f)
+
+todo_by_gate = Counter(row["gate"] for row in rows if row["status"] != "covered")
+covered = sum(1 for row in rows if row["status"] == "covered")
+current = {
+    "todo_total": len(rows) - covered,
+    "todo_fast": todo_by_gate["fast"],
+    "todo_release": todo_by_gate["release"],
+    "todo_sandbox": todo_by_gate["sandbox"],
+    "todo_manual": todo_by_gate["manual"],
+    "todo_governance": todo_by_gate["governance"],
+}
+
+failures = []
+for key, value in current.items():
+    ceiling = baseline.get("ceilings", {}).get(key)
+    if ceiling is None:
+        failures.append(f"{key} has no baseline ceiling")
+    elif value > ceiling:
+        failures.append(f"{key} is {value}, above baseline {ceiling}")
+
+if failures:
+    print("\nQA baseline failed:", file=sys.stderr)
+    for failure in failures:
+        print(f"  - {failure}", file=sys.stderr)
+    print("Do not raise the baseline just to pass. Cover or justify the new item.", file=sys.stderr)
+    raise SystemExit(1)
+
+print("\nQA baseline: ok")
+for key, value in current.items():
+    print(f"  {key}: {value} / {baseline['ceilings'][key]}")
+PY

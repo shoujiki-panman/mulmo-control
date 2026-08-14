@@ -1,0 +1,62 @@
+#!/bin/zsh
+set -u
+
+mulmo_control_config_path() {
+  printf '%s' "${HOME}/Library/Application Support/Mulmo Control/app-info.env"
+}
+
+mulmo_control_config_value() {
+  local key="$1"
+  local path="${2:-$(mulmo_control_config_path)}"
+  [ -f "${path}" ] || return 0
+
+  CONFIG_PATH="${path}" CONFIG_KEY="${key}" /usr/bin/python3 - <<'PY'
+import os
+import re
+
+path = os.environ["CONFIG_PATH"]
+key = os.environ["CONFIG_KEY"]
+if not re.fullmatch(r"[A-Z0-9_]+", key):
+    raise SystemExit(0)
+
+
+def decode_single_quoted_shell_word(raw):
+    raw = raw.strip()
+    out = []
+    i = 0
+    while i < len(raw):
+        if raw[i] != "'":
+            return None
+        i += 1
+        start = i
+        while i < len(raw) and raw[i] != "'":
+            i += 1
+        if i >= len(raw):
+            return None
+        out.append(raw[start:i])
+        i += 1
+        if i == len(raw):
+            return "".join(out)
+        if i + 1 < len(raw) and raw[i] == "\\" and raw[i + 1] == "'":
+            out.append("'")
+            i += 2
+            continue
+        return None
+    return "".join(out) if raw == "''" else None
+
+
+prefix = f"{key}="
+try:
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.startswith(prefix):
+                continue
+            value = decode_single_quoted_shell_word(line[len(prefix):])
+            if value is not None:
+                print(value, end="")
+            break
+except FileNotFoundError:
+    pass
+PY
+}

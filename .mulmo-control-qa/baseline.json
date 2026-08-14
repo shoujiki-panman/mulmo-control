@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "issue": 67,
+  "source": "qa/patterns.tsv",
+  "note": "These ceilings are the current coverage catalog baseline. Lower them when items become covered; do not raise them just to pass qa/check.",
+  "ceilings": {
+    "todo_total": 81,
+    "todo_fast": 42,
+    "todo_release": 15,
+    "todo_sandbox": 7,
+    "todo_manual": 13,
+    "todo_governance": 4
+  }
+}

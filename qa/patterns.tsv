@@ -1,0 +1,101 @@
+id	gate	status	title
+001	fast	todo	app-info.envが存在しない場合は既定値に落ちる
+002	fast	todo	空のapp-info.envで落ちない
+003	fast	covered	正常なMULMO_CONTROL_REPO_URLを読める
+004	fast	covered	正常なMULMO_CONTROL_SOURCE_DIRを読める
+005	fast	covered	正常なMULMO_CONTROL_BRANCHを読める
+006	fast	todo	正常なMULMO_CONTROL_MULMOCLAUDE_DIRを読める
+007	fast	todo	未知のキーは無視する
+008	fast	covered	touch行は実行されない
+009	fast	todo	$()を含む値や行は実行されない
+010	fast	todo	backtickを含む値や行は実行されない
+011	fast	todo	パスに空白があってもcommand stringが壊れない
+012	fast	covered	パスにsingle quoteがあってもconfig parserが読める
+013	fast	todo	MulmoClaude dirに空白があってもstart scriptが壊れない
+014	fast	todo	MulmoClaude dirにsingle quoteがあってもLaunchAgent plistが壊れない
+015	fast	todo	ApplicationsのMulmo Control.appを裸でshellに埋め込まない
+016	fast	covered	toolsDirはSwift側でhelper経由になる
+017	fast	covered	localBinはSwift側でhelper経由になる
+018	fast	todo	XML plist値に&,<,>が入ってもescapeされる
+019	fast	todo	log pathに空白があってもtail/openが壊れない
+020	fast	covered	app bundle内の同梱scriptを空白入りpathから実行できる
+021	fast	todo	shell entrypointはshebangを持つ
+022	fast	todo	shell entrypointはset -uまたはset -euを持つ
+023	fast	covered	curl|shやwget|shがない
+024	fast	covered	evalがない
+025	fast	covered	sudoがない
+026	fast	todo	許可していないrm -rfがない
+027	fast	todo	rm -rfは固定対象かtemporary dirに限定される
+028	fast	covered	script syntaxをzsh -nで検査する
+029	fast	covered	background jobのnice警告が検査出力に出ない
+030	fast	covered	helper scriptが同梱scripts数に含まれる
+031	release	todo	macOS 14未満でinstallが止まる
+032	release	todo	npmがない場合にinstallが明確に止まる
+033	release	todo	MulmoClaudeがない場合もMulmoTerminal用途ではinstallが続く
+034	release	todo	MULMOCLAUDE_DIR指定がapp-info.envに保存される
+035	release	todo	build済みzip取得成功時はlocal buildに落ちない
+036	release	todo	zip取得失敗時はlocal buildにfallbackする
+037	release	todo	MULMO_CONTROL_BUILD=1で必ずlocal buildする
+038	release	todo	install後にApplicationsのappが存在する
+039	manual	todo	uninstallはappとLaunchAgentを消しログ/データは残す
+040	manual	todo	uninstall後に再installできる
+041	fast	todo	self-update checkはinstalled versionをInfo.plistから読む
+042	fast	todo	release tagが読めない時はunknown statusを書く
+043	fast	todo	installedがlatestと同じならcurrent
+044	fast	todo	installedがlatestより新しければcurrent
+045	fast	todo	installedが古ければupdate
+046	fast	todo	self-update applyはdetached copyで動く
+047	release	todo	source repoが既存gitならfetch/pullする
+048	release	todo	source repoがなければcloneする
+049	release	todo	apply失敗時にlogが残る
+050	manual	todo	self-update後にアプリを再起動できる
+051	fast	todo	mulmoterminal-agent-envはsibling scriptとして読まれる
+052	fast	todo	LaunchAgent plistはplutil -lintに通る
+053	fast	todo	LaunchAgent WorkingDirectoryがない時はHOMEに逃がす
+054	fast	todo	locale fallback LANG=C.UTF-8がstart scriptにある
+055	fast	todo	既にport 34567が応答中なら二重起動しない
+056	manual	todo	起動ボタンでLaunchAgentがbootstrapされる
+057	manual	todo	停止ボタンでLaunchAgentがbootoutされる
+058	manual	todo	再起動ボタンでkickstartまたは再起動できる
+059	manual	todo	keepalive-enabledの作成/削除が期待通り
+060	manual	todo	自動起動したMulmoTerminalで日本語がunderscoreにならない
+061	fast	todo	MulmoClaude dirが存在しない場合にstatusが分かる
+062	fast	todo	MulmoClaude dirがgit repoでない場合にupdateが止まる
+063	sandbox	todo	dirty worktreeはstashされる
+064	sandbox	todo	stash失敗時はupdateを中止して理由を残す
+065	sandbox	todo	default branch以外ならdefault branchに戻す
+066	sandbox	todo	checkout失敗時はstashを戻す
+067	sandbox	todo	pull失敗時はstashを戻す
+068	sandbox	todo	pullで変化なしならすでに最新理由を残す
+069	sandbox	todo	yarn install失敗時は理由を残す
+070	manual	todo	update後にMulmoClaudeを再起動する
+071	fast	todo	nodeがない時にupdate cacheがNode未検出になる
+072	fast	todo	npmがない時にnpmLatestがunknownになる
+073	fast	todo	npm latest timeoutで落ちない
+074	fast	todo	MulmoTerminal version parseがSemVerを拾う
+075	fast	todo	package.json workspace package versionを拾う
+076	fast	todo	dependency versionのcaret/tildeを剥がす
+077	fast	todo	unknownがある時summaryが一部未確認になる
+078	fast	todo	updateがある時summaryが件数を出す
+079	release	todo	mulmo-npm-installは一時的な失敗を1回だけretryする
+080	release	todo	npm cacheは/private/tmp側を使う
+081	fast	todo	self-update status JSONがvalid JSON
+082	fast	todo	mulmo updates cacheがvalid JSON
+083	fast	todo	update reasonsがtab-separatedで読める
+084	fast	todo	last update summaryが存在しない時もUIが落ちない
+085	fast	covered	legacy log dirから新log dirへの逆戻りがない
+086	fast	todo	logs pathはLibrary/Logs/Mulmo Controlに揃う
+087	manual	todo	ログボタンで正しいログ場所を開く
+088	manual	todo	status UIにunknown/current/update/missingが出る
+089	manual	todo	通知済みkeyで同じ通知を繰り返さない
+090	manual	todo	app self-update通知とtool update通知が混ざらない
+091	fast	covered	Info.plistとpackage.jsonのversionが一致する
+092	fast	covered	bin/mulmo-control.mjsがnode --checkに通る
+093	release	covered	app bundleのscripts数がsourceと一致する
+094	release	covered	codesign verifyがクリーンコピーで通る
+095	release	todo	zipはクリーンコピーから作る
+096	release	todo	release後にlatest zipを取り直してversion確認する
+097	governance	todo	AI reviewerは最初shadow modeでコメントのみ
+098	governance	todo	AIが作業開始時にIssueへ方針コメントを残す
+099	governance	todo	自動承認する場合は一定割合を人間がsample reviewする
+100	governance	todo	新しいbug classが見つかったらSECURITY.md/check.shに戻す

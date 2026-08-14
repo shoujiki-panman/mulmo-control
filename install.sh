@@ -78,8 +78,9 @@ fi
 # LaunchAgent は .app の外から起動されるため、そちらが呼ぶぶんだけ ~/.local/bin
 # に置く。
 cp "${ROOT}/scripts"/mulmoterminal-* "${LOCAL_BIN}/"
+cp "${ROOT}/scripts/mulmo-control-config" "${LOCAL_BIN}/mulmo-control-config"
 cp "${ROOT}/scripts/start-mulmoterminal.sh" "${LOCAL_BIN}/start-mulmoterminal.sh"
-chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
+chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/mulmo-control-config" "${LOCAL_BIN}/start-mulmoterminal.sh"
 
 if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
   mkdir -p "${HOME}/.local/share/mulmoterminal" /private/tmp/npm-cache-mulmo-control

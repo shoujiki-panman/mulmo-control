@@ -4,11 +4,10 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmo-control-config"
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-APP_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+configured_mulmoclaude_dir="$(mulmo_control_config_value "MULMO_CONTROL_MULMOCLAUDE_DIR" "${CONFIG}")"
+APP_DIR="${configured_mulmoclaude_dir:-${HOME}/mulmoclaude}"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/mulmoclaude-update.log"
 

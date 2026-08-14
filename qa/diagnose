@@ -1,0 +1,79 @@
+#!/bin/zsh
+set -eu
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${ROOT}"
+
+ISSUE_URL="https://github.com/shoujiki-panman/mulmo-control/issues/67"
+PATTERNS="${ROOT}/qa/patterns.tsv"
+BASELINE="${ROOT}/.mulmo-control-qa/baseline.json"
+
+printf 'Mulmo Control QA diagnose\n'
+printf 'Issue: %s\n\n' "${ISSUE_URL}"
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf 'Git:\n'
+  printf '  HEAD: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  printf '  origin/main: %s\n' "$(git rev-parse --short origin/main 2>/dev/null || echo unknown)"
+  git status -sb | sed 's/^/  /'
+  printf '\n'
+fi
+
+printf 'Entrypoints:\n'
+for file in AGENTS.md CLAUDE.md SECURITY.md check.sh qa/check qa/next; do
+  if [ -e "${ROOT}/${file}" ]; then
+    printf '  ok   %s\n' "${file}"
+  else
+    printf '  miss %s\n' "${file}"
+  fi
+done
+printf '\n'
+
+PATTERNS="${PATTERNS}" BASELINE="${BASELINE}" /usr/bin/python3 - <<'PY'
+import csv
+import json
+import os
+from collections import Counter
+
+patterns_path = os.environ["PATTERNS"]
+baseline_path = os.environ["BASELINE"]
+
+with open(patterns_path, encoding="utf-8", newline="") as f:
+    rows = list(csv.DictReader(f, delimiter="\t"))
+
+by_gate = Counter(row["gate"] for row in rows)
+by_status = Counter(row["status"] for row in rows)
+todo_by_gate = Counter(row["gate"] for row in rows if row["status"] != "covered")
+
+print("Coverage catalog:")
+print(f"  total: {len(rows)}")
+print(f"  covered: {by_status['covered']}")
+print(f"  todo: {len(rows) - by_status['covered']}")
+for gate in ["fast", "release", "sandbox", "manual", "governance"]:
+    print(f"  {gate}: {by_gate[gate]} total, {todo_by_gate[gate]} todo")
+
+try:
+    with open(baseline_path, encoding="utf-8") as f:
+        baseline = json.load(f)
+except FileNotFoundError:
+    print("\nBaseline: missing")
+else:
+    ceilings = baseline.get("ceilings", {})
+    current = {
+        "todo_total": len(rows) - by_status["covered"],
+        "todo_fast": todo_by_gate["fast"],
+        "todo_release": todo_by_gate["release"],
+        "todo_sandbox": todo_by_gate["sandbox"],
+        "todo_manual": todo_by_gate["manual"],
+        "todo_governance": todo_by_gate["governance"],
+    }
+    print("\nBaseline ceilings:")
+    for key, value in current.items():
+        ceiling = ceilings.get(key)
+        marker = "ok" if ceiling is not None and value <= ceiling else "check"
+        print(f"  {marker} {key}: {value} / {ceiling}")
+PY
+
+printf '\nNext commands:\n'
+printf '  ./qa/check\n'
+printf '  ./qa/next\n'

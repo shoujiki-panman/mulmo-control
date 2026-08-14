@@ -16,6 +16,22 @@ set -eu
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "${ROOT}"
 
+CLEANUP_DIRS=()
+cleanup() {
+  for dir in "${CLEANUP_DIRS[@]}"; do
+    [ -n "${dir}" ] && rm -rf "${dir}"
+  done
+}
+trap cleanup EXIT
+
+make_tmp_dir() {
+  local name="$1"
+  local dir
+  dir="$(mktemp -d "/private/tmp/${name}.XXXXXX")"
+  CLEANUP_DIRS+=("${dir}")
+  printf '%s' "${dir}"
+}
+
 BUILD=1
 [ "${1:-}" = "--no-build" ] && BUILD=0
 
@@ -29,7 +45,7 @@ for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
   [ -f "$f" ] || continue
   case "$f" in *.mjs|*.md) continue ;; esac
   head -1 "$f" | grep -q '^#!' || continue
-  zsh -n "$f" || fail "構文が壊れています: $(basename "$f")"
+  zsh -o no_bg_nice -n "$f" || fail "構文が壊れています: $(basename "$f")"
 done
 ok "$(ls "${ROOT}/scripts" | wc -l | tr -d ' ') 本 + ルートの .sh"
 
@@ -98,6 +114,62 @@ if [ -n "${LEGACY}" ]; then
 fi
 ok "~/Documents/Codex を参照していない"
 
+# ── セキュリティの回帰よけ ────────────────────────────────────────
+step "設定ファイルと更新経路の安全性"
+
+SECURITY_FILES=(
+  "${ROOT}/scripts"/*
+  "${ROOT}/install.sh"
+  "${ROOT}/uninstall.sh"
+  "${ROOT}/build-app.sh"
+  "${ROOT}/release.sh"
+)
+
+CONFIG_SOURCE="$(grep -RInE '^[[:space:]]*(source|\.)[[:space:]]+"?\$\{CONFIG\}"?' "${SECURITY_FILES[@]}" 2>/dev/null || true)"
+if [ -n "${CONFIG_SOURCE}" ]; then
+  printf '%s\n' "${CONFIG_SOURCE}"
+  fail "app-info.env を shell として実行しています。値だけを読む parser を使ってください"
+fi
+ok "app-info.env を shell として実行していない"
+
+SECURITY_TMP="$(make_tmp_dir "mulmo-control-security")"
+mkdir -p "${SECURITY_TMP}/Library/Application Support/Mulmo Control"
+PWNED="${SECURITY_TMP}/pwned"
+cat > "${SECURITY_TMP}/Library/Application Support/Mulmo Control/app-info.env" <<INFO
+MULMO_CONTROL_REPO_URL='https://example.invalid/repo.git'
+touch '${PWNED}'
+MULMO_CONTROL_SOURCE_DIR='/tmp/source'\''quote'
+MULMO_CONTROL_BRANCH='release'
+INFO
+CONFIG_JSON="$(HOME="${SECURITY_TMP}" MULMO_CONTROL_TEST_PRINT_CONFIG=1 "${ROOT}/scripts/mulmo-control-self-update")"
+[ ! -e "${PWNED}" ] || fail "app-info.env の中身が shell として実行されました"
+CONFIG_JSON="${CONFIG_JSON}" /usr/bin/python3 - <<'PY' || fail "app-info.env の値を正しく読めません"
+import json
+import os
+
+data = json.loads(os.environ["CONFIG_JSON"])
+assert data["repoUrl"] == "https://example.invalid/repo.git"
+assert data["sourceDir"] == "/tmp/source'quote"
+assert data["branch"] == "release"
+PY
+ok "app-info.env を値としてだけ読める"
+
+NETWORK_PIPE="$(grep -RInE '\b(curl|wget)\b[^|]*\|[[:space:]]*(sh|bash|zsh)\b' "${SECURITY_FILES[@]}" 2>/dev/null \
+  | grep -v ':[0-9]*:[[:space:]]*#' || true)"
+if [ -n "${NETWORK_PIPE}" ]; then
+  printf '%s\n' "${NETWORK_PIPE}"
+  fail "ネットワーク取得結果を shell に直接流しています"
+fi
+ok "ネットワーク取得結果を shell に直接流していない"
+
+EVAL_OR_SUDO="$(grep -RInE '\b(eval|sudo)\b' "${SECURITY_FILES[@]}" 2>/dev/null \
+  | grep -v ':[0-9]*:[[:space:]]*#' || true)"
+if [ -n "${EVAL_OR_SUDO}" ]; then
+  printf '%s\n' "${EVAL_OR_SUDO}"
+  fail "eval / sudo を使っています"
+fi
+ok "eval / sudo を使っていない"
+
 # ── ビルドと配布物 ──────────────────────────────────────────────
 if [ "${BUILD}" = "1" ]; then
   step "ビルド"
@@ -110,13 +182,18 @@ fi
 
 step "配布物"
 
+VERIFY_DIR="$(make_tmp_dir "mulmo-control-verify")"
+VERIFY_APP="${VERIFY_DIR}/Mulmo Control.app"
+ditto "${APP}" "${VERIFY_APP}"
+xattr -cr "${VERIFY_APP}" 2>/dev/null || true
+
 SOURCE_COUNT="$(ls "${ROOT}/scripts" | wc -l | tr -d ' ')"
 BUNDLED_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr -d ' ')"
 [ "${BUNDLED_COUNT}" = "${SOURCE_COUNT}" ] \
   || fail "同梱スクリプトが ${BUNDLED_COUNT} 本です（scripts/ には ${SOURCE_COUNT} 本）"
 ok "同梱スクリプト ${BUNDLED_COUNT} 本"
 
-codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
+codesign --verify --deep --strict "${VERIFY_APP}" 2>/dev/null || fail "署名が通りません"
 ok "署名"
 
 # v1.0.9 はここが抜けていて、ほとんどのボタンが動かない版を配った。

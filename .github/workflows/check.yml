@@ -22,4 +22,4 @@ jobs:
         with:
           node-version: "20"
       - name: 配る前の確認
-        run: ./check.sh
+        run: ./qa/check --full

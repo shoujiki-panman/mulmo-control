@@ -2,6 +2,8 @@
 set -eu
 
 export PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmo-control-config"
 
 # tmux はロケールが UTF-8 に解決できないクライアントに対して非 UTF-8 の出力経路に
 # 切り替わり、マップできない文字を 1 セルにつき `_` 1 個で書き出す
@@ -27,10 +29,8 @@ if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ -z "${LANG:-}" ]; then
 fi
 
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-MULMOCLAUDE_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+configured_mulmoclaude_dir="$(mulmo_control_config_value "MULMO_CONTROL_MULMOCLAUDE_DIR" "${CONFIG}")"
+MULMOCLAUDE_DIR="${configured_mulmoclaude_dir:-${HOME}/mulmoclaude}"
 
 export PORT="34567"
 export MULMOTERMINAL_HOST="127.0.0.1"

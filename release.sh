@@ -98,12 +98,17 @@ ok "$(basename "${APP}")"
 # 確認の中身は check.sh が持っている。同じことを2箇所に書くと、片方だけ
 # 直して安心する事故が起きる。PR でも同じものが走る。
 step "配る前の検証"
-"${ROOT}/check.sh" --no-build || fail "配る前の確認に落ちました"
+"${ROOT}/qa/check" --no-build || fail "配る前の確認に落ちました"
+
 
 step "zip を作る"
 ZIP="${ROOT}/build/MulmoControl.zip"
 rm -f "${ZIP}"
-ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ZIP}"
+ZIP_STAGE="$(mktemp -d /private/tmp/mulmo-release-stage.XXXXXX)"
+ditto "${APP}" "${ZIP_STAGE}/Mulmo Control.app"
+xattr -cr "${ZIP_STAGE}/Mulmo Control.app" 2>/dev/null || true
+ditto -c -k --sequesterRsrc --keepParent "${ZIP_STAGE}/Mulmo Control.app" "${ZIP}"
+rm -rf "${ZIP_STAGE}"
 ok "$(du -h "${ZIP}" | cut -f1 | tr -d ' ')"
 
 if [ "${DRY_RUN}" = "1" ]; then
