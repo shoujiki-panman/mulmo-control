@@ -9,12 +9,21 @@ export PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/
 # 持たない（`launchctl getenv LANG` が空）ため、ここで補わないと自動起動したときだけ
 # 日本語が全部 `_` になり、日本語入力も確定できなくなる。Issue #62。
 #
+# macOS は /etc/zprofile で同じことをしている（LANG が空なら C.UTF-8 を入れる）が、
+# あれはログインシェルでしか読まれない。このスクリプトの shebang は #!/bin/zsh で
+# -l が付いていないので通らない。ここは、その抜けたぶんを埋めているだけ。
+#
+# 値も /etc/zprofile に合わせて C.UTF-8 にする。tmux が要るのは「UTF-8 に解決できる
+# こと」だけなので ja_JP.UTF-8 でも症状は直るが、そうすると自動起動したセッション
+# だけ並び順・日付・メッセージ言語が他と食い違う。バグを直すついでに別の食い違いを
+# 作らない。
+#
 # LC_ALL と LC_CTYPE は LANG より優先されるので、入っているときに LANG を足しても
 # 無意味。3つとも無いときだけ入れる ＝ 利用者の明示指定は必ず残る。
 # 空文字は「無い」として扱う。ログインシェルが実際の LC_ALL と一緒に空の LANG= を
 # export することがあり、-z はそれを拾う。
 if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ -z "${LANG:-}" ]; then
-  export LANG="ja_JP.UTF-8"
+  export LANG="C.UTF-8"
 fi
 
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
