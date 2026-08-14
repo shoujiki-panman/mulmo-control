@@ -3,6 +3,20 @@ set -eu
 
 export PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# tmux はロケールが UTF-8 に解決できないクライアントに対して非 UTF-8 の出力経路に
+# 切り替わり、マップできない文字を 1 セルにつき `_` 1 個で書き出す
+# （receptron/mulmoterminal#1634）。launchd の GUI ドメインはロケール変数を
+# 持たない（`launchctl getenv LANG` が空）ため、ここで補わないと自動起動したときだけ
+# 日本語が全部 `_` になり、日本語入力も確定できなくなる。Issue #62。
+#
+# LC_ALL と LC_CTYPE は LANG より優先されるので、入っているときに LANG を足しても
+# 無意味。3つとも無いときだけ入れる ＝ 利用者の明示指定は必ず残る。
+# 空文字は「無い」として扱う。ログインシェルが実際の LC_ALL と一緒に空の LANG= を
+# export することがあり、-z はそれを拾う。
+if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ -z "${LANG:-}" ]; then
+  export LANG="ja_JP.UTF-8"
+fi
+
 CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
 if [ -f "${CONFIG}" ]; then
   . "${CONFIG}"
