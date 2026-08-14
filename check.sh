@@ -44,6 +44,19 @@ if grep -rn '\.local/bin/mulmoterminal-' "${ROOT}/scripts" 2>/dev/null; then
 fi
 ok "兄弟スクリプトを ~/.local/bin から呼んでいない"
 
+# launchd の GUI ドメインはロケール変数を持たない。起動スクリプトが補わないと、
+# 自動起動した MulmoTerminal では tmux が非 UTF-8 経路に落ち、日本語が
+# 1 セルにつき `_` 1 個に潰れる（Issue #62 / receptron/mulmoterminal#1634）。
+# 症状が出るのは自動起動のときだけで、ターミナルから手で起動すると継承するので
+# 出ない。うっかり消しても手元では気づけないため、ここで止める。
+#
+# 変数名で探すとロケールの話をしているコメント自体に当たって、コードを消しても
+# 通ってしまう。行頭の export だけを見る（コメント行は # で始まるので当たらない）。
+if ! grep -qE '^[[:space:]]*export LANG=' "${ROOT}/scripts/start-mulmoterminal.sh"; then
+  fail "起動スクリプトにロケール補完がありません（Issue #62）"
+fi
+ok "起動スクリプトがロケールを補っている"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
