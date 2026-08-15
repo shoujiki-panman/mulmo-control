@@ -33,12 +33,32 @@ CACHE="${MULMO_NPM_CACHE:-/private/tmp/npm-cache-mulmo-control}"
 WAIT="${MULMO_NPM_RETRY_WAIT:-5}"
 mkdir -p "${CACHE}"
 
+# npm の出力は、あとで理由を見分けるために控える。
+# 画面にはそのまま流すので、利用者から見た表示は変わらない。
+NPM_OUT="$(/usr/bin/mktemp -t mulmo-npm-install)"
+cleanup() { rm -f "${NPM_OUT}"; }
+trap cleanup EXIT
+
 attempt() {
-  NPM_CONFIG_CACHE="${CACHE}" "${NPM}" install --prefix "${PREFIX}" "${SPEC}"
+  NPM_CONFIG_CACHE="${CACHE}" "${NPM}" install --prefix "${PREFIX}" "${SPEC}" >"${NPM_OUT}" 2>&1
+  ATTEMPT_RC=$?
+  cat "${NPM_OUT}"
+  return ${ATTEMPT_RC}
 }
 
 if attempt; then
   exit 0
+fi
+
+# 待っても変わらない失敗まで「回線の不調かも」と言わない（Issue #71）。
+#
+# E404 はパッケージが存在しない・名前が違う・公開されていないときに出る。
+# ここで再試行すると、5秒待ってもう一度同じ 404 を取りに行ったうえ、
+# 利用者には回線を疑わせる文言だけが残る。ターミナルを開かせないための
+# アプリなので、間違った方を指すと利用者は行き止まりになる。
+if grep -q 'E404\|404 Not Found' "${NPM_OUT}"; then
+  echo "パッケージが見つかりません: ${SPEC}（名前が違うか、公開されていません）" >&2
+  exit 1
 fi
 
 echo "npm が失敗しました。回線の一時的な不調かもしれないので、${WAIT}秒待ってもう一度だけ試します。"
