@@ -59,14 +59,28 @@ if [ -n "$(/usr/bin/git status --porcelain)" ]; then
 fi
 
 # 退避したものは、どの道でも必ず戻す。
+#
+# git stash pop はぶつかったとき、失敗を返しながら作業ツリーにコンフリクト
+# マーカーを書き込んで止まる。stash を消さないのは正しい挙動だが、「戻せな
+# かった」と「中途半端に戻して壊した」は別物で、後者を「戻せませんでした」と
+# だけ言って先へ進むと、壊れた package.json のまま yarn install と起動まで
+# 走り、利用者には Vite のエラー画面と「更新しました」だけが届く（Issue #66）。
+#
+# 戻り値: 0=戻せた / 1=何も戻らなかった / 2=途中でぶつかって壊れている
 restore_stash() {
   [ "${STASHED}" = "1" ] || return 0
+  STASHED=0
   if /usr/bin/git stash pop >>"${LOG}" 2>&1; then
     echo "MulmoClaude: 退避した変更を戻しました" | tee -a "${LOG}"
-  else
-    echo "MulmoClaude: 退避した変更を戻せませんでした（git stash list に残しています）" | tee -a "${LOG}"
+    return 0
   fi
-  STASHED=0
+  UNMERGED="$(/usr/bin/git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+  if [ -n "${UNMERGED}" ]; then
+    echo "MulmoClaude: 退避した変更を戻す途中でぶつかりました。次のファイルが未解決です: ${UNMERGED}" | tee -a "${LOG}"
+    return 2
+  fi
+  echo "MulmoClaude: 退避した変更を戻せませんでした（git stash list に残しています）" | tee -a "${LOG}"
+  return 1
 }
 
 # 別のブランチを見ていると、git pull は「そのブランチとして」成功する。
@@ -99,6 +113,13 @@ if ! /usr/bin/git pull --ff-only >>"${LOG}" 2>&1; then
 fi
 
 restore_stash
+RESTORE_STATUS=$?
+
+# 壊れている状態で yarn install と起動まで進まない。ここで止めないと、
+# 利用者には「更新しました」とだけ届き、開くとエラー画面になる（Issue #66）。
+if [ "${RESTORE_STATUS}" = "2" ]; then
+  fail "MulmoClaude: 退避した変更を戻す途中でぶつかり、ファイルが壊れたままです。解消するまで MulmoClaude は正しく開きません（対象は更新ログに出しています）"
+fi
 
 # 何も落ちてこなかったなら、そう言う。黙っていると「更新できませんでした」
 # だけが残り、壊れているのか元から最新なのか区別が付かない（Issue #46）。
