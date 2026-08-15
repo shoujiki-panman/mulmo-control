@@ -80,6 +80,11 @@ private let mulmoUpdatesPath = "\(logDir)/mulmo-updates.json"
 private let selfUpdatePath = "\(logDir)/mulmo-control-self-update.json"
 private let claudeLoginPath = "\(logDir)/claude-login.json"
 private let remoteHostPath = "\(logDir)/remote-host.json"
+// スマホ連携は2つある。MulmoTerminal(34567) はターミナルを、MulmoClaude(3001) は
+// チャットをスマホから操作するためのもので、同じアカウントを使うが接続は別々
+// （Issue #78）。以前は前者しか見ていないのに主語なしで「スマホ連携」と出して
+// いたので、MulmoClaude 側が切れていても「使えます」と表示していた。
+private let mcRemoteHostPath = "\(logDir)/remote-host-mulmoclaude.json"
 private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
@@ -284,6 +289,7 @@ final class ControlModel: ObservableObject {
     @Published var selfUpdate = readSelfUpdateStatus()
     @Published var claudeLogin = readClaudeLoginStatus()
     @Published var remoteHost = readRemoteHostStatus()
+    @Published var mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -407,6 +413,7 @@ final class ControlModel: ObservableObject {
         selfUpdate = readSelfUpdateStatus()
         claudeLogin = readClaudeLoginStatus()
         remoteHost = readRemoteHostStatus()
+        mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -1698,12 +1705,19 @@ struct SetupPanel: View {
                         action: model.openClaudeLogin
                     )
                     SetupRow(
-                        title: "スマホ連携",
+                        title: "スマホ連携（ターミナル）",
                         detail: model.remoteHost.detail,
                         ok: model.remoteHost.state == "online",
                         buttonTitle: model.remoteHost.isOffline ? "繋ぎ直す"
                             : (model.remoteHost.neverConnected ? "繋ぎ方を見る" : nil),
                         action: model.remoteHost.isOffline ? model.reconnectRemoteHost : model.openMT
+                    )
+                    SetupRow(
+                        title: "スマホ連携（チャット）",
+                        detail: model.mcRemoteHost.detail,
+                        ok: model.mcRemoteHost.state == "online",
+                        buttonTitle: model.mcRemoteHost.state == "online" ? nil : "設定を開く",
+                        action: model.openMC
                     )
                 } else {
                     SetupRow(
@@ -2189,8 +2203,8 @@ func readLastUpdateReport() -> String {
     return trimmed.isEmpty ? "まだありません" : trimmed
 }
 
-func readRemoteHostStatus() -> RemoteHostStatus {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: remoteHostPath)),
+func readRemoteHostStatus(_ path: String = remoteHostPath) -> RemoteHostStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
           let status = try? JSONDecoder().decode(RemoteHostStatus.self, from: data) else {
         return RemoteHostStatus(checkedAt: "", state: "unknown", hasSession: false, detail: "未確認")
     }
