@@ -9,7 +9,10 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT="${LOG_DIR}/remote-host.json"
-BASE="http://127.0.0.1:34567"
+# ポートは共有定義から取る（Issue #7）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
+BASE="http://${MULMO_AGENT_HOST}:${MULMO_AGENT_PORT}"
 
 mkdir -p "${LOG_DIR}"
 

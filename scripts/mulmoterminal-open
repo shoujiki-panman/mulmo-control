@@ -1,4 +1,9 @@
 #!/bin/zsh
 set -eu
 
-/usr/bin/open "http://localhost:34567"
+# ポートは共有定義から取る（Issue #7）。ここに数字を書くと、逃がしたときに
+# 開く先だけ 34567 のまま残る。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
+
+/usr/bin/open "http://localhost:${MULMO_AGENT_PORT}"

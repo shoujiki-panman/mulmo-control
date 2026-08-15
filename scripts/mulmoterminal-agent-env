@@ -8,12 +8,18 @@
 # scripts/mulmoterminal-* を ~/.local/bin へ配るときに一緒に付いてくる。
 # LaunchAgent から起動される側もこの定義を読める必要がある。
 
-# ラベルは変えると既存利用者の LaunchAgent を入れ替える必要があるので、
-# 値そのものは据え置き。作者名が入っているのは Issue #7 で扱う。
-MULMO_AGENT_LABEL="com.shutanuma.mulmoterminal"
+# 配るものの識別子に個人名が入っているのは不自然なので、アプリの名前にした
+# （Issue #7）。他人の Mac にも com.shutanuma.* が残る形だった。
+MULMO_AGENT_LABEL="${MULMOTERMINAL_AGENT_LABEL:-com.mulmocontrol.mulmoterminal}"
+
+# 古いラベルで入っているものは install-agent が片付ける。ここに並べておけば、
+# 将来また変えるときも1行足すだけで済む。
+#
+# 環境変数で差し替えられるのは、移行の確認を本番の Agent を止めずに行うため。
+# 実ラベルのまま試すと、確認の副作用で動いているものを外してしまう。
+MULMO_AGENT_LEGACY_LABELS="${MULMOTERMINAL_LEGACY_LABELS:-com.shutanuma.mulmoterminal}"
 
 # 既に使われている場合の逃げ道として環境変数で上書きできる。
-# 既定を変えるとアプリ側の URL やポート監視とずれるので、まずはこのまま。
 MULMO_AGENT_PORT="${MULMOTERMINAL_PORT:-34567}"
 MULMO_AGENT_HOST="${MULMOTERMINAL_HOST:-127.0.0.1}"
 
