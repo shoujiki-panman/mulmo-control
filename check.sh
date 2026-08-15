@@ -79,6 +79,14 @@ if ! grep -vE '^[[:space:]]*#' "${ROOT}/install.sh" | grep -q 'mulmoterminal-res
 fi
 ok "起動設定が変わったら MulmoTerminal を起こし直す"
 
+# 待っても変わらない失敗まで再試行すると、利用者には「回線の不調かも」という
+# 誤った見立てだけが残る（Issue #71）。作者は存在するパッケージしか入れないので、
+# この経路は自分では踏まない。
+if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmo-npm-install" | grep -q 'E404'; then
+  fail "存在しないパッケージでも回線のせいにしています（Issue #71）"
+fi
+ok "npm の 404 を回線のせいにしない"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
