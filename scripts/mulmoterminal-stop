@@ -8,7 +8,6 @@ label="${MULMO_AGENT_LABEL}"
 domain="${MULMO_AGENT_DOMAIN}"
 stopped=0
 
-rm -f "${MULMO_AGENT_ENABLED}"
 
 if /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1; then
   /bin/launchctl bootout "${domain}/${label}"

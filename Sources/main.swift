@@ -274,7 +274,6 @@ enum AppFont {
 final class ControlModel: ObservableObject {
     @Published var mtRunning = false
     @Published var mcRunning = false
-    @Published var reviveEnabled = false
     @Published var nodePath: String?
     @Published var npmPath: String?
     @Published var mtInstalled = false
@@ -399,7 +398,6 @@ final class ControlModel: ObservableObject {
         // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(mtPort)
         mcRunning = portIsOpen(5173) || portIsOpen(3001)
-        reviveEnabled = FileManager.default.fileExists(atPath: "\(homeDir)/.mulmoterminal/keepalive-enabled")
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         mcInstalled = FileManager.default.fileExists(atPath: mulmoClaudeDir)
         updateText = readUpdateText()
@@ -1716,7 +1714,6 @@ struct SetupPanel: View {
                         action: model.openMCRepo
                     )
                 }
-                SetupRow(title: "MulmoTerminal を自動で起動（落ちたら復帰）", detail: model.reviveEnabled ? "オン" : "オフ", ok: model.reviveEnabled)
                 SetupRow(
                     title: "Mulmo Control を自動で起動",
                     detail: model.launchAtLogin ? "オン" : "オフ",
