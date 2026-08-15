@@ -874,7 +874,23 @@ final class ControlModel: ObservableObject {
     /// SMAppService.mainApp を使う。システム設定の「一般 → ログイン項目」に
     /// 出るので、切りたい人が自分で切れる。plist を置く必要もない。
     ///
-    /// 既定はオフ。入れた覚えのないものがログイン項目に増えるのは驚きが大きい。
+    /// 既定はオン。ただし黙って入れるのではなく、入れたことを1回だけ知らせる
+    /// （Issue #75）。
+    ///
+    /// もともと既定オフだったが、それは選択として成立していなかった。この
+    /// アプリはメニューバーに常駐して初めて機能する。更新の確認も各種ボタンも、
+    /// そこにいなければ届かない。オフは選択肢ではなく、機能しない状態でしかない。
+    /// 実際、利用者は Mac を再起動したあと Mulmo Control が出てこず、手で開き
+    /// 直していた。
+    ///
+    /// 実機で他のツールを見ると、ログイン項目に入っているのは Raycast と Steam
+    /// だけで、Docker / Slack / Zoom は入っていない。ただし前者は「常駐して
+    /// 初めて意味があるもの」、後者は「使いたいときに自分で開くもの」で、
+    /// このアプリは前者。
+    ///
+    /// 質問にはしない。断る人がほぼいない選択を尋ねるのは、無意味な判断を
+    /// 1回増やすだけ。macOS 13 以降はシステム設定の「一般 → ログイン項目」に
+    /// 必ず出るので、こっそり入れることにはならない。
     var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
 
     /// 手で置かれた LaunchAgent。SwiftBar 時代の名残で、同じラベルを使っている
@@ -887,16 +903,34 @@ final class ControlModel: ObservableObject {
 
     /// ログイン項目の登録は macOS が拒むことがある（利用者が設定で切った直後など）。
     /// 黙って失敗すると、押したのに変わらない画面になるので理由を出す。
+    /// 古い設定は、見つけたらこちらで外す。
+    ///
+    /// 以前は「次を削除してください」とパスを出していたが、ターミナルを開かせ
+    /// ないのがこのアプリの役目なので、パスを渡して終わるのは筋が通らない。
+    /// 役目は同じで、残すと二重に起動するだけのものなので、消して困るものが無い。
+    @discardableResult
+    private func removeLegacyLoginAgentIfNeeded() -> Bool {
+        guard hasLegacyLoginAgent else { return false }
+        let label = "com.shutanuma.mulmocontrol"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        task.arguments = ["bootout", "gui/\(getuid())/\(label)"]
+        try? task.run()
+        task.waitUntilExit()
+        try? FileManager.default.removeItem(atPath: legacyLoginAgent)
+        return true
+    }
+
     func toggleLaunchAtLogin() {
         do {
             if launchAtLogin {
                 try SMAppService.mainApp.unregister()
             } else {
                 try SMAppService.mainApp.register()
-                if hasLegacyLoginAgent {
+                if removeLegacyLoginAgentIfNeeded() {
                     showMessage(
-                        title: "古い自動起動の設定が残っています",
-                        text: "以前どこかで置かれた設定ファイルが同じ役目を持っているので、ログイン時に二重で起動します。次を削除してください。\n\n\(legacyLoginAgent)"
+                        title: "ログイン時に開くようにしました",
+                        text: "同じ役目の古い設定が残っていたので、二重に起動しないよう外しました。やめる場合はシステム設定の「一般 → ログイン項目」から切り替えられます。"
                     )
                 }
             }
@@ -916,8 +950,47 @@ final class ControlModel: ObservableObject {
 
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            Task { @MainActor in self.announceFirstLaunchIfNeeded(granted: granted) }
+            Task { @MainActor in
+                self.enableLaunchAtLoginOnFirstRunIfNeeded(granted: granted)
+                self.announceFirstLaunchIfNeeded(granted: granted)
+            }
         }
+    }
+
+    /// 1回だけ、ログイン時起動を有効にして、そう伝える（Issue #75）。
+    ///
+    /// 印は専用の鍵にする。初回アナウンス（#9）の鍵に相乗りすると、既に一度でも
+    /// 起動したことがある人には永遠に効かない。ここは既存の利用者にも1回だけ
+    /// 効いてほしい。
+    ///
+    /// 自分で切った人の意思は必ず残す。印を先に立てるので、切ったあとに再び
+    /// 有効化されることはない。
+    private func enableLaunchAtLoginOnFirstRunIfNeeded(granted: Bool) {
+        let key = "mulmo-control.launch-at-login-defaulted"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        guard !launchAtLogin else { return }
+
+        do {
+            try SMAppService.mainApp.register()
+        } catch {
+            // ここで理由を出しても、初回の利用者には手の打ちようがない。
+            // 設定画面の行から自分で押せるので、黙って諦める。
+            return
+        }
+        let removed = removeLegacyLoginAgentIfNeeded()
+        objectWillChange.send()
+
+        guard granted else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "ログイン時に開くようにしました"
+        content.body = removed
+            ? "同じ役目の古い設定も外しました。やめる場合はシステム設定の「一般 → ログイン項目」から切り替えられます"
+            : "やめる場合はシステム設定の「一般 → ログイン項目」から切り替えられます"
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "mulmo-control-launch-at-login", content: content, trigger: nil)
+        )
     }
 
     /// 初回だけ「メニューバーに入りました」と知らせる（Issue #9）。
@@ -1643,9 +1716,9 @@ struct SetupPanel: View {
                         action: model.openMCRepo
                     )
                 }
-                SetupRow(title: "ログイン時起動・落ちたら再起動", detail: model.reviveEnabled ? "オン" : "オフ", ok: model.reviveEnabled)
+                SetupRow(title: "MulmoTerminal を自動で起動（落ちたら復帰）", detail: model.reviveEnabled ? "オン" : "オフ", ok: model.reviveEnabled)
                 SetupRow(
-                    title: "Mulmo Control をログイン時に開く",
+                    title: "Mulmo Control を自動で起動",
                     detail: model.launchAtLogin ? "オン" : "オフ",
                     ok: model.launchAtLogin,
                     buttonTitle: model.launchAtLogin ? "やめる" : "オンにする",

@@ -114,6 +114,18 @@ if [ -n "${STRAY_LABEL}" ]; then
 fi
 ok "LaunchAgent のラベルに作者名が入っていない"
 
+# 常駐して初めて機能するアプリなので、ログイン時起動は既定で入れる（Issue #75）。
+# ただし印は専用の鍵で持つ。初回アナウンス（#9）の鍵に相乗りすると、既に一度でも
+# 起動したことがある人には永遠に効かない。
+SW="$(grep -vE '^[[:space:]]*(//|/\*|\*)' "${ROOT}/Sources/main.swift")"
+if ! printf '%s\n' "${SW}" | grep -q 'launch-at-login-defaulted'; then
+  fail "ログイン時起動が既定で入りません（Issue #75）"
+fi
+if printf '%s\n' "${SW}" | grep -q 'first-launch-announced.*launch\|launchAtLogin.*first-launch-announced'; then
+  fail "初回アナウンスの鍵に相乗りしています。既存利用者に効きません（Issue #75）"
+fi
+ok "ログイン時起動を初回に1回だけ入れる"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
