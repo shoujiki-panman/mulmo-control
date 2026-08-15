@@ -9,6 +9,7 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT="${LOG_DIR}/remote-host.json"
+OUT_MC="${LOG_DIR}/remote-host-mulmoclaude.json"
 # ポートは共有定義から取る（Issue #7）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/mulmoterminal-agent-env"
@@ -65,3 +66,66 @@ with open(out, "w", encoding="utf-8") as f:
     json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail},
               f, ensure_ascii=False, indent=2)
 PY
+
+# MulmoClaude 側のスマホ連携も見る（Issue #78）。
+#
+# スマホ連携は2つある。MulmoTerminal(34567) はターミナルを、MulmoClaude(3001)
+# はチャットをスマホから操作するためのもので、同じ Google アカウントを使うが
+# 接続は別々。以前はここが MulmoTerminal しか見ていないのに、画面には主語なしで
+# 「スマホ連携」と出していたので、MulmoClaude 側が切れていても「使えます」と
+# 表示していた。
+CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
+if [ -f "${CONFIG}" ]; then
+  . "${CONFIG}"
+fi
+MC_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+
+write_mc() {
+  /usr/bin/python3 -c '
+import json, sys, datetime
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+json.dump({"checkedAt": now, "state": sys.argv[2], "hasSession": sys.argv[3] == "true",
+           "detail": sys.argv[4]}, open(sys.argv[1], "w", encoding="utf-8"),
+          ensure_ascii=False, indent=2)
+' "${OUT_MC}" "$1" "$2" "$3"
+}
+
+# API は Bearer 認証。トークンはワークスペース直下に置かれている。
+MC_TOKEN=""
+[ -f "${MC_DIR}/.session-token" ] && MC_TOKEN="$(/bin/cat "${MC_DIR}/.session-token" 2>/dev/null || true)"
+
+if [ -z "${MC_TOKEN}" ]; then
+  write_mc "unknown" "false" "MulmoClaude が動いていません"
+  exit 0
+fi
+
+MC_RAW="$(/usr/bin/curl -s -m 6 -H "Authorization: Bearer ${MC_TOKEN}" \
+  "http://127.0.0.1:3001/api/remote-host/status" 2>/dev/null || true)"
+if [ -z "${MC_RAW}" ]; then
+  write_mc "unknown" "false" "MulmoClaude が動いていません"
+  exit 0
+fi
+
+RAW="${MC_RAW}" OUT="${OUT_MC}" /usr/bin/python3 <<'PY2'
+import json, os, datetime
+raw = os.environ["RAW"]; out = os.environ["OUT"]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+try:
+    data = json.loads(raw)
+except ValueError:
+    state, has_session, detail = "unknown", False, "状態を読めませんでした"
+else:
+    connected = bool(data.get("status", {}).get("connected"))
+    has_session = bool(data.get("session"))
+    last_error = (data.get("health") or {}).get("lastError")
+    if connected:
+        state, detail = "online", "スマホから使えます"
+    elif has_session:
+        state = "offline"
+        detail = f"切れています（{last_error}）" if last_error else "切れています"
+    else:
+        state, detail = "never", "まだ繋いでいません"
+with open(out, "w", encoding="utf-8") as f:
+    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail},
+              f, ensure_ascii=False, indent=2)
+PY2
