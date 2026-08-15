@@ -57,6 +57,20 @@ if ! grep -qE '^[[:space:]]*export LANG=' "${ROOT}/scripts/start-mulmoterminal.s
 fi
 ok "起動スクリプトがロケールを補っている"
 
+# git stash pop はぶつかると、失敗を返しながら作業ツリーにコンフリクトマーカーを
+# 書き込んで止まる。それを見ずに先へ進むと、壊れた package.json のまま起動して
+# 「更新しました」と報告してしまう（Issue #66）。検出だけ残して停止を消しても
+# 同じことが起きるので、両方を見る。
+# コメント行は除く。変数名や説明文で検査を満たせてはいけない（#62 で踏んだ）。
+UPD="$(grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmoclaude-update-latest")"
+if ! printf '%s\n' "${UPD}" | grep -q 'diff-filter=U'; then
+  fail "更新スクリプトが stash pop のコンフリクトを見ていません（Issue #66）"
+fi
+if ! printf '%s\n' "${UPD}" | grep -q 'RESTORE_STATUS'; then
+  fail "コンフリクトを検出しても止まっていません（Issue #66）"
+fi
+ok "更新スクリプトが stash pop のコンフリクトで止まる"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
