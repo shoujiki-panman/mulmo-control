@@ -73,6 +73,19 @@ if [ -z "${APP_PATH}" ]; then
   APP_PATH="$("${ROOT}/build-app.sh")"
 fi
 
+# 起動設定が変わったかどうかを、書き換える前に控えておく（Issue #65）。
+#
+# install-agent は plist を書くだけで Agent を止めない。起動スクリプトの写しも
+# 上書きするだけなので、既に走っている MulmoTerminal は古い環境のまま残る。
+# 直したものを配っても、次に本人が再起動するまで届かない。作者は確認のたびに
+# 手で起動し直すので、この穴は利用者側にだけ起きる。
+. "${ROOT}/scripts/mulmoterminal-agent-env"
+content_hash() {
+  if [ -f "$1" ]; then /sbin/md5 -q "$1"; else echo "none"; fi
+}
+BEFORE_LAUNCHER="$(content_hash "${LOCAL_BIN}/start-mulmoterminal.sh")"
+BEFORE_PLIST="$(content_hash "${MULMO_AGENT_PLIST}")"
+
 # アプリが使う補助スクリプトは build-app.sh が .app に同梱するので、ここでは
 # コピーしない（Issue #11）。外に置いた写しと二重管理になるのを避ける。
 # LaunchAgent は .app の外から起動されるため、そちらが呼ぶぶんだけ ~/.local/bin
@@ -94,6 +107,19 @@ fi
 # 常駐を有効にできなかった。定義を1箇所に寄せたので、アプリの 起動 からも
 # 同じものが作られる。
 MULMO_CONTROL_MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR}" "${LOCAL_BIN}/mulmoterminal-install-agent" >/dev/null
+
+# 起動設定が変わっていて、かつ今動いているなら起こし直す（Issue #65）。
+#
+# 無条件には再起動しない。何も変わっていないのにセッションを切るのは、
+# 直した側の都合でしかない。tmux のセッションはサーバ側に残るので作業は
+# 消えないが、切れること自体が驚きになる。
+if [ "${BEFORE_LAUNCHER}" != "$(content_hash "${LOCAL_BIN}/start-mulmoterminal.sh")" ] ||
+   [ "${BEFORE_PLIST}" != "$(content_hash "${MULMO_AGENT_PLIST}")" ]; then
+  if /usr/bin/curl -sf -m 3 -o /dev/null "http://127.0.0.1:${MULMO_AGENT_PORT}/"; then
+    echo "MulmoTerminal の起動設定が変わったので、起こし直します（tmux のセッションは残ります）"
+    "${LOCAL_BIN}/mulmoterminal-restart" >/dev/null 2>&1 || true
+  fi
+fi
 
 rm -rf "/Applications/Mulmo Control.app"
 ditto "${APP_PATH}" "/Applications/Mulmo Control.app"

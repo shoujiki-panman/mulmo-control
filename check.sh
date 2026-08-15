@@ -71,6 +71,14 @@ if ! printf '%s\n' "${UPD}" | grep -q 'RESTORE_STATUS'; then
 fi
 ok "更新スクリプトが stash pop のコンフリクトで止まる"
 
+# install-agent は plist を書くだけで Agent を止めない。起こし直さないと、
+# 直したものを配っても走っているプロセスには届かない（Issue #65）。
+# これも作者の環境では起きない（確認のたびに手で起動し直すため）。
+if ! grep -vE '^[[:space:]]*#' "${ROOT}/install.sh" | grep -q 'mulmoterminal-restart'; then
+  fail "起動設定が変わっても MulmoTerminal を起こし直していません（Issue #65）"
+fi
+ok "起動設定が変わったら MulmoTerminal を起こし直す"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
