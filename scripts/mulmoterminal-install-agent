@@ -46,6 +46,23 @@ CODEX_BIN="$(command -v codex || echo "${LOCAL_BIN}/codex")"
 
 mkdir -p "$(dirname "${MULMO_AGENT_PLIST}")" "${MULMO_AGENT_LOG_DIR}"
 
+# 古いラベルで入っているものを片付ける（Issue #7）。
+#
+# 放っておくと、古い定義と新しい定義の2つが同じポートを取り合う。片方は必ず
+# 「Port is already in use」で落ち、KeepAlive がそれを異常終了とみなして
+# 蘇生し続ける。ラベルを変えるときは、消すところまでが1組。
+#
+# bootout は入っていなければエラーを返すが、それは「もう無い」ということなので
+# 無視してよい。plist を消すのは bootout のあと（先に消すと launchd から
+# 外せなくなる）。
+for legacy in ${=MULMO_AGENT_LEGACY_LABELS}; do
+  legacy_plist="${HOME}/Library/LaunchAgents/${legacy}.plist"
+  [ -f "${legacy_plist}" ] || continue
+  /bin/launchctl bootout "${MULMO_AGENT_DOMAIN}/${legacy}" 2>/dev/null || true
+  rm -f "${legacy_plist}"
+  echo "古い LaunchAgent を外しました: ${legacy}"
+done
+
 # 値に & や < が入っても壊れないよう、XML として退避してから埋める。
 xml_escape() {
   printf '%s' "$1" | /usr/bin/sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'

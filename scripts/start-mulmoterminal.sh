@@ -32,8 +32,14 @@ if [ -f "${CONFIG}" ]; then
 fi
 MULMOCLAUDE_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
 
-export PORT="34567"
-export MULMOTERMINAL_HOST="127.0.0.1"
+# ポートは隣の共有定義から取る（Issue #7）。ここに数字を直接書くと、
+# MULMOTERMINAL_PORT で逃がしたつもりでも、実際に起動する側だけ 34567 のまま
+# 動くという食い違いになる。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
+
+export PORT="${MULMO_AGENT_PORT}"
+export MULMOTERMINAL_HOST="${MULMO_AGENT_HOST}"
 export CLAUDE_CWD="${MULMOCLAUDE_DIR}"
 export MULMOTERMINAL_NO_UPDATE_CHECK="1"
 
@@ -49,17 +55,17 @@ fi
 
 mkdir -p "${HOME}/.mulmoterminal/logs"
 
-# 既に誰かが 34567 で応答しているなら、何もせず正常終了する。
+# 既に誰かが同じポートで応答しているなら、何もせず正常終了する。
 # ここで黙って exec すると MulmoTerminal は "Port is already in use" で exit 1 し、
 # plist の KeepAlive がそれを異常終了とみなして約10秒ごとに蘇生し続ける。
 # 起動に失敗するプロセスも、ポートを掴む前にワークスペースを書き換えるため、
 # その先の MulmoClaude の画面がリロードを繰り返すところまで壊れる。
-if /usr/bin/curl -sf -m 3 -o /dev/null "http://127.0.0.1:${PORT}/"; then
+if /usr/bin/curl -sf -m 3 -o /dev/null "http://${MULMO_AGENT_HOST}:${PORT}/"; then
   echo "MulmoTerminal is already serving on ${PORT}; nothing to do."
   exit 0
 fi
 
 exec "${HOME}/.local/bin/mulmoterminal" \
   --cwd "${MULMOCLAUDE_DIR}" \
-  --port "34567" \
+  --port "${PORT}" \
   --no-open

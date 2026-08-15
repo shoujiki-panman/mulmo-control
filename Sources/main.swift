@@ -5,6 +5,12 @@ import ServiceManagement
 
 private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 private let localBin = "\(homeDir)/.local/bin"
+
+// MulmoTerminal のポート。3箇所に数字が散っていて、変えるときに拾い漏れる形
+// だった（Issue #7）。スクリプト側の既定は mulmoterminal-agent-env が持つので、
+// 既定値を動かすときは両方を合わせること。
+private let mtPort = 34567
+private let mtURL = "http://localhost:\(mtPort)"
 // 補助スクリプトの置き場所。build-app.sh が Contents/Resources/scripts に同梱するので、
 // 通常はそこを見る。zip を Applications にドラッグしただけでも全ボタンが動くのは
 // これが理由（Issue #11）。
@@ -391,7 +397,7 @@ final class ControlModel: ObservableObject {
     func refresh() {
         // ポート確認とファイル読みだけ。メニューバーのアイコンはこれで足りるので、
         // 閉じている間はここまでで済ませる（Issue #38）。
-        mtRunning = portIsOpen(34567)
+        mtRunning = portIsOpen(mtPort)
         mcRunning = portIsOpen(5173) || portIsOpen(3001)
         reviveEnabled = FileManager.default.fileExists(atPath: "\(homeDir)/.mulmoterminal/keepalive-enabled")
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
@@ -431,9 +437,9 @@ final class ControlModel: ObservableObject {
             return
         }
         if mtRunning {
-            openURL("http://localhost:34567")
+            openURL(mtURL)
         } else {
-            runThenOpen(tool("mulmoterminal-start"), url: "http://localhost:34567")
+            runThenOpen(tool("mulmoterminal-start"), url: mtURL)
         }
     }
 

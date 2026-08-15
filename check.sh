@@ -87,6 +87,33 @@ if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmo-npm-install" | grep -q 'E4
 fi
 ok "npm の 404 を回線のせいにしない"
 
+# ポートは mulmoterminal-agent-env と main.swift の mtPort の2箇所だけが持つ
+# （Issue #7）。他所に数字を書くと、MULMOTERMINAL_PORT で逃がしたつもりでも
+# 一部だけ 34567 のまま動くという、最も気づきにくい壊れ方をする。
+#
+# コメント判定は grep -v で書いてはいけない。`:[[:space:]]*(#|//)` は URL の
+# `://` に当たり、ポートは必ず URL の中にあるので検査が丸ごと無効になる。
+# file:line: を落としてから、行頭が # や // かを見る。
+STRAY_PORT="$(grep -rn '34567' "${ROOT}/scripts" "${ROOT}/Sources/main.swift" 2>/dev/null \
+  | grep -v 'mulmoterminal-agent-env' \
+  | grep -v 'private let mtPort' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*(#|\/\/)/) print }' || true)"
+if [ -n "${STRAY_PORT}" ]; then
+  printf '%s\n' "${STRAY_PORT}"
+  fail "ポートを直書きしています（Issue #7）"
+fi
+ok "ポートの既定は1箇所だけが持つ"
+
+# 配るものの識別子に作者名を戻さない（Issue #7）。旧ラベルは agent-env の
+# 移行リストにだけ残す。
+STRAY_LABEL="$(grep -rn 'com\.shutanuma\.mulmoterminal' "${ROOT}/scripts" "${ROOT}/Sources/main.swift" 2>/dev/null \
+  | grep -v 'MULMO_AGENT_LEGACY_LABELS' || true)"
+if [ -n "${STRAY_LABEL}" ]; then
+  printf '%s\n' "${STRAY_LABEL}"
+  fail "旧ラベルが移行リスト以外に残っています（Issue #7）"
+fi
+ok "LaunchAgent のラベルに作者名が入っていない"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #

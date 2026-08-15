@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/mulmoterminal-update.log"
 NPM_CACHE="/private/tmp/npm-cache-mulmoterminal-swiftbar"
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
 
 mkdir -p "${LOG_DIR}" "${NPM_CACHE}"
 
@@ -48,4 +49,4 @@ fi
 "${SCRIPT_DIR}/mulmoterminal-start" | tee -a "${LOG}" || true
 
 echo "After: $("${HOME}/.local/bin/mulmoterminal" --version 2>/dev/null || true)" | tee -a "${LOG}"
-echo "Open: http://localhost:34567" | tee -a "${LOG}"
+echo "Open: http://localhost:${MULMO_AGENT_PORT}" | tee -a "${LOG}"
