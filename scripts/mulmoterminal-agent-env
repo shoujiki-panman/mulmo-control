@@ -25,5 +25,4 @@ MULMO_AGENT_HOST="${MULMOTERMINAL_HOST:-127.0.0.1}"
 
 MULMO_AGENT_PLIST="${HOME}/Library/LaunchAgents/${MULMO_AGENT_LABEL}.plist"
 MULMO_AGENT_DOMAIN="gui/$(id -u)"
-MULMO_AGENT_ENABLED="${HOME}/.mulmoterminal/keepalive-enabled"
 MULMO_AGENT_LOG_DIR="${HOME}/.mulmoterminal/logs"

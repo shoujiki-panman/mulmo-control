@@ -126,6 +126,21 @@ if printf '%s\n' "${SW}" | grep -q 'first-launch-announced.*launch\|launchAtLogi
 fi
 ok "ログイン時起動を初回に1回だけ入れる"
 
+# 画面に出す値は、実際に効いているものから取る。
+#
+# keepalive-enabled は起動/停止ボタンが作ったり消したりするだけで、読み手は
+# 画面表示しかいなかった。自動起動を決めているのは plist の RunAtLoad と
+# KeepAlive で、このファイルとは無関係。入れただけで一度も起動ボタンを押して
+# いない人には、自動起動するのに「オフ」と表示されていた。作者は必ず押すので
+# 遭遇しない類。同じものを作り直さないためのガード。
+STRAY_FLAG="$(grep -rn 'keepalive-enabled' "${ROOT}/scripts" "${ROOT}/Sources/main.swift" 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*(#|\/\/)/) print }' || true)"
+if [ -n "${STRAY_FLAG}" ]; then
+  printf '%s\n' "${STRAY_FLAG}"
+  fail "実体のない状態フラグが復活しています"
+fi
+ok "自動起動の表示に作り物のフラグを使っていない"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
