@@ -201,7 +201,13 @@ BUNDLED_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr
 ok "同梱スクリプト ${BUNDLED_COUNT} 本"
 
 codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
-ok "署名"
+# どちらで署名されているかを出す（Issue #54）。adhoc でも配れるが、その場合は
+# ブラウザで落とした人にだけ警告が出る。見えないまま配らないための表示。
+if codesign -dv "${APP}" 2>&1 | grep -q "Signature=adhoc"; then
+  ok "署名（adhoc・ブラウザ経由では警告が出ます）"
+else
+  ok "署名（Developer ID）"
+fi
 
 # v1.0.9 はここが抜けていて、ほとんどのボタンが動かない版を配った。
 /bin/zsh -c "\"${APP}/Contents/Resources/scripts/mulmoclaude-status\" >/dev/null" \

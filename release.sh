@@ -106,6 +106,32 @@ rm -f "${ZIP}"
 ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ZIP}"
 ok "$(du -h "${ZIP}" | cut -f1 | tr -d ' ')"
 
+# 公証（Issue #54）。
+#
+# ブラウザで落とした zip には隔離マークが付き、公証を通していないと
+# 「マルウェアが含まれていないことを検証できませんでした」で開けない。
+# npx / curl の経路は隔離マークが付かないので、これが要るのはブラウザ経路だけ。
+#
+# adhoc 署名のものは公証に出せない（Apple が受け付けない）ので、Developer ID で
+# 署名できているときだけ通す。資格情報が未設定でも止めない。証明書と
+# notarytool のプロファイルが揃った時点で自動的に効き始める。
+NOTARY_PROFILE="${MULMO_NOTARY_PROFILE:-mulmo-control}"
+if codesign -dv "${APP}" 2>&1 | grep -q "Signature=adhoc"; then
+  ok "公証なし（adhoc 署名。ブラウザ経由では警告が出ます）"
+elif ! xcrun notarytool history --keychain-profile "${NOTARY_PROFILE}" >/dev/null 2>&1; then
+  ok "公証なし（notarytool の資格情報が未設定）"
+else
+  step "公証を通す"
+  xcrun notarytool submit "${ZIP}" --keychain-profile "${NOTARY_PROFILE}" --wait \
+    || fail "公証に落ちました"
+  # チケットは .app に貼る。貼ったあとに zip を作り直さないと、配る側に
+  # チケットが入らない（ここを飛ばすと、手元では通るのに配布物だけ警告が出る）。
+  xcrun stapler staple "${APP}" || fail "公証チケットを貼れませんでした"
+  rm -f "${ZIP}"
+  ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ZIP}"
+  ok "公証済み・チケット添付"
+fi
+
 if [ "${DRY_RUN}" = "1" ]; then
   printf '\n\033[33m--dry-run なのでここまで。%s は作っていません。\033[0m\n' "${TAG}"
   git checkout -- Info.plist package.json 2>/dev/null || true
