@@ -113,7 +113,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 052 | fast | LaunchAgent plist は `plutil -lint` に通る | ✅ 同上 |
 | 053 | fast | LaunchAgent WorkingDirectory がない時は `$HOME` に逃がす | ✅ 場所が無いときは HOME に逃がす |
 | 054 | fast | locale fallback `LANG=C.UTF-8` が start script にある | ✅ 起動スクリプトのロケール補完 |
-| 055 | fast | 既にport 34567が応答中なら二重起動しない | 🔨 起動前のポート応答チェック |
+| 055 | fast | 既にport 34567が応答中なら二重起動しない | ✅ 起動前に二重起動を避けている |
 | 056 | manual | 起動ボタンで LaunchAgent が bootstrap される |  |
 | 057 | manual | 停止ボタンで LaunchAgent が bootout される |  |
 | 058 | manual | 再起動ボタンで kickstart または再起動できる |  |
@@ -158,8 +158,8 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 082 | fast | mulmo updates cache が valid JSON |  |
 | 083 | fast | update reasons が tab-separated で読める |  |
 | 084 | fast | last update summary が存在しない時もUIが落ちない |  |
-| 085 | fast | legacy log dir から新log dirへの逆戻りがない | 🔨 logDir 統一（#58） |
-| 086 | fast | logs path は `~/Library/Logs/Mulmo Control` に揃う | 🔨 同上 |
+| 085 | fast | legacy log dir から新log dirへの逆戻りがない | ✅ ~/Documents/Codex を参照していない |
+| 086 | fast | logs path は `~/Library/Logs/Mulmo Control` に揃う | ✅ ログの置き場所は1つだけ |
 | 087 | manual | ログボタンで正しいログ場所を開く |  |
 | 088 | manual | status UI に `unknown/current/update/missing` が出る |  |
 | 089 | manual | 通知済みkeyで同じ通知を繰り返さない |  |
@@ -184,8 +184,8 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 34 |
-| 🔨 実装はあるが自動検査なし | 13 |
+| ✅ `check.sh` が見ている | 37 |
+| 🔨 実装はあるが自動検査なし | 10 |
 | ⛔ 無効 | 1 |
 | 未着手 | 52 |
 
@@ -203,6 +203,8 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 - `grep -v` で行を消して否定テストを作ると**構文エラー**になり、検査の手前で落ちる
 - コメント行をシェバンより前に置くと、シェバン検査ごと飛ばされる
 - `grep -vE ':[[:space:]]*(#|//)'` は **URL の `://`** に当たる
+- **カタログの印そのものを間違えることがある。** 085 は `check.sh` が既に見ていたのに
+  🔨 と書いていた。印を付ける前に、対応するガードが実在するか `check.sh` を検索する
 - 消す対象の綴りを確かめずに `sed` すると、何も消えないまま「素通り」と出る
 - **zsh は引用符を外しても単語に分かれない**（sh と違う）。引用符を外して壊れないことは、
   検査が効いていない証拠にならない。空白で実際に壊れるのは #32 の形 ——
