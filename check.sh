@@ -273,6 +273,95 @@ if [ -n "${LEGACY}" ]; then
 fi
 ok "~/Documents/Codex を参照していない"
 
+# ── 空白と ' を含むパス ─────────────────────────────────────────
+# SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
+#
+# ここだけは静的な grep ではなく、実際に走らせて確かめる。引用符が効いて
+# いるかは、動かさないと分からない。#32 は `/Applications/Mulmo Control.app`
+# の空白で実際に壊れており、作者の環境では両方とも「正しく見えていた」。
+#
+# 偽の HOME を作り、その中だけで走らせる。本物の LaunchAgent もログも
+# 触らない（plist の場所もログの場所も HOME から組み立てられている）。
+step "空白と ' を含むパス"
+
+PROBE="$(mktemp -d "${TMPDIR:-/tmp}/mulmo check XXXXXX")"
+trap 'rm -rf "${PROBE}"' EXIT
+# 空白・アポストロフィ・XML で意味を持つ3文字を全部入れた名前にする。
+PROBE_HOME="${PROBE}/home it's & <ok>"
+PROBE_MC="${PROBE}/mulmo claude it's & <dir>"
+PROBE_CFG="${PROBE_HOME}/Library/Application Support/Mulmo Control"
+PROBE_PLIST="${PROBE_HOME}/Library/LaunchAgents/com.mulmocontrol.mulmoterminal.plist"
+mkdir -p "${PROBE_HOME}/.local/bin" "${PROBE_MC}" "${PROBE_CFG}"
+
+cfg() { HOME="${PROBE_HOME}" "${ROOT}/scripts/mulmo-config-get" "$1"; }
+
+# 001 設定ファイルがまだ無い状態。install.sh を通す前がこれ。
+[ -z "$(cfg MULMO_CONTROL_BRANCH)" ] || fail "設定ファイルが無いのに値を返しました（001）"
+# 002 空のファイルで落ちない。
+: > "${PROBE_CFG}/app-info.env"
+[ -z "$(cfg MULMO_CONTROL_BRANCH)" ] || fail "空の設定ファイルで値を返しました（002）"
+
+# 003〜007 許可したキーだけを、値をそのまま読む。
+{
+  echo "MULMO_CONTROL_REPO_URL=https://example.com/x.git"
+  echo "MULMO_CONTROL_SOURCE_DIR=${PROBE_HOME}/src"
+  echo "MULMO_CONTROL_BRANCH=main"
+  printf 'MULMO_CONTROL_MULMOCLAUDE_DIR=%s\n' "${PROBE_MC}"
+  echo "MULMO_CONTROL_UNKNOWN_KEY=見えてはいけない"
+} > "${PROBE_CFG}/app-info.env"
+[ "$(cfg MULMO_CONTROL_REPO_URL)" = "https://example.com/x.git" ] || fail "REPO_URL を読めません（003）"
+[ "$(cfg MULMO_CONTROL_SOURCE_DIR)" = "${PROBE_HOME}/src" ] || fail "SOURCE_DIR を読めません（004）"
+[ "$(cfg MULMO_CONTROL_BRANCH)" = "main" ] || fail "BRANCH を読めません（005）"
+# 012 値にアポストロフィと空白が入っていても、1文字も欠けずに返る。
+[ "$(cfg MULMO_CONTROL_MULMOCLAUDE_DIR)" = "${PROBE_MC}" ] || fail "' や空白を含む値が壊れます（006/012）"
+[ -z "$(cfg MULMO_CONTROL_UNKNOWN_KEY)" ] || fail "許可していないキーを返しました（007）"
+ok "設定は許可したキーだけを、値を欠かさず返す"
+
+# 011/013 起動スクリプトが MulmoClaude の場所を本体へ渡すところ。
+# 本物の代わりに、受け取った引数をそのまま書き出すものを置いて中身を見る。
+# ここが壊れると、空白の手前で切れた場所を --cwd に渡して起動する。
+#
+# 注意: zsh は引用符を外しただけでは単語に分かれない（sh と違う）。なので
+# 「引用符を外して落ちるか」は、この検査の有効性を測る方法にならない。
+# 実際に壊れるのは #32 の形 —— コマンドを1本の文字列に組んで zsh -c に
+# 渡すとき。その形に書き換えるとここで落ちることを実測した。
+cat > "${PROBE_HOME}/.local/bin/mulmoterminal" <<'FAKE'
+#!/bin/zsh
+for a in "$@"; do printf '%s\n' "$a"; done
+FAKE
+chmod +x "${PROBE_HOME}/.local/bin/mulmoterminal"
+LAUNCH_OUT="$(HOME="${PROBE_HOME}" MULMOTERMINAL_PORT=39917 \
+  "${ROOT}/scripts/start-mulmoterminal.sh" 2>&1 || true)"
+if ! printf '%s\n' "${LAUNCH_OUT}" | grep -qx -- '--cwd'; then
+  printf '%s\n' "${LAUNCH_OUT}"
+  fail "起動スクリプトが --cwd を渡していません（011/013）。ポート 39917 が塞がっている場合も出ます"
+fi
+PASSED_CWD="$(printf '%s\n' "${LAUNCH_OUT}" | awk 'p { print; exit } /^--cwd$/ { p = 1 }')"
+[ "${PASSED_CWD}" = "${PROBE_MC}" ] ||
+  fail "起動スクリプトが渡す場所が壊れています（011/013）: ${PASSED_CWD}"
+ok "起動スクリプトは空白入りの場所を切らずに渡す"
+
+# 014/018/052 plist に同じ値を埋める側。& < > は XML で意味を持つので、
+# 逃がし損ねると plutil が読めないファイルになる。
+HOME="${PROBE_HOME}" MULMOTERMINAL_LEGACY_LABELS="mulmo.check.no-such-label" \
+  "${ROOT}/scripts/mulmoterminal-install-agent" >/dev/null
+/usr/bin/plutil -lint "${PROBE_PLIST}" >/dev/null || fail "生成した plist が壊れています（052）"
+PLIST_WD="$(/usr/bin/plutil -extract WorkingDirectory raw -o - "${PROBE_PLIST}")"
+[ "${PLIST_WD}" = "${PROBE_MC}" ] || fail "plist の値が往復しません（014/018）: ${PLIST_WD}"
+ok "plist は & < > ' を含む場所を往復できる"
+
+# 053 MulmoClaude を入れていない人もいる。実在しない場所を
+# WorkingDirectory に書くと、LaunchAgent は起動そのものに失敗する。
+rm -rf "${PROBE_MC}"
+HOME="${PROBE_HOME}" MULMOTERMINAL_LEGACY_LABELS="mulmo.check.no-such-label" \
+  "${ROOT}/scripts/mulmoterminal-install-agent" >/dev/null
+PLIST_WD="$(/usr/bin/plutil -extract WorkingDirectory raw -o - "${PROBE_PLIST}")"
+[ "${PLIST_WD}" = "${PROBE_HOME}" ] || fail "場所が無いときに HOME へ逃がしていません（053）: ${PLIST_WD}"
+ok "場所が無いときは HOME に逃がす"
+
+rm -rf "${PROBE}"
+trap - EXIT
+
 # ── ビルドと配布物 ──────────────────────────────────────────────
 if [ "${BUILD}" = "1" ]; then
   step "ビルド"
