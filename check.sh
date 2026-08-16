@@ -408,6 +408,76 @@ ok "場所が無いときは HOME に逃がす"
 rm -rf "${PROBE}"
 trap - EXIT
 
+# ── MulmoClaude の更新 ──────────────────────────────────────────
+# SECURITY.md の G 節。使い捨ての git リポジトリを作って、更新スクリプトを
+# 本当に走らせる。
+#
+# これは長い間できなかった。更新は途中で mulmoclaude-stop を呼ぶが、以前の
+# stop は 5173/3001 を持つプロセスを確かめずに落としていたので、検査を回すと
+# 動いている本物の MulmoClaude が死んだ（Issue #91）。作業ディレクトリで
+# 自分のものだけを選ぶようにしたので、いまは巻き添えが出ない。
+#
+# 逆に言うと、#91 が戻るとここが本物を落とす。上の「他人のプロセスを
+# 巻き添えにしない」ガードは、この検査の前提でもある。
+step "MulmoClaude の更新"
+
+SBX="$(mktemp -d "${TMPDIR:-/tmp}/mulmo sandbox XXXXXX")"
+trap 'rm -rf "${SBX}"' EXIT
+SBX_HOME="${SBX}/home"
+SBX_WORK="${SBX}/work"
+SBX_REASONS="${SBX_HOME}/Library/Logs/Mulmo Control/mulmo-update-reasons.txt"
+mkdir -p "${SBX_HOME}/Library/Application Support/Mulmo Control"
+
+# git の名前は環境に頼らない。CI では未設定でコミットが作れない。
+sbx_git() { /usr/bin/git -c user.name=check -c user.email=check@example.com "$@"; }
+
+/usr/bin/git init -q --bare "${SBX}/origin.git"
+/usr/bin/git clone -q "${SBX}/origin.git" "${SBX_WORK}" 2>/dev/null
+printf '{"name":"sbx","version":"1.0.0","private":true}\n' > "${SBX_WORK}/package.json"
+printf 'first\n' > "${SBX_WORK}/CLAUDE.md"
+sbx_git -C "${SBX_WORK}" add -A
+sbx_git -C "${SBX_WORK}" commit -qm init
+sbx_git -C "${SBX_WORK}" branch -M main
+sbx_git -C "${SBX_WORK}" push -q origin main
+printf 'MULMO_CONTROL_MULMOCLAUDE_DIR=%s\n' "${SBX_WORK}" \
+  > "${SBX_HOME}/Library/Application Support/Mulmo Control/app-info.env"
+
+# 068 何も落ちてこなかったなら、そう言う。黙っていると「更新できませんでした」
+# だけが残り、壊れているのか元から最新なのか区別が付かない。
+HOME="${SBX_HOME}" "${ROOT}/scripts/mulmoclaude-update-latest" >/dev/null 2>&1 || true
+grep -q 'すでに最新でした' "${SBX_REASONS}" 2>/dev/null ||
+  fail "変化が無いときに理由を残していません（068）"
+ok "変化が無いときは「すでに最新」と言う"
+
+# 063 / 066 / 067 使っているだけで CLAUDE.md は書き換わるので、退避はこちらで
+# 面倒を見る。上流と同じ行がぶつかると git stash pop は失敗を返しながら
+# 作業ツリーにコンフリクトマーカーを書き込んで止まる。
+#
+# 「戻せなかった」と「中途半端に戻して壊した」は別物で、後者を「戻せません
+# でした」とだけ言って先へ進むと、壊れた package.json のまま yarn install と
+# 起動まで走り、利用者には Vite のエラー画面と「更新しました」だけが届く
+# （Issue #66）。実際に配ってしまった。
+/usr/bin/git clone -q "${SBX}/origin.git" "${SBX}/up" 2>/dev/null
+printf 'upstream side\n' > "${SBX}/up/CLAUDE.md"
+sbx_git -C "${SBX}/up" add -A
+sbx_git -C "${SBX}/up" commit -qm upstream
+sbx_git -C "${SBX}/up" push -q origin main
+printf 'local side\n' > "${SBX_WORK}/CLAUDE.md"
+
+set +e
+HOME="${SBX_HOME}" "${ROOT}/scripts/mulmoclaude-update-latest" >/dev/null 2>&1
+SBX_RC=$?
+set -e
+[ "${SBX_RC}" != "0" ] || fail "退避を戻せずに壊れたのに、成功として終わりました（Issue #66）"
+UNMERGED="$(/usr/bin/git -C "${SBX_WORK}" diff --name-only --diff-filter=U 2>/dev/null)"
+[ -n "${UNMERGED}" ] || fail "コンフリクトを再現できていません（この検査自体が無効）"
+grep -q '壊れたまま' "${SBX_REASONS}" 2>/dev/null ||
+  fail "壊れたことを画面に出せる形で残していません（Issue #66）"
+ok "退避を戻せずに壊れたら、止まって理由を残す"
+
+rm -rf "${SBX}"
+trap - EXIT
+
 # ── ビルドと配布物 ──────────────────────────────────────────────
 if [ "${BUILD}" = "1" ]; then
   step "ビルド"
