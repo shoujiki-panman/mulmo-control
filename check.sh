@@ -474,6 +474,69 @@ grep -q 'feature を見ていたので main に戻して更新しました' "${S
   fail "ブランチを戻したことを理由に残していません（065）"
 ok "別のブランチを見ていたら既定のブランチに戻す"
 
+# 066 既定のブランチに戻せなかったら、退避したものを戻してから止める。
+# 戻る先が消えている状況は、上流でブランチ名が変わったときに実際に起きる。
+# 作るのは簡単ではないので、origin/HEAD を存在しない先に向けて作る。
+# 065 で作った feature がそのまま残っているので、作り直さずに戻る。
+sbx_git -C "${SBX_WORK}" checkout -q feature
+printf 'dirty\n' >> "${SBX_WORK}/CLAUDE.md"
+printf 'ref: refs/remotes/origin/nosuchbranch\n' > "${SBX_WORK}/.git/refs/remotes/origin/HEAD"
+sbx_update
+printf 'ref: refs/remotes/origin/main\n' > "${SBX_WORK}/.git/refs/remotes/origin/HEAD"
+[ "${SBX_RC}" != "0" ] || fail "戻る先が無いのに成功として終わりました（066）"
+[ -z "$(sbx_git -C "${SBX_WORK}" stash list)" ] ||
+  fail "ブランチを戻せなかったあと、退避したものが stash に残っています（066）"
+ok "既定のブランチに戻せなければ退避を戻してから止まる"
+sbx_git -C "${SBX_WORK}" checkout -q -- .
+sbx_git -C "${SBX_WORK}" checkout -q main
+sbx_git -C "${SBX_WORK}" reset -q --hard origin/main
+
+# 064 退避そのものに失敗したら、その先へ進まない。進むと利用者の変更を
+# 巻き込んだまま pull することになる。git が書けない状況を作って確かめる。
+printf 'dirty\n' >> "${SBX_WORK}/CLAUDE.md"
+chmod -R a-w "${SBX_WORK}/.git/objects"
+sbx_update
+chmod -R u+w "${SBX_WORK}/.git/objects"
+[ "${SBX_RC}" != "0" ] || fail "退避に失敗したのに先へ進みました（064）"
+grep -q '退避できなかったので、更新を中止しました' "${SBX_REASONS}" 2>/dev/null ||
+  fail "退避に失敗した理由を残していません（064）"
+ok "退避に失敗したら、その先へ進まない"
+sbx_git -C "${SBX_WORK}" checkout -q -- .
+
+# 069 yarn install に失敗したら理由を残す。ここで黙ると、依存が入っていない
+# ままの MulmoClaude が起動して、画面だけが壊れる。
+# yarn が無い環境では確かめようがないので、その旨を出して飛ばす。
+# 壊れた package.json で yarn が本当に失敗するかは環境による。CI では
+# 成功して返ってきた（そのまま検査にすると、通っていないのに通ったことに
+# なる）。先に別の場所で1回試して、失敗する環境でだけ本番を走らせる。
+#
+# 見に行く PATH は、更新スクリプトが自分で固定しているものと同じにする。
+# 手元のシェルで yarn が見つかっても、スクリプトからは見えないことがある
+# （nvm や volta で入れた場合など）。CI がまさにそれで、こちらの測定だけが
+# yarn を見つけて「失敗するはず」と判断していた。
+SBX_SCRIPT_PATH="${SBX_HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SBX_YARN_FAILS=0
+if PATH="${SBX_SCRIPT_PATH}" command -v yarn >/dev/null 2>&1; then
+  mkdir -p "${SBX}/yarnprobe"
+  printf '{ this is not json\n' > "${SBX}/yarnprobe/package.json"
+  set +e
+  (cd "${SBX}/yarnprobe" && PATH="${SBX_SCRIPT_PATH}" yarn install >/dev/null 2>&1)
+  [ $? != 0 ] && SBX_YARN_FAILS=1
+  set -e
+fi
+
+if [ "${SBX_YARN_FAILS}" = "1" ]; then
+  printf '{ this is not json\n' > "${SBX_WORK}/package.json"
+  sbx_update
+  sbx_git -C "${SBX_WORK}" checkout -q -- package.json
+  [ "${SBX_RC}" != "0" ] || fail "yarn install に失敗したのに成功として終わりました（069）"
+  grep -q 'yarn install に失敗した' "${SBX_REASONS}" 2>/dev/null ||
+    fail "yarn install の失敗を理由に残していません（069）"
+  ok "yarn install に失敗したら理由を残す"
+else
+  ok "yarn install の失敗は確かめていません（更新スクリプトの PATH に yarn がいません）"
+fi
+
 # 067 pull に失敗したら、退避したものを戻してから止める。戻さずに抜けると
 # 利用者の変更が stash の中に取り残され、画面には何も出ない。
 printf 'dirty\n' >> "${SBX_WORK}/CLAUDE.md"
