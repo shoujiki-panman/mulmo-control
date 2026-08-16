@@ -399,11 +399,42 @@ final class ControlModel: ObservableObject {
         hasAvailableUpdates || hasSelfUpdate
     }
 
+    /// 5173 の身元は取りに行かないと分からないので、控えに置いて refresh() は
+    /// それを読む（Issue #93）。ここで待つとメニューを開くたびに固まる。
+    private var mcIdentity = false
+    private var mcIdentityChecking = false
+
+    /// ポートが閉じていれば即座に「動いていない」。開いていたら中身を確かめる。
+    /// 確かめ終わるまでは前回分かった値を返す。起動直後に一瞬「停止中」と出るが、
+    /// 他人のものを「動作中」と言うよりはよい。
+    private func mulmoClaudeIsRunning() -> Bool {
+        guard portIsOpen(5173) || portIsOpen(3001) else {
+            mcIdentity = false
+            return false
+        }
+        confirmMulmoClaudeIdentity()
+        return mcIdentity
+    }
+
+    private func confirmMulmoClaudeIdentity() {
+        guard !mcIdentityChecking else { return }
+        mcIdentityChecking = true
+        Task.detached { [weak self] in
+            let confirmed = servesMulmoClaude(port: 5173)
+            await MainActor.run {
+                guard let self else { return }
+                self.mcIdentityChecking = false
+                self.mcIdentity = confirmed
+                self.mcRunning = confirmed
+            }
+        }
+    }
+
     func refresh() {
         // ポート確認とファイル読みだけ。メニューバーのアイコンはこれで足りるので、
         // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(mtPort)
-        mcRunning = portIsOpen(5173) || portIsOpen(3001)
+        mcRunning = mulmoClaudeIsRunning()
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         mcInstalled = FileManager.default.fileExists(atPath: mulmoClaudeDir)
         updateText = readUpdateText()
@@ -2125,6 +2156,34 @@ struct FooterButton: View {
 ///
 /// 繋がった接続はすぐ閉じる。待ち受け側から見ると、何も送らずに切れた接続が
 /// 1本増えるだけで、HTTP サーバーはこれを無視する。
+/// 5173 に居るのが本当に MulmoClaude かどうかを、返ってくる中身で確かめる（Issue #93）。
+///
+/// ポートが開いているかどうかだけでは足りない。5173 は Vite の既定ポートなので、
+/// 他のプロジェクトを開いているだけで「動作中・ブラウザで使えます」と出て、
+/// `開く` が他人のアプリを表示していた。
+///
+/// プロセス表を見る手もあるが、実測で `lsof` は1周 210 ms かかる（ポート確認は
+/// 0.1 ms、この HTTP は 1.0 ms）。ポーリングのたびに払える額ではない。
+///
+/// 印は2つあり、どちらか一方でも出れば本物とみなす。片方が上流の都合で
+/// 変わっても、黙って「停止中」になり続けることがないようにするため。
+func servesMulmoClaude(port: Int) -> Bool {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 2
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+
+    var body = ""
+    let done = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: request) { data, _, _ in
+        if let data, let text = String(data: data, encoding: .utf8) { body = text }
+        done.signal()
+    }.resume()
+    guard done.wait(timeout: .now() + 3) == .success else { return false }
+
+    return body.contains("<title>MulmoClaude</title>") || body.contains("gui-chat-protocol")
+}
+
 func portIsOpen(_ port: Int) -> Bool {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
