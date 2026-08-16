@@ -206,6 +206,28 @@ if [ -n "${STRAY_FLAG}" ]; then
 fi
 ok "自動起動の表示に作り物のフラグを使っていない"
 
+# ポートを持っているだけのプロセスを、確かめずに落とさない（Issue #91）。
+#
+# 5173 は Vite の既定ポートなので、他のプロジェクトを開いているだけで一致する。
+# 以前の停止は SIGTERM の2秒後に SIGKILL まで行っていたので、巻き添えになった
+# 側は保存の機会もなかった。作業ディレクトリで自分のものだけを選ぶ
+# mulmoclaude-pids を通す。
+#
+# ここも whitelist で書く。「lsof を直に叩いていないか」を見るので、綴りを
+# 増やされても効く（#83）。pids 自身と、表示だけの status は対象外。
+#
+# `-tiTCP:` と `-iTCP:` の両方があるので、ダッシュから書くと片方に当たらない。
+# 最初 `-iTCP:` と書いて、検査が丸ごと効いていなかった。
+PORT_KILL="$(grep -rn 'lsof[^|]*iTCP:\(5173\|3001\)' "${ROOT}/scripts" 2>/dev/null \
+  | grep -v 'scripts/mulmoclaude-pids:' \
+  | grep -v 'scripts/mulmoclaude-status:' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${PORT_KILL}" ]; then
+  printf '%s\n' "${PORT_KILL}"
+  fail "MulmoClaude のポートを直に見ています。mulmoclaude-pids を通してください（Issue #91）"
+fi
+ok "他人のプロセスを巻き添えにしない"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた

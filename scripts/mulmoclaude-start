@@ -15,10 +15,20 @@ ERR_LOG="${LOG_DIR}/mulmoclaude-error.log"
 
 mkdir -p "${LOG_DIR}"
 
-if /usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN >/dev/null 2>&1 || \
-   /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+# 「もう動いている」と言ってよいのは、設定の MulmoClaude が動いているときだけ
+# （Issue #91）。以前はポートが埋まっているだけで引き返していたので、他の
+# プロジェクトが 5173 を持っていると、起動を押しても何も起きなかった。
+if [ -n "$("${SCRIPT_DIR}/mulmoclaude-pids")" ]; then
   echo "MulmoClaude: already running"
   exit 0
+fi
+
+# ポートを他人が持っている場合は、起動しても vite が取れずに落ちる。
+# 何が起きたか分からないまま終わらせないよう、理由を残す。
+OTHERS="$("${SCRIPT_DIR}/mulmoclaude-pids" --others | /usr/bin/xargs 2>/dev/null || true)"
+if [ -n "${OTHERS}" ]; then
+  echo "MulmoClaude: 5173 か 3001 を別のものが使っています（pid ${OTHERS}）。そちらを止めてから起動してください" | /usr/bin/tee -a "${ERR_LOG}"
+  exit 1
 fi
 
 cd "${APP_DIR}"

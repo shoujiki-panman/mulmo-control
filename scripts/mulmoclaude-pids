@@ -1,0 +1,55 @@
+#!/bin/zsh
+set -u
+
+# MulmoClaude のポートを持っているプロセスを、自分のものか他人のものかに分ける。
+#
+#   mulmoclaude-pids          設定の MulmoClaude から起きているものだけ
+#   mulmoclaude-pids --others 同じポートを持っている、それ以外のもの
+#
+# 以前は 5173 と 3001 を持っているものを、確かめずに全部 MulmoClaude とみなして
+# いた（Issue #91）。5173 は Vite の既定ポートなので、他のプロジェクトを開いて
+# いるだけで巻き添えになる。停止は SIGKILL まで行くので保存の機会もない。
+# 逆に起動は「already running」と言って何もしない。
+#
+# 作者の Mac ではこの2つのポートを持つのは常に MulmoClaude なので、どちらの
+# 分岐も正しく見える。作業ディレクトリを見れば区別できる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ポートの既定はここだけが持つ。散らばると、片方だけ直して食い違う。
+MC_PORTS=(5173 3001)
+
+APP_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"
+
+WANT_OTHERS=0
+[ "${1:-}" = "--others" ] && WANT_OTHERS=1
+
+listeners() {
+  for port in "${MC_PORTS[@]}"; do
+    /usr/sbin/lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null
+  done | /usr/bin/sort -u
+}
+
+# そのプロセスがどこで動いているか。lsof の -Fn は `n<パス>` の形で返す。
+cwd_of() {
+  /usr/sbin/lsof -a -p "$1" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' | head -1
+}
+
+for pid in $(listeners); do
+  cwd="$(cwd_of "${pid}")"
+  # APP_DIR そのものか、その下で動いていれば自分のもの。
+  case "${cwd}" in
+    "${APP_DIR}"|"${APP_DIR}"/*) mine=1 ;;
+    *) mine=0 ;;
+  esac
+  if [ "${WANT_OTHERS}" = "1" ]; then
+    [ "${mine}" = "0" ] && printf '%s\n' "${pid}"
+  else
+    [ "${mine}" = "1" ] && printf '%s\n' "${pid}"
+  fi
+done
+
+# 該当なしは失敗ではない。呼ぶ側が `|| true` を書かずに済むよう、ここで揃える。
+exit 0
