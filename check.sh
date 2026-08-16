@@ -526,6 +526,58 @@ ok "退避を戻せずに壊れたら、止まって理由を残す"
 rm -rf "${SBX}"
 trap - EXIT
 
+# ── 画面に出す記録 ──────────────────────────────────────────────
+# SECURITY.md の I 節（081〜084）と E 節（042）。
+#
+# アプリはこれらのファイルを読んで画面を作る。壊れた JSON を書くと、画面は
+# 例外ではなく「未確認」に落ちる。つまり**間違いが静かに消える**ので、
+# 手元では気づけない。値そのものより、まず形が保てているかを見る。
+step "画面に出す記録"
+
+REC="$(mktemp -d "${TMPDIR:-/tmp}/mulmo record XXXXXX")"
+trap 'rm -rf "${REC}"' EXIT
+REC_LOGS="${REC}/Library/Logs/Mulmo Control"
+mkdir -p "${REC}/Library/Application Support/Mulmo Control"
+
+is_json() { /usr/bin/python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1" 2>/dev/null; }
+
+# 042 上流を確かめられないときは unknown と書く。ここで黙ると、画面には
+# 前回の値が残り続けて「最新です」と言い張ることになる。
+printf 'MULMO_CONTROL_REPO_URL=%s\n' "${REC}/no-such-repo.git" \
+  > "${REC}/Library/Application Support/Mulmo Control/app-info.env"
+HOME="${REC}" "${ROOT}/scripts/mulmo-control-self-update" check >/dev/null 2>&1 || true
+SELF_JSON="${REC_LOGS}/mulmo-control-self-update.json"
+[ -f "${SELF_JSON}" ] || fail "self-update の状態ファイルを書いていません（081）"
+is_json "${SELF_JSON}" || fail "self-update の状態が JSON として壊れています（081）"
+[ "$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${SELF_JSON}")" = "unknown" ] ||
+  fail "上流を確かめられないのに unknown と書いていません（042）"
+ok "上流を確かめられないときは unknown と書く"
+
+# 082 更新の一覧。node や npm が無い環境でも、形は保つ。
+HOME="${REC}" "${ROOT}/scripts/mulmo-check-updates" >/dev/null 2>&1 || true
+UPD_JSON="${REC_LOGS}/mulmo-updates.json"
+[ -f "${UPD_JSON}" ] || fail "更新の一覧を書いていません（082）"
+is_json "${UPD_JSON}" || fail "更新の一覧が JSON として壊れています（082）"
+/usr/bin/python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in ("checkedAt", "summary", "items"):
+    if key not in d:
+        raise SystemExit(f"{key} がありません")
+if not isinstance(d["items"], list):
+    raise SystemExit("items が配列ではありません")
+' "${UPD_JSON}" || fail "更新の一覧の形が変わっています（082）"
+ok "更新の一覧は形を保つ"
+
+# 084 まだ一度も更新していない人には、要約ファイルが無い。無いことを
+# 「壊れている」と扱うと、入れた直後の画面が全部おかしくなる。
+[ ! -f "${REC_LOGS}/mulmo-control-last-update-summary.txt" ] ||
+  fail "更新していないのに要約ファイルができています（084）"
+ok "更新していない人には要約ファイルを作らない"
+
+rm -rf "${REC}"
+trap - EXIT
+
 # ── ビルドと配布物 ──────────────────────────────────────────────
 if [ "${BUILD}" = "1" ]; then
   step "ビルド"
