@@ -64,13 +64,13 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | # | gate | 内容 | 状況 |
 |---|---|---|---|
-| 021 | fast | shell entrypoint は shebang を持つ | 🔨 全スクリプトが shebang を持つ（実測） |
-| 022 | fast | shell entrypoint は `set -u` または `set -eu` を持つ | 🔨 agent-env 以外は set -u/-eu（実測） |
-| 023 | fast | `curl | sh` / `wget | sh` がない | 🔨 該当なし（実測） |
-| 024 | fast | `eval` がない | 🔨 該当なし（実測） |
-| 025 | fast | `sudo` がない | 🔨 該当なし（実測） |
-| 026 | fast | 許可していない `rm -rf` がない | 🔨 固定パスのみ（実測） |
-| 027 | fast | `rm -rf` は固定された安全な対象か temporary dir に限定される | 🔨 同上 |
+| 021 | fast | shell entrypoint は shebang を持つ | ✅ 全スクリプトにシェバンがある |
+| 022 | fast | shell entrypoint は `set -u` または `set -eu` を持つ | ✅ set -u / set -eu がある |
+| 023 | fast | `curl | sh` / `wget | sh` がない | ✅ 落としたものの丸投げ・eval・権限昇格がない |
+| 024 | fast | `eval` がない | ✅ 同上 |
+| 025 | fast | `sudo` がない | ✅ 同上 |
+| 026 | fast | 許可していない `rm -rf` がない | ✅ rm -rf の対象は決まった3つだけ |
+| 027 | fast | `rm -rf` は固定された安全な対象か temporary dir に限定される | ✅ 同上 |
 | 028 | fast | script syntax を `zsh -n` で検査する | ✅ zsh -n による構文検査 |
 | 029 | fast | background job による `nice(5)` 警告が検査出力に出ない |  |
 | 030 | fast | helper script が同梱scripts数に含まれる |  |
@@ -184,10 +184,10 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 13 |
-| 🔨 実装はあるが自動検査なし | 33 |
+| ✅ `check.sh` が見ている | 20 |
+| 🔨 実装はあるが自動検査なし | 27 |
 | ⛔ 無効 | 1 |
-| 未着手 | 53 |
+| 未着手 | 52 |
 
 🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
 「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
