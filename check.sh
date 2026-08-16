@@ -33,6 +33,71 @@ for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
 done
 ok "$(ls "${ROOT}/scripts" | wc -l | tr -d ' ') 本 + ルートの .sh"
 
+# ── シェルの安全 ────────────────────────────────────────────────
+# SECURITY.md の C 節（021〜027）。どれも「実測はした」だけで自動検査が
+# 無く、明日誰かが壊しても気づけない状態だった。
+step "シェルの安全"
+
+# grep -rn の結果から `file:line:` を落とし、コメント行を捨てる。
+# 語で探すと、その話をしている自分のコメントに当たる（#83 で踏んだ罠）。
+noncomment() {
+  awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }'
+}
+
+# 021 シェバンが無いファイルは、上の構文検査が黙って飛ばす。
+# 「検査に通った」ではなく「検査されなかった」なので、ここで落とす。
+for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
+  [ -f "$f" ] || continue
+  case "$f" in *.mjs|*.md) continue ;; esac
+  head -1 "$f" | grep -q '^#!' || fail "シェバンがありません: $(basename "$f")（構文検査ごと飛ばされます）"
+done
+ok "全スクリプトにシェバンがある"
+
+# 022 未定義の変数をそのまま使うと、パスが空文字になって思わぬ場所を触る。
+# mulmoterminal-agent-env だけは source される定義ファイルなので対象外。
+for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
+  [ -f "$f" ] || continue
+  case "$f" in *.mjs|*.md|*/mulmoterminal-agent-env) continue ;; esac
+  head -1 "$f" | grep -q '^#!' || continue
+  grep -qE '^[[:space:]]*set -(u|eu|ue)' "$f" ||
+    fail "set -u がありません: $(basename "$f")"
+done
+ok "set -u / set -eu がある"
+
+# 023〜025 落としてきたものをそのまま実行する形、shell への丸投げ、権限昇格。
+# どれもこのリポジトリには1つも無い。増えたら気づきたい。
+#
+# check.sh 自身は対象から外す。探している語がこのファイルには必ず書いてあり、
+# 自分の検査文に当たるため（#83 で踏んだ罠と同じ形）。check.sh は配布物では
+# ないので（同梱されるのは scripts/ だけ）、外しても利用者には届かない。
+SAFETY_TARGETS=("${ROOT}/scripts")
+for f in "${ROOT}"/*.sh; do
+  case "$f" in */check.sh) continue ;; esac
+  SAFETY_TARGETS+=("$f")
+done
+
+for pat in 'curl[^|]*|[[:space:]]*\(sh\|zsh\|bash\)' 'wget[^|]*|[[:space:]]*\(sh\|zsh\|bash\)'; do
+  HIT="$(grep -rn "${pat}" "${SAFETY_TARGETS[@]}" 2>/dev/null | noncomment || true)"
+  [ -z "${HIT}" ] || { printf '%s\n' "${HIT}"; fail "落としたものを直接 shell に流しています"; }
+done
+for word in eval sudo; do
+  HIT="$(grep -rnw "${word}" "${SAFETY_TARGETS[@]}" 2>/dev/null | noncomment || true)"
+  [ -z "${HIT}" ] || { printf '%s\n' "${HIT}"; fail "${word} を使っています"; }
+done
+ok "落としたものの丸投げ・eval・権限昇格がない"
+
+# 026/027 消す対象は数えられるほど少ないので、許すものを並べる形にする。
+# 禁止する形を並べると綴りの数だけ穴が開く（#83 で実測した）。
+RMRF="$(grep -rn 'rm -rf\|rm -fr' "${SAFETY_TARGETS[@]}" 2>/dev/null | noncomment \
+  | grep -v '"/Applications/Mulmo Control.app"' \
+  | grep -v '"${APP_DIR}/Contents/Resources/scripts"' \
+  | grep -v '"${CHECK_DIR}"' || true)"
+if [ -n "${RMRF}" ]; then
+  printf '%s\n' "${RMRF}"
+  fail "許可していない rm -rf があります。消す対象を check.sh の一覧に足してください"
+fi
+ok "rm -rf の対象は決まった3つだけ"
+
 # ── 置き場所の約束 ──────────────────────────────────────────────
 step "同梱スクリプトの自己完結"
 
