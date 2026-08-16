@@ -126,12 +126,12 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 |---|---|---|---|
 | 061 | fast | MulmoClaude dir が存在しない場合に status が分かる |  |
 | 062 | fast | MulmoClaude dir がgit repoでない場合に update が止まる |  |
-| 063 | sandbox | dirty worktree は stash される |  |
+| 063 | sandbox | dirty worktree は stash される | ✅ 退避を戻せずに壊れたら止まる |
 | 064 | sandbox | stash 失敗時は update を中止して理由を残す | 🔨 #66 で実装 |
 | 065 | sandbox | default branch 以外なら default branch に戻す |  |
-| 066 | sandbox | checkout 失敗時は stash を戻す | 🔨 #66 で実装 |
-| 067 | sandbox | pull失敗時は stash を戻す | 🔨 #66 で実装 |
-| 068 | sandbox | pullで変化なしなら「すでに最新」理由を残す | 🔨 say_reason |
+| 066 | sandbox | checkout 失敗時は stash を戻す | 🔨 #66 で実装（checkout 失敗は未再現） |
+| 067 | sandbox | pull失敗時は stash を戻す | 🔨 #66 で実装（pull 失敗は未再現） |
+| 068 | sandbox | pullで変化なしなら「すでに最新」理由を残す | ✅ 変化が無いときは「すでに最新」と言う |
 | 069 | sandbox | yarn install 失敗時は理由を残す |  |
 | 070 | manual | update後にMulmoClaudeを再起動する |  |
 
@@ -184,10 +184,10 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 37 |
-| 🔨 実装はあるが自動検査なし | 10 |
+| ✅ `check.sh` が見ている | 39 |
+| 🔨 実装はあるが自動検査なし | 9 |
 | ⛔ 無効 | 1 |
-| 未着手 | 52 |
+| 未着手 | 51 |
 
 🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
 「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
