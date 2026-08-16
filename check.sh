@@ -509,12 +509,18 @@ sbx_git -C "${SBX_WORK}" checkout -q -- .
 # 壊れた package.json で yarn が本当に失敗するかは環境による。CI では
 # 成功して返ってきた（そのまま検査にすると、通っていないのに通ったことに
 # なる）。先に別の場所で1回試して、失敗する環境でだけ本番を走らせる。
+#
+# 見に行く PATH は、更新スクリプトが自分で固定しているものと同じにする。
+# 手元のシェルで yarn が見つかっても、スクリプトからは見えないことがある
+# （nvm や volta で入れた場合など）。CI がまさにそれで、こちらの測定だけが
+# yarn を見つけて「失敗するはず」と判断していた。
+SBX_SCRIPT_PATH="${SBX_HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SBX_YARN_FAILS=0
-if command -v yarn >/dev/null 2>&1; then
+if PATH="${SBX_SCRIPT_PATH}" command -v yarn >/dev/null 2>&1; then
   mkdir -p "${SBX}/yarnprobe"
   printf '{ this is not json\n' > "${SBX}/yarnprobe/package.json"
   set +e
-  (cd "${SBX}/yarnprobe" && yarn install >/dev/null 2>&1)
+  (cd "${SBX}/yarnprobe" && PATH="${SBX_SCRIPT_PATH}" yarn install >/dev/null 2>&1)
   [ $? != 0 ] && SBX_YARN_FAILS=1
   set -e
 fi
@@ -528,7 +534,7 @@ if [ "${SBX_YARN_FAILS}" = "1" ]; then
     fail "yarn install の失敗を理由に残していません（069）"
   ok "yarn install に失敗したら理由を残す"
 else
-  ok "yarn install の失敗は確かめていません（この環境では壊れた package.json でも yarn が成功する）"
+  ok "yarn install の失敗は確かめていません（更新スクリプトの PATH に yarn がいません）"
 fi
 
 # 067 pull に失敗したら、退避したものを戻してから止める。戻さずに抜けると
