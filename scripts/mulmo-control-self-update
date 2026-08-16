@@ -8,12 +8,19 @@ PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbi
 # rm -rf してから置き直す。zsh はスクリプトを最後まで読み込まずに少しずつ読んで
 # 実行するので、消えたファイルの続きを読もうとすると途中で死ぬ。
 # バンドルの外に自分の写しを作り、そちらへ移ってから作業する。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ "${1:-check}" = "apply" ] && [ "${MULMO_SELF_UPDATE_DETACHED:-0}" != "1" ]; then
-  detached="$(/usr/bin/mktemp -t mulmo-control-self-update)"
+  detached_dir="$(/usr/bin/mktemp -d -t mulmo-control-self-update)"
+  detached="${detached_dir}/mulmo-control-self-update"
   /bin/cat "$0" > "${detached}"
-  /bin/chmod +x "${detached}"
+  # 設定パーサも一緒に持っていく。写した先には兄弟スクリプトが無いので、
+  # 連れて行かないと再実行後に設定が読めない（Issue #67）。
+  /bin/cp "${SCRIPT_DIR}/mulmo-config-get" "${detached_dir}/" 2>/dev/null || true
+  /bin/chmod +x "${detached}" "${detached_dir}/mulmo-config-get" 2>/dev/null || true
   MULMO_SELF_UPDATE_DETACHED=1 exec "${detached}" "$@"
 fi
+# 写した先で走っているときは、SCRIPT_DIR もそちらを指す（パーサを連れてきている）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
 CONFIG="${APP_SUPPORT}/app-info.env"
 STATUS="${HOME}/Library/Logs/Mulmo Control/mulmo-control-self-update.json"
@@ -28,11 +35,14 @@ repo_url="${DEFAULT_REPO}"
 source_dir="${APP_SUPPORT}/source"
 branch="main"
 
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
 if [ -f "${CONFIG}" ]; then
-  source "${CONFIG}"
-  repo_url="${MULMO_CONTROL_REPO_URL:-${repo_url}}"
-  source_dir="${MULMO_CONTROL_SOURCE_DIR:-${source_dir}}"
-  branch="${MULMO_CONTROL_BRANCH:-${branch}}"
+  cfg_repo_url="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_REPO_URL 2>/dev/null || true)"
+  cfg_source_dir="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_SOURCE_DIR 2>/dev/null || true)"
+  cfg_branch="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_BRANCH 2>/dev/null || true)"
+  repo_url="${cfg_repo_url:-${repo_url}}"
+  source_dir="${cfg_source_dir:-${source_dir}}"
+  branch="${cfg_branch:-${branch}}"
 fi
 
 write_status() {

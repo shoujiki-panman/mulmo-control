@@ -4,11 +4,11 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-APP_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
+# `. "${CONFIG}"` だと、設定ファイルに紛れた `touch ...` や `$(...)` が
+# 読んだ側の権限でそのまま走る。
+APP_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/mulmoclaude-update.log"
 

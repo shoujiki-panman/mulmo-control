@@ -92,7 +92,10 @@ BEFORE_PLIST="$(content_hash "${MULMO_AGENT_PLIST}")"
 # に置く。
 cp "${ROOT}/scripts"/mulmoterminal-* "${LOCAL_BIN}/"
 cp "${ROOT}/scripts/start-mulmoterminal.sh" "${LOCAL_BIN}/start-mulmoterminal.sh"
-chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh"
+# 設定パーサも配る。start-mulmoterminal.sh は ~/.local/bin の写しから
+# LaunchAgent 経由で走るので、隣に無いと設定が読めない（Issue #67）。
+cp "${ROOT}/scripts/mulmo-config-get" "${LOCAL_BIN}/mulmo-config-get"
+chmod +x "${LOCAL_BIN}"/mulmoterminal-* "${LOCAL_BIN}/start-mulmoterminal.sh" "${LOCAL_BIN}/mulmo-config-get"
 
 if [ ! -x "${LOCAL_BIN}/mulmoterminal" ]; then
   mkdir -p "${HOME}/.local/share/mulmoterminal" /private/tmp/npm-cache-mulmo-control
