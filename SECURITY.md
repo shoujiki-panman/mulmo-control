@@ -40,6 +40,11 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 009 | fast | `$(...)` を含む値/行は実行されない | ✅ 同上 |
 | 010 | fast | backtick を含む値/行は実行されない | ✅ 同上 |
 
+008〜010 の ✅ は、最初は**過大申告だった**（#83）。ガードが `"${CONFIG}"` という綴りだけを
+探しており、`$CONFIG`・変数名違い・パス直書き・一行の `&&` は素通りしていた（5通り中4通り）。
+現在は「`mulmoterminal-agent-env` 以外を `.` / `source` していたら落とす」という whitelist に
+変えてあり、5通りすべてで落ちることを実測済み。**禁止したい綴りを並べる形では勝てない。**
+
 ## B. quoting/path safety
 
 | # | gate | 内容 | 状況 |
@@ -173,7 +178,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 097 | governance | AI reviewer は最初 shadow mode でコメントのみ |  |
 | 098 | governance | AIが作業開始時にIssueへ方針コメントを残す | 🔨 #67 に方針コメントを残した（当初は守れていなかった） |
 | 099 | governance | 自動承認する場合は一定割合を人間がsample reviewする |  |
-| 100 | governance | 新しいbug classが見つかったら `SECURITY.md` / `check.sh` に戻す |  |
+| 100 | governance | 新しいbug classが見つかったら `SECURITY.md` / `check.sh` に戻す | 🔨 #83 で1周した（ガードの穴 → Issue → 検査 → ここへ反映） |
 
 ## 現状
 

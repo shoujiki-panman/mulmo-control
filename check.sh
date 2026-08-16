@@ -149,10 +149,21 @@ ok "自動起動の表示に作り物のフラグを使っていない"
 #
 # このガードが無いと、事情を知らない担当がまた増やす。実際、#78 の作業で
 # 1本増えた（このIssueを読まずに作業していた）。
-SOURCED="$(grep -rn '^[[:space:]]*\(\.\|source\)[[:space:]]\+"\${CONFIG}"' "${ROOT}/scripts" 2>/dev/null || true)"
+#
+# 最初は `"${CONFIG}"` という綴りを探す形で書いたが、それは 5通りの書き方のうち
+# 1通りしか見ていなかった（Issue #83 で実測）。`$CONFIG`、変数名違い、パス直書き、
+# 一行の `&&` は全部素通りする。禁止したい綴りを並べる形では勝てない。
+#
+# なので whitelist にする。このリポジトリで `.` / `source` してよいものは
+# `mulmoterminal-agent-env` の1つだけ（実測: scripts/ 9本 + install.sh + uninstall.sh）。
+# それ以外を読み込んでいたら落とす。綴りにも変数名にも依存しない。
+SOURCED="$(grep -rn '\(^[[:space:]]*\|[;&|][[:space:]]*\)\(\.\|source\)[[:space:]]\+[^[:space:];&|]' \
+  "${ROOT}/scripts" "${ROOT}/install.sh" "${ROOT}/uninstall.sh" 2>/dev/null \
+  | grep -v 'mulmoterminal-agent-env' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
 if [ -n "${SOURCED}" ]; then
   printf '%s\n' "${SOURCED}"
-  fail "app-info.env を shell として実行しています。mulmo-config-get を使ってください（Issue #67）"
+  fail "設定ファイルを shell として実行しています。値は mulmo-config-get で読んでください（Issue #67 / #83）"
 fi
 ok "設定ファイルを shell として実行していない"
 
