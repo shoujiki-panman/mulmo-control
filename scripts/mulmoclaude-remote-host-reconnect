@@ -1,0 +1,71 @@
+#!/bin/zsh
+set -u
+
+# 切れた「スマホ連携（チャット）」を繋ぎ直す（Issue #23）。
+#
+# スマホ連携は2つある。ターミナル側は mulmo-remote-host-reconnect が見る。
+# こちらは MulmoClaude(3001) 側で、同じ Google アカウントを使うが接続は別々。
+# 片方だけ切れることがあるので、繋ぎ直す口も別々に要る。
+#
+# 初回接続はブラウザでの Google サインイン（idToken）が要るのでここでは代われない。
+# 一度繋がっていれば session が発行されているので、それを送れば戻せる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/remote-host.log"
+
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
+MC_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+MC_DIR="${MC_DIR:-${HOME}/mulmoclaude}"
+BASE="http://127.0.0.1:3001"
+
+mkdir -p "${LOG_DIR}"
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] reconnect requested (mulmoclaude)" >>"${LOG}"
+
+# API は Bearer 認証。トークンはワークスペース直下に置かれている。
+TOKEN=""
+[ -f "${MC_DIR}/.session-token" ] && TOKEN="$(/bin/cat "${MC_DIR}/.session-token" 2>/dev/null || true)"
+if [ -z "${TOKEN}" ]; then
+  echo "MulmoClaude が動いていません。先に起動してください。" | tee -a "${LOG}"
+  exit 1
+fi
+
+STATUS="$(/usr/bin/curl -s -m 6 -H "Authorization: Bearer ${TOKEN}" \
+  "${BASE}/api/remote-host/status" 2>/dev/null || true)"
+if [ -z "${STATUS}" ]; then
+  echo "MulmoClaude が動いていません。先に起動してください。" | tee -a "${LOG}"
+  exit 1
+fi
+
+# session は JSON 文字列がそのまま入っている（実測）。中身は見ずにそのまま返す。
+# ここでログに出さないこと。Firebase の refreshToken を含む。
+SESSION="$(STATUS="${STATUS}" /usr/bin/python3 -c "
+import json, os
+try:
+    print(json.loads(os.environ['STATUS']).get('session') or '')
+except ValueError:
+    print('')
+")"
+
+if [ -z "${SESSION}" ]; then
+  echo "繋ぎ直す手がかりがありません。MulmoClaude の画面から一度接続してください。" | tee -a "${LOG}"
+  exit 2
+fi
+
+CODE="$(/usr/bin/curl -s -m 15 -o /dev/null -w "%{http_code}" \
+  -X POST -H "Content-Type: application/json" -H "Authorization: Bearer ${TOKEN}" \
+  -d "$(SESSION="${SESSION}" /usr/bin/python3 -c "
+import json, os
+print(json.dumps({'session': os.environ['SESSION']}))
+")" \
+  "${BASE}/api/remote-host/reconnect" 2>/dev/null || echo 000)"
+
+case "${CODE}" in
+  200) echo "スマホ連携（チャット）を繋ぎ直しました" | tee -a "${LOG}" ;;
+  401) echo "接続の有効期限が切れています。MulmoClaude の画面から繋ぎ直してください。" | tee -a "${LOG}"; exit 2 ;;
+  *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
+esac
+
+"${SCRIPT_DIR}/mulmo-check-remote-host" >/dev/null 2>&1 || true
