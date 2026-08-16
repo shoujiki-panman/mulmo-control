@@ -55,6 +55,25 @@ private func appleScriptStringLiteral(_ value: String) -> String {
 /// 名前のフォルダが Documents にできていた。Documents を iCloud で同期している
 /// 人には同期対象にもなる。macOS が用意している場所へ移した。
 private let logDir = "\(homeDir)/Library/Logs/Mulmo Control"
+/// ボタンを押したときの出力先。以前は `/tmp/mulmo-control-action.log` にあり、
+/// ログは1箇所に揃える約束（#4）から外れていた。`/tmp` は誰でも書けるので、
+/// 固定名だと先に同名のリンクを置かれる余地もある（Issue #104）。
+private let actionLogPath = "\(logDir)/mulmo-control-action.log"
+
+/// 失敗したときに画面へ添える一行。作業ログの末尾から、中身のある行を1つ拾う。
+///
+/// 「失敗しました。ログを確認してください」だけでは、ターミナルを開かせない
+/// というこのアプリの役目を果たしていない（Issue #104）。yarn が見つからない
+/// ときの `yarn was not found` は、この一行で画面に出る。
+func lastLineOfActionLog(limit: Int = 120) -> String? {
+    guard let text = try? String(contentsOfFile: actionLogPath, encoding: .utf8) else { return nil }
+    let line = text
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .last { !$0.isEmpty }
+    guard let line, !line.isEmpty else { return nil }
+    return line.count <= limit ? line : String(line.prefix(limit)) + "…"
+}
 private let legacyLogDir = "\(homeDir)/Documents/Codex/SwiftBarLogs"
 
 /// 古い置き場所から一度だけ引き継ぐ。
@@ -634,7 +653,7 @@ final class ControlModel: ObservableObject {
     }
 
     func openActionLog() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/tmp/mulmo-control-action.log"))
+        NSWorkspace.shared.open(URL(fileURLWithPath: actionLogPath))
     }
 
     private func familyCommandPath(_ package: FamilyPackage) -> String? {
@@ -697,17 +716,25 @@ final class ControlModel: ObservableObject {
         return "MULMO_RELEASE_ITEMS_B64=\"\(encoded)\" \(tool("mulmo-release-summary")) || true"
     }
 
+    /// 失敗の一行を作る。理由が取れないときだけ、これまでの文言に落ちる。
+    static func failureText(prefix: String = "失敗しました") -> String {
+        guard let detail = lastLineOfActionLog() else {
+            return "\(prefix)。ログを確認してください"
+        }
+        return "\(prefix): \(detail)"
+    }
+
     private func run(_ command: String, label: String? = nil) {
         actionText = label
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", "(\n\(command)\n) >/tmp/mulmo-control-action.log 2>&1"]
+            process.arguments = ["-lc", "mkdir -p \"\(logDir)\"\n(\n\(command)\n) >\"\(actionLogPath)\" 2>&1"]
             do {
                 try process.run()
                 process.waitUntilExit()
             } catch {
-                try? "failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
+                try? "failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
             }
             let succeeded = process.terminationStatus == 0
             await MainActor.run {
@@ -716,7 +743,7 @@ final class ControlModel: ObservableObject {
                 // 消すと、上がった物まで無かったことになる。何が動いて何が
                 // 動かなかったかは、更新後の実測値が知っている。
                 self.recordPendingUpdateReport()
-                self.actionText = succeeded ? nil : "失敗しました。ログを確認してください"
+                self.actionText = succeeded ? nil : Self.failureText()
             }
         }
     }
@@ -744,7 +771,7 @@ final class ControlModel: ObservableObject {
                 try process.run()
                 process.waitUntilExit()
             } catch {
-                try? "silent update check failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
+                try? "silent update check failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
             }
             await MainActor.run {
                 self.automaticUpdateCheckRunning = false
@@ -757,12 +784,12 @@ final class ControlModel: ObservableObject {
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", "(\n\(command)\n) >/tmp/mulmo-control-action.log 2>&1"]
+            process.arguments = ["-lc", "mkdir -p \"\(logDir)\"\n(\n\(command)\n) >\"\(actionLogPath)\" 2>&1"]
             do {
                 try process.run()
                 process.waitUntilExit()
             } catch {
-                try? "failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
+                try? "failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
             }
             let succeeded = process.terminationStatus == 0
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -772,7 +799,7 @@ final class ControlModel: ObservableObject {
                     self.actionText = nil
                     self.openURL(url)
                 } else {
-                    self.actionText = "起動に失敗しました。ログを確認してください"
+                    self.actionText = Self.failureText(prefix: "起動に失敗しました")
                 }
             }
         }
@@ -783,12 +810,12 @@ final class ControlModel: ObservableObject {
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", "(\n\(command)\n) >/tmp/mulmo-control-action.log 2>&1"]
+            process.arguments = ["-lc", "mkdir -p \"\(logDir)\"\n(\n\(command)\n) >\"\(actionLogPath)\" 2>&1"]
             do {
                 try process.run()
                 process.waitUntilExit()
             } catch {
-                try? "failed: \(error)\n".write(toFile: "/tmp/mulmo-control-action.log", atomically: true, encoding: .utf8)
+                try? "failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
             }
             await MainActor.run {
                 self.refreshAfterAction()

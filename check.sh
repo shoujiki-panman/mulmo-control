@@ -306,6 +306,19 @@ if [ -n "${STRAY_LOG}" ]; then
   printf '%s\n' "${STRAY_LOG}"
   fail "ログの置き場所が増えています。~/Library/Logs/Mulmo Control に揃えてください（Issue #4）"
 fi
+
+# 上のガードは `Library/Logs/` を含む行しか見ないので、`/tmp` に書くログは
+# 素通りしていた。実際、ボタンの作業ログが `/tmp/mulmo-control-action.log`
+# に置かれたまま残っていた（Issue #104）。`/tmp` は誰でも書けるので、固定名だと
+# 先に同名のリンクを置かれる余地もある。
+# npm のキャッシュ（/private/tmp/npm-cache-mulmo-control）はログではないので除く。
+TMP_LOG="$(grep -rn '/tmp/[A-Za-z0-9_.-]*\.log' "${ROOT}/Sources/main.swift" "${ROOT}/scripts" \
+  "${ROOT}/install.sh" "${ROOT}/bin" 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*(#|\/\/)/) print }' || true)"
+if [ -n "${TMP_LOG}" ]; then
+  printf '%s\n' "${TMP_LOG}"
+  fail "/tmp にログを書いています。~/Library/Logs/Mulmo Control に置いてください（Issue #104）"
+fi
 ok "ログの置き場所は1つだけ"
 
 # MulmoTerminal を起こす前に、既に誰かが同じポートで応答していないか見る。
