@@ -295,6 +295,30 @@ if [ -n "${LEGACY}" ]; then
 fi
 ok "~/Documents/Codex を参照していない"
 
+# 上のガードは「古い場所に戻っていないか」しか見ない。3つ目の場所が増えるのは
+# 素通りする（`Library/Logs/MulmoControl` のような空白なしの綴りなど）。
+# 置き場所は1つだけと決めているので、許すものを並べる形にする（#83 の教訓）。
+STRAY_LOG="$(grep -rn 'Library/Logs/' "${ROOT}/Sources/main.swift" "${ROOT}/scripts" \
+  "${ROOT}/install.sh" "${ROOT}/bin" 2>/dev/null \
+  | grep -v 'Library/Logs/Mulmo Control' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*(#|\/\/)/) print }' || true)"
+if [ -n "${STRAY_LOG}" ]; then
+  printf '%s\n' "${STRAY_LOG}"
+  fail "ログの置き場所が増えています。~/Library/Logs/Mulmo Control に揃えてください（Issue #4）"
+fi
+ok "ログの置き場所は1つだけ"
+
+# MulmoTerminal を起こす前に、既に誰かが同じポートで応答していないか見る。
+# 見ないと MulmoTerminal は "Port is already in use" で exit 1 し、plist の
+# KeepAlive がそれを異常終了とみなして約10秒ごとに蘇生し続ける。起動に失敗する
+# プロセスもワークスペースを書き換えるので、その先の画面がリロードを繰り返す
+# ところまで壊れる。消しても作者の環境では一度も二重にならないと気づけない。
+if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/start-mulmoterminal.sh" \
+  | grep -q 'curl.*"http://\${MULMO_AGENT_HOST}:\${PORT}/"'; then
+  fail "起動前のポート確認がありません。二重起動すると KeepAlive が蘇生し続けます"
+fi
+ok "起動前に二重起動を避けている"
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #
