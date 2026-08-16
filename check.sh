@@ -533,8 +533,16 @@ if [ "${SBX_YARN_FAILS}" = "1" ]; then
   grep -q 'yarn install に失敗した' "${SBX_REASONS}" 2>/dev/null ||
     fail "yarn install の失敗を理由に残していません（069）"
   ok "yarn install に失敗したら理由を残す"
+elif PATH="${SBX_SCRIPT_PATH}" command -v yarn >/dev/null 2>&1; then
+  ok "yarn install の失敗は確かめていません（この環境では壊れた package.json でも yarn が成功する）"
 else
-  ok "yarn install の失敗は確かめていません（更新スクリプトの PATH に yarn がいません）"
+  # #102 yarn が見えないとき、黙って飛ばして「更新しました」と言わない。
+  # 依存が古いままの MulmoClaude が起動して、画面だけが壊れる。
+  # この道は yarn の無い環境でしか通れないので、CI が受け持つ。
+  sbx_update
+  grep -q 'yarn が見つからないので依存の更新を飛ばしました' "${SBX_REASONS}" 2>/dev/null ||
+    fail "yarn が無いのに、飛ばしたことを理由に残していません（#102）"
+  ok "yarn が無いときは、飛ばしたことを理由に残す"
 fi
 
 # 067 pull に失敗したら、退避したものを戻してから止める。戻さずに抜けると

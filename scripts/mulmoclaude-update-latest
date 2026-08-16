@@ -127,10 +127,22 @@ if [ "$(/usr/bin/git rev-parse HEAD 2>/dev/null || echo "")" = "${BEFORE_HEAD}" 
   say_reason "すでに最新でした"
 fi
 
+# 依存を入れ直す。ここで黙って飛ばすと、コードだけ新しくなって依存が古いまま
+# の MulmoClaude を「更新しました」と報告することになる（Issue #102）。
+#
+# このスクリプトは上で PATH を固定しているので、利用者のシェルに yarn が
+# あっても、ここからは見えないことがある（nvm / volta / asdf / corepack）。
+# 実際 GitHub Actions の macOS ランナーがその状態だった。作者の Mac では
+# どちらの PATH にも yarn があるので踏まない。
 if command -v yarn >/dev/null 2>&1; then
   if ! yarn install >>"${LOG}" 2>&1; then
     fail "MulmoClaude: yarn install に失敗したので、更新できませんでした"
   fi
+else
+  # 止めはしない。コードの更新自体は済んでいるし、yarn が要るかどうかは
+  # その版によるため。ただし黙らない。
+  echo "MulmoClaude: yarn が見つからないので、依存の更新は飛ばしました" | tee -a "${LOG}"
+  say_reason "yarn が見つからないので依存の更新を飛ばしました。MulmoClaude が開かないときは yarn を入れてください"
 fi
 
 "${START}" >>"${LOG}" 2>&1 || true
