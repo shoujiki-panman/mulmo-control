@@ -2,21 +2,33 @@
 set -u
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-pids="$(/usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN 2>/dev/null; /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN 2>/dev/null)"
-pids="$(printf '%s\n' "${pids}" | /usr/bin/sort -u | /usr/bin/xargs 2>/dev/null || true)"
+# 落としてよいのは、設定の MulmoClaude から起きているものだけ（Issue #91）。
+# 以前は 5173 と 3001 を持っているものを確かめずに全部落としていた。5173 は
+# Vite の既定ポートなので、他のプロジェクトを開いているだけで巻き添えになる。
+# しかも TERM の2秒後に KILL まで行くので、保存の機会もない。
+pids="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
+others="$("${SCRIPT_DIR}/mulmoclaude-pids" --others | /usr/bin/xargs 2>/dev/null || true)"
 
 if [ -z "${pids}" ]; then
-  echo "MulmoClaude: not running"
+  if [ -n "${others}" ]; then
+    # 黙って "not running" と言うと、ポートが埋まっている理由が分からないまま
+    # 「起動しても動かない」に見える。誰が持っているかまで言う。
+    echo "MulmoClaude: not running（5173 か 3001 は別のものが使っています: pid ${others}）"
+  else
+    echo "MulmoClaude: not running"
+  fi
   exit 0
 fi
 
-/bin/kill -TERM ${pids} 2>/dev/null || true
+/bin/kill -TERM ${=pids} 2>/dev/null || true
 sleep 2
 
-remaining="$(/usr/sbin/lsof -tiTCP:5173 -sTCP:LISTEN 2>/dev/null; /usr/sbin/lsof -tiTCP:3001 -sTCP:LISTEN 2>/dev/null)"
+remaining="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
 if [ -n "${remaining}" ]; then
-  /bin/kill -KILL ${remaining} 2>/dev/null || true
+  /bin/kill -KILL ${=remaining} 2>/dev/null || true
 fi
 
 echo "MulmoClaude: stopped"
