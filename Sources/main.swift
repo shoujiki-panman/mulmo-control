@@ -525,12 +525,12 @@ final class ControlModel: ObservableObject {
     /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
     /// 要る（idToken が作れない）ので、そちらは画面への案内に留める。
     func reconnectRemoteHost() {
-        run(tool("mulmo-remote-host-reconnect"), label: "スマホ連携（ターミナル）を繋ぎ直しています")
+        run(tool("mulmo-remote-host-reconnect"), label: "スマホ連携（MulmoTerminal）を繋ぎ直しています")
     }
 
     /// チャット側は接続が別なので、繋ぎ直す口も別（Issue #23）。片方だけ切れる。
     func reconnectMCRemoteHost() {
-        run(tool("mulmoclaude-remote-host-reconnect"), label: "スマホ連携（チャット）を繋ぎ直しています")
+        run(tool("mulmoclaude-remote-host-reconnect"), label: "スマホ連携（MulmoClaude）を繋ぎ直しています")
     }
 
     /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
@@ -1769,7 +1769,7 @@ struct SetupPanel: View {
                         action: model.openClaudeLogin
                     )
                     SetupRow(
-                        title: "スマホ連携（ターミナル）",
+                        title: "スマホ連携（MulmoTerminal）",
                         detail: model.remoteHost.detail,
                         ok: model.remoteHost.state == "online",
                         buttonTitle: model.remoteHost.isOffline ? "繋ぎ直す"
@@ -1777,7 +1777,7 @@ struct SetupPanel: View {
                         action: model.remoteHost.isOffline ? model.reconnectRemoteHost : model.openMT
                     )
                     SetupRow(
-                        title: "スマホ連携（チャット）",
+                        title: "スマホ連携（MulmoClaude）",
                         detail: model.mcRemoteHost.detail,
                         ok: model.mcRemoteHost.state == "online",
                         buttonTitle: model.mcRemoteHost.isOffline ? "繋ぎ直す"

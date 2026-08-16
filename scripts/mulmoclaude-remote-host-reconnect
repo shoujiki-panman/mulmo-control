@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -u
 
-# 切れた「スマホ連携（チャット）」を繋ぎ直す（Issue #23）。
+# 切れた「スマホ連携（MulmoClaude）」を繋ぎ直す（Issue #23）。
 #
 # スマホ連携は2つある。ターミナル側は mulmo-remote-host-reconnect が見る。
 # こちらは MulmoClaude(3001) 側で、同じ Google アカウントを使うが接続は別々。
@@ -63,7 +63,7 @@ print(json.dumps({'session': os.environ['SESSION']}))
   "${BASE}/api/remote-host/reconnect" 2>/dev/null || echo 000)"
 
 case "${CODE}" in
-  200) echo "スマホ連携（チャット）を繋ぎ直しました" | tee -a "${LOG}" ;;
+  200) echo "スマホ連携（MulmoClaude）を繋ぎ直しました" | tee -a "${LOG}" ;;
   401) echo "接続の有効期限が切れています。MulmoClaude の画面から繋ぎ直してください。" | tee -a "${LOG}"; exit 2 ;;
   *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
 esac
