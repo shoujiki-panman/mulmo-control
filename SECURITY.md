@@ -1,0 +1,200 @@
+# SECURITY.md
+
+Mulmo Control の検査カタログ。出典は Issue #67。
+
+このファイルは**現状の申告**であって、達成の宣言ではない。印が付いていない項目は
+「まだ見ていない」という意味で、安全だと分かっているという意味ではない。
+
+## 印の意味
+
+| 印 | 意味 |
+|---|---|
+| ✅ | `check.sh` が自動で見ている。壊すと PR で落ちる |
+| 🔨 | 実装はあるが自動検査は無い。人が変えれば黙って壊れる |
+| ⛔ | 項目自体が無効になった |
+| （空欄） | 未着手 |
+
+## gate の分け方
+
+| gate | いつ走るか |
+|---|---|
+| fast | PR ごと（`check.sh`） |
+| release | 配る前（`release.sh` → `check.sh`） |
+| manual | 人が触って確かめる |
+| sandbox | 使い捨ての環境で走らせる |
+| governance | 運用ルール。自動化しない |
+
+
+## A. config/env parsing
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 001 | fast | `app-info.env` が存在しない場合は既定値に落ちる | 🔨 mulmo-config-get（手動で確認） |
+| 002 | fast | 空の `app-info.env` で落ちない | 🔨 同上 |
+| 003 | fast | 正常な `MULMO_CONTROL_REPO_URL` を読める | 🔨 同上 |
+| 004 | fast | 正常な `MULMO_CONTROL_SOURCE_DIR` を読める | 🔨 同上 |
+| 005 | fast | 正常な `MULMO_CONTROL_BRANCH` を読める | 🔨 同上 |
+| 006 | fast | 正常な `MULMO_CONTROL_MULMOCLAUDE_DIR` を読める | 🔨 同上 |
+| 007 | fast | 未知のキーは無視する | 🔨 同上 |
+| 008 | fast | `touch /tmp/...` のような行は実行されない | ✅ 設定を source していない |
+| 009 | fast | `$(...)` を含む値/行は実行されない | ✅ 同上 |
+| 010 | fast | backtick を含む値/行は実行されない | ✅ 同上 |
+
+## B. quoting/path safety
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 011 | fast | パスに空白があっても command string が壊れない | 🔨 quote_env / 空白入りパスで実測 |
+| 012 | fast | パスに `'` があっても config parser が読める | 🔨 同上 |
+| 013 | fast | MulmoClaude dir に空白があっても start script が壊れない | 🔨 同上 |
+| 014 | fast | MulmoClaude dir に `'` があっても LaunchAgent plist が壊れない | 🔨 install-agent の xml_escape |
+| 015 | fast | `/Applications/Mulmo Control.app` を裸で shell に埋め込まない | ✅ tool()/bin() を通している |
+| 016 | fast | `toolsDir` は Swift 側で helper 経由になる | ✅ 同上 |
+| 017 | fast | `localBin` は Swift 側で helper 経由になる | ✅ 同上 |
+| 018 | fast | XML plist 値に `&` / `<` / `>` が入っても escape される | 🔨 同上 |
+| 019 | fast | log path に空白があっても tail/open が壊れない |  |
+| 020 | fast | app bundle内の同梱scriptを空白入りpathから実行できる | ✅ 空白入りパスからの実行 |
+
+## C. shell safety
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 021 | fast | shell entrypoint は shebang を持つ | 🔨 全スクリプトが shebang を持つ（実測） |
+| 022 | fast | shell entrypoint は `set -u` または `set -eu` を持つ | 🔨 agent-env 以外は set -u/-eu（実測） |
+| 023 | fast | `curl | sh` / `wget | sh` がない | 🔨 該当なし（実測） |
+| 024 | fast | `eval` がない | 🔨 該当なし（実測） |
+| 025 | fast | `sudo` がない | 🔨 該当なし（実測） |
+| 026 | fast | 許可していない `rm -rf` がない | 🔨 固定パスのみ（実測） |
+| 027 | fast | `rm -rf` は固定された安全な対象か temporary dir に限定される | 🔨 同上 |
+| 028 | fast | script syntax を `zsh -n` で検査する | ✅ zsh -n による構文検査 |
+| 029 | fast | background job による `nice(5)` 警告が検査出力に出ない |  |
+| 030 | fast | helper script が同梱scripts数に含まれる |  |
+
+## D. install/uninstall
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 031 | release | macOS 14 未満で install が止まる |  |
+| 032 | release | npm がない場合に install が明確に止まる |  |
+| 033 | release | MulmoClaude がない場合も MulmoTerminal用途では install が続く |  |
+| 034 | release | `MULMOCLAUDE_DIR` 指定が app-info.env に保存される |  |
+| 035 | release | build済みzip取得成功時は local build に落ちない |  |
+| 036 | release | zip取得失敗時は local build に fallback する |  |
+| 037 | release | `MULMO_CONTROL_BUILD=1` で必ず local build する |  |
+| 038 | release | install後に `/Applications/Mulmo Control.app` が存在する |  |
+| 039 | manual | uninstall は app と LaunchAgent を消し、ログ/データは残す |  |
+| 040 | manual | uninstall 後に再installできる |  |
+
+## E. self-update
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 041 | fast | self-update check は installed version を Info.plist から読む |  |
+| 042 | fast | release tag が読めない時は `unknown` status を書く |  |
+| 043 | fast | installed が latest と同じなら `current` |  |
+| 044 | fast | installed が latest より新しければ `current` |  |
+| 045 | fast | installed が古ければ `update` |  |
+| 046 | fast | self-update apply は detached copy で動く |  |
+| 047 | release | source repo が既存gitなら fetch/pullする |  |
+| 048 | release | source repo がなければ cloneする |  |
+| 049 | release | apply 失敗時に log が残る |  |
+| 050 | manual | self-update 後にアプリを再起動できる |  |
+
+## F. MulmoTerminal/LaunchAgent
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 051 | fast | `mulmoterminal-agent-env` は sibling script として読まれる |  |
+| 052 | fast | LaunchAgent plist は `plutil -lint` に通る | 🔨 install-agent が plutil -lint |
+| 053 | fast | LaunchAgent WorkingDirectory がない時は `$HOME` に逃がす | 🔨 WORK_DIR の $HOME 逃がし |
+| 054 | fast | locale fallback `LANG=C.UTF-8` が start script にある | ✅ 起動スクリプトのロケール補完 |
+| 055 | fast | 既にport 34567が応答中なら二重起動しない | 🔨 起動前のポート応答チェック |
+| 056 | manual | 起動ボタンで LaunchAgent が bootstrap される |  |
+| 057 | manual | 停止ボタンで LaunchAgent が bootout される |  |
+| 058 | manual | 再起動ボタンで kickstart または再起動できる |  |
+| 059 | manual | keepalive-enabled の作成/削除が期待通り | ⛔ keepalive-enabled は廃止した（表示専用で何も制御していなかった） |
+| 060 | manual | 自動起動したMulmoTerminalで日本語が `_` にならない | 🔨 #62 で修正・実機で実測 |
+
+## G. MulmoClaude repo states
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 061 | fast | MulmoClaude dir が存在しない場合に status が分かる |  |
+| 062 | fast | MulmoClaude dir がgit repoでない場合に update が止まる |  |
+| 063 | sandbox | dirty worktree は stash される |  |
+| 064 | sandbox | stash 失敗時は update を中止して理由を残す | 🔨 #66 で実装 |
+| 065 | sandbox | default branch 以外なら default branch に戻す |  |
+| 066 | sandbox | checkout 失敗時は stash を戻す | 🔨 #66 で実装 |
+| 067 | sandbox | pull失敗時は stash を戻す | 🔨 #66 で実装 |
+| 068 | sandbox | pullで変化なしなら「すでに最新」理由を残す | 🔨 say_reason |
+| 069 | sandbox | yarn install 失敗時は理由を残す |  |
+| 070 | manual | update後にMulmoClaudeを再起動する |  |
+
+## H. npm/network/update checks
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 071 | fast | node がない時に update cache が `Node未検出` になる |  |
+| 072 | fast | npm がない時に npmLatest が `unknown` になる |  |
+| 073 | fast | npm latest timeout で落ちない |  |
+| 074 | fast | MulmoTerminal version parse が SemVer を拾う |  |
+| 075 | fast | package.json workspace package version を拾う |  |
+| 076 | fast | dependency version の `^` / `~` を剥がす |  |
+| 077 | fast | unknown がある時 summary が `一部未確認` |  |
+| 078 | fast | update がある時 summary が件数を出す |  |
+| 079 | release | `mulmo-npm-install` は一時的な失敗を1回だけ retry する | 🔨 1回だけ retry + 404 は retry しない（#71） |
+| 080 | release | npm cache は `/private/tmp` 側を使う | 🔨 /private/tmp のキャッシュ |
+
+## I. logs/status JSON
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 081 | fast | self-update status JSON が valid JSON |  |
+| 082 | fast | mulmo updates cache が valid JSON |  |
+| 083 | fast | update reasons が tab-separated で読める |  |
+| 084 | fast | last update summary が存在しない時もUIが落ちない |  |
+| 085 | fast | legacy log dir から新log dirへの逆戻りがない | 🔨 logDir 統一（#58） |
+| 086 | fast | logs path は `~/Library/Logs/Mulmo Control` に揃う | 🔨 同上 |
+| 087 | manual | ログボタンで正しいログ場所を開く |  |
+| 088 | manual | status UI に `unknown/current/update/missing` が出る |  |
+| 089 | manual | 通知済みkeyで同じ通知を繰り返さない |  |
+| 090 | manual | app self-update通知とtool update通知が混ざらない |  |
+
+## J. release/artifact/AI governance
+
+| # | gate | 内容 | 状況 |
+|---|---|---|---|
+| 091 | fast | Info.plist と package.json の version が一致する | ✅ Info.plist と package.json の一致 |
+| 092 | fast | `bin/mulmo-control.mjs` が `node --check` に通る | ✅ bin/mulmo-control.mjs の構文 |
+| 093 | release | app bundle の scripts 数が source と一致する | ✅ 同梱スクリプト数 |
+| 094 | release | codesign verify がクリーンコピーで通る | ✅ codesign verify |
+| 095 | release | zip はクリーンコピーから作る |  |
+| 096 | release | release後に latest zip を取り直してversion確認する | 🔨 release.sh の再取得確認 |
+| 097 | governance | AI reviewer は最初 shadow mode でコメントのみ |  |
+| 098 | governance | AIが作業開始時にIssueへ方針コメントを残す | 🔨 #67 に方針コメントを残した（当初は守れていなかった） |
+| 099 | governance | 自動承認する場合は一定割合を人間がsample reviewする |  |
+| 100 | governance | 新しいbug classが見つかったら `SECURITY.md` / `check.sh` に戻す |  |
+
+## 現状
+
+| 状況 | 件数 |
+|---|---|
+| ✅ `check.sh` が見ている | 13 |
+| 🔨 実装はあるが自動検査なし | 33 |
+| ⛔ 無効 | 1 |
+| 未着手 | 53 |
+
+🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
+「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
+🔨 を ✅ に移すのが次の作業になる。
+
+## 新しい壊れ方を見つけたら
+
+項目を足して `check.sh` に検査を入れる（100番）。**検査を書いたら必ず
+「壊したら落ちるか」を試すこと。** 同日中に4回、効いていない検査を
+「効いた」と誤読しかけた。踏んだ罠:
+
+- 変数名で探すと、その話をしている**自分のコメント**に当たる
+- `grep -v` で行を消して否定テストを作ると**構文エラー**になり、検査の手前で落ちる
+- コメント行をシェバンより前に置くと、シェバン検査ごと飛ばされる
+- `grep -vE ':[[:space:]]*(#|//)'` は **URL の `://`** に当たる
