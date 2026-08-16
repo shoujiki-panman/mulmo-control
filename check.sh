@@ -449,7 +449,58 @@ grep -q 'すでに最新でした' "${SBX_REASONS}" 2>/dev/null ||
   fail "変化が無いときに理由を残していません（068）"
 ok "変化が無いときは「すでに最新」と言う"
 
-# 063 / 066 / 067 使っているだけで CLAUDE.md は書き換わるので、退避はこちらで
+# 更新スクリプトを、失敗の理由を変えて何度も走らせる。壊れる順に並べてあり、
+# 作業ツリーを壊す 063 / #66 は最後に置いている。
+sbx_update() {
+  set +e
+  HOME="${SBX_HOME}" "${ROOT}/scripts/mulmoclaude-update-latest" >/dev/null 2>&1
+  SBX_RC=$?
+  set -e
+}
+sbx_point_at() {
+  printf 'MULMO_CONTROL_MULMOCLAUDE_DIR=%s\n' "$1" \
+    > "${SBX_HOME}/Library/Application Support/Mulmo Control/app-info.env"
+}
+
+# 065 別のブランチを見ていると、git pull は「そのブランチとして」成功する。
+# 失敗しないので誰も気づかないまま、本体の更新だけが永遠に届かない（Issue #46）。
+# ターミナルを開かせないのがこのアプリの役目なので、こちらで戻す。
+sbx_git -C "${SBX_WORK}" remote set-head origin main >/dev/null 2>&1 || true
+sbx_git -C "${SBX_WORK}" checkout -q -b feature
+sbx_update
+[ "$(sbx_git -C "${SBX_WORK}" rev-parse --abbrev-ref HEAD)" = "main" ] ||
+  fail "別のブランチから既定のブランチに戻していません（065）"
+grep -q 'feature を見ていたので main に戻して更新しました' "${SBX_REASONS}" 2>/dev/null ||
+  fail "ブランチを戻したことを理由に残していません（065）"
+ok "別のブランチを見ていたら既定のブランチに戻す"
+
+# 067 pull に失敗したら、退避したものを戻してから止める。戻さずに抜けると
+# 利用者の変更が stash の中に取り残され、画面には何も出ない。
+printf 'dirty\n' >> "${SBX_WORK}/CLAUDE.md"
+mv "${SBX}/origin.git" "${SBX}/origin.gone"
+sbx_update
+mv "${SBX}/origin.gone" "${SBX}/origin.git"
+[ "${SBX_RC}" != "0" ] || fail "pull に失敗したのに成功として終わりました（067）"
+[ -z "$(sbx_git -C "${SBX_WORK}" stash list)" ] ||
+  fail "pull に失敗したあと、退避したものが stash に残っています（067）"
+[ -n "$(sbx_git -C "${SBX_WORK}" status --porcelain)" ] ||
+  fail "pull に失敗したあと、退避したものが戻っていません（067）"
+ok "pull に失敗したら退避を戻してから止まる"
+sbx_git -C "${SBX_WORK}" checkout -q -- .
+
+# 061 / 062 MulmoClaude を入れていない人、別の場所に置いている人がいる。
+# 黙って続けると、どこにも無いものを更新したことにしてしまう。
+mkdir -p "${SBX}/notrepo"
+sbx_point_at "${SBX}/notrepo"
+sbx_update
+[ "${SBX_RC}" != "0" ] || fail "git repo でない場所を指しても止まりません（062）"
+sbx_point_at "${SBX}/nowhere"
+sbx_update
+[ "${SBX_RC}" != "0" ] || fail "存在しない場所を指しても止まりません（061）"
+ok "場所が無い・git repo でないときは止まる"
+sbx_point_at "${SBX_WORK}"
+
+# 063 / #66 使っているだけで CLAUDE.md は書き換わるので、退避はこちらで
 # 面倒を見る。上流と同じ行がぶつかると git stash pop は失敗を返しながら
 # 作業ツリーにコンフリクトマーカーを書き込んで止まる。
 #
@@ -464,10 +515,7 @@ sbx_git -C "${SBX}/up" commit -qm upstream
 sbx_git -C "${SBX}/up" push -q origin main
 printf 'local side\n' > "${SBX_WORK}/CLAUDE.md"
 
-set +e
-HOME="${SBX_HOME}" "${ROOT}/scripts/mulmoclaude-update-latest" >/dev/null 2>&1
-SBX_RC=$?
-set -e
+sbx_update
 [ "${SBX_RC}" != "0" ] || fail "退避を戻せずに壊れたのに、成功として終わりました（Issue #66）"
 UNMERGED="$(/usr/bin/git -C "${SBX_WORK}" diff --name-only --diff-filter=U 2>/dev/null)"
 [ -n "${UNMERGED}" ] || fail "コンフリクトを再現できていません（この検査自体が無効）"

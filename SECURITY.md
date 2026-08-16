@@ -124,13 +124,13 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | # | gate | 内容 | 状況 |
 |---|---|---|---|
-| 061 | fast | MulmoClaude dir が存在しない場合に status が分かる |  |
-| 062 | fast | MulmoClaude dir がgit repoでない場合に update が止まる |  |
+| 061 | fast | MulmoClaude dir が存在しない場合に status が分かる | ✅ 場所が無い・git repo でないときは止まる |
+| 062 | fast | MulmoClaude dir がgit repoでない場合に update が止まる | ✅ 同上 |
 | 063 | sandbox | dirty worktree は stash される | ✅ 退避を戻せずに壊れたら止まる |
 | 064 | sandbox | stash 失敗時は update を中止して理由を残す | 🔨 #66 で実装 |
-| 065 | sandbox | default branch 以外なら default branch に戻す |  |
+| 065 | sandbox | default branch 以外なら default branch に戻す | ✅ 別のブランチを見ていたら既定のブランチに戻す |
 | 066 | sandbox | checkout 失敗時は stash を戻す | 🔨 #66 で実装（checkout 失敗は未再現） |
-| 067 | sandbox | pull失敗時は stash を戻す | 🔨 #66 で実装（pull 失敗は未再現） |
+| 067 | sandbox | pull失敗時は stash を戻す | ✅ pull に失敗したら退避を戻してから止まる |
 | 068 | sandbox | pullで変化なしなら「すでに最新」理由を残す | ✅ 変化が無いときは「すでに最新」と言う |
 | 069 | sandbox | yarn install 失敗時は理由を残す |  |
 | 070 | manual | update後にMulmoClaudeを再起動する |  |
@@ -184,10 +184,10 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 39 |
-| 🔨 実装はあるが自動検査なし | 9 |
+| ✅ `check.sh` が見ている | 43 |
+| 🔨 実装はあるが自動検査なし | 8 |
 | ⛔ 無効 | 1 |
-| 未着手 | 51 |
+| 未着手 | 48 |
 
 🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
 「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
