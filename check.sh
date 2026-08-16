@@ -563,6 +563,17 @@ step "npm パッケージ"
 node --check "${ROOT}/bin/mulmo-control.mjs" || fail "bin/mulmo-control.mjs の構文が壊れています"
 ok "bin/mulmo-control.mjs"
 
+# 配らないものを間違って追跡しない。yarn を使う検査を足したときに、
+# yarn.lock と node_modules/.yarn-integrity をそのまま commit してしまった
+# （`git add -A` の確認漏れ）。このリポジトリは依存を持たないので、
+# どちらも要らない。
+TRACKED_JUNK="$(cd "${ROOT}" && /usr/bin/git ls-files node_modules yarn.lock 2>/dev/null || true)"
+if [ -n "${TRACKED_JUNK}" ]; then
+  printf '%s\n' "${TRACKED_JUNK}"
+  fail "配らないものを追跡しています。git rm --cached で外してください"
+fi
+ok "node_modules / yarn.lock を追跡していない"
+
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${ROOT}/Info.plist")"
 PKG_VERSION="$(node -p "require('${ROOT}/package.json').version")"
 [ "${APP_VERSION}" = "${PKG_VERSION}" ] \
