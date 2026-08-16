@@ -132,7 +132,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 066 | sandbox | checkout 失敗時は stash を戻す | ✅ 既定のブランチに戻せなければ退避を戻してから止まる |
 | 067 | sandbox | pull失敗時は stash を戻す | ✅ pull に失敗したら退避を戻してから止まる |
 | 068 | sandbox | pullで変化なしなら「すでに最新」理由を残す | ✅ 変化が無いときは「すでに最新」と言う |
-| 069 | sandbox | yarn install 失敗時は理由を残す | ✅ yarn install に失敗したら理由を残す（yarn が無い環境では飛ばす） |
+| 069 | sandbox | yarn install 失敗時は理由を残す | ✅ yarn install に失敗したら理由を残す（手元のみ。CI の yarn は壊れた package.json でも成功するので飛ばす） |
 | 070 | manual | update後にMulmoClaudeを再起動する |  |
 
 ## H. npm/network/update checks

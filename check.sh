@@ -506,7 +506,20 @@ sbx_git -C "${SBX_WORK}" checkout -q -- .
 # 069 yarn install に失敗したら理由を残す。ここで黙ると、依存が入っていない
 # ままの MulmoClaude が起動して、画面だけが壊れる。
 # yarn が無い環境では確かめようがないので、その旨を出して飛ばす。
+# 壊れた package.json で yarn が本当に失敗するかは環境による。CI では
+# 成功して返ってきた（そのまま検査にすると、通っていないのに通ったことに
+# なる）。先に別の場所で1回試して、失敗する環境でだけ本番を走らせる。
+SBX_YARN_FAILS=0
 if command -v yarn >/dev/null 2>&1; then
+  mkdir -p "${SBX}/yarnprobe"
+  printf '{ this is not json\n' > "${SBX}/yarnprobe/package.json"
+  set +e
+  (cd "${SBX}/yarnprobe" && yarn install >/dev/null 2>&1)
+  [ $? != 0 ] && SBX_YARN_FAILS=1
+  set -e
+fi
+
+if [ "${SBX_YARN_FAILS}" = "1" ]; then
   printf '{ this is not json\n' > "${SBX_WORK}/package.json"
   sbx_update
   sbx_git -C "${SBX_WORK}" checkout -q -- package.json
@@ -515,7 +528,7 @@ if command -v yarn >/dev/null 2>&1; then
     fail "yarn install の失敗を理由に残していません（069）"
   ok "yarn install に失敗したら理由を残す"
 else
-  ok "yarn install の失敗は確かめていません（yarn が無い環境）"
+  ok "yarn install の失敗は確かめていません（この環境では壊れた package.json でも yarn が成功する）"
 fi
 
 # 067 pull に失敗したら、退避したものを戻してから止める。戻さずに抜けると
