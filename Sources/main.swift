@@ -1403,9 +1403,17 @@ struct ClaudeLoginCard: View {
 }
 
 /// 本文をそのまま出しつつ、「ガイド: https://…」の行だけは押せるリンクにする。
-/// 新機能の説明は公式ガイドにあるので、そこへ1クリックで行けた方がいい。
+/// 詳しい説明は上流のガイドやリリースノートにあるので、1クリックで行けた方がいい。
 struct LinkedText: View {
     let text: String
+
+    /// リンクの文言は、その行が自分で名乗っているもの（`ガイド:` `詳しく:`）を使う。
+    /// 以前はどの行でも「新機能を見る」と出していたが、飛び先には直った不具合も
+    /// 並ぶので、機能だけがあるように読めていた（Issue #89）。
+    private func label(_ body: String) -> String {
+        let trimmed = body.trimmingCharacters(in: CharacterSet(charactersIn: " :："))
+        return trimmed.isEmpty ? "開く" : trimmed
+    }
 
     private var blocks: [(body: String, url: URL?)] {
         text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
@@ -1421,16 +1429,9 @@ struct LinkedText: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 if let url = block.url {
-                    HStack(spacing: 4) {
-                        if !block.body.isEmpty {
-                            Text(block.body)
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.secondaryText)
-                        }
-                        Link("新機能を見る", destination: url)
-                            .font(AppFont.small)
-                            .foregroundStyle(Palette.accent)
-                    }
+                    Link(label(block.body), destination: url)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.accent)
                 } else if !block.body.isEmpty {
                     Text(block.body)
                         .font(AppFont.small)
