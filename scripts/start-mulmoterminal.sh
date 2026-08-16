@@ -26,16 +26,18 @@ if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ -z "${LANG:-}" ]; then
   export LANG="C.UTF-8"
 fi
 
-CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-MULMOCLAUDE_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
+# 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
+# `. "${CONFIG}"` だと、設定ファイルに紛れた `touch ...` や `$(...)` が
+# 読んだ側の権限でそのまま走る。
+MULMOCLAUDE_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}"
 
 # ポートは隣の共有定義から取る（Issue #7）。ここに数字を直接書くと、
 # MULMOTERMINAL_PORT で逃がしたつもりでも、実際に起動する側だけ 34567 のまま
 # 動くという食い違いになる。
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/mulmoterminal-agent-env"
 
 export PORT="${MULMO_AGENT_PORT}"

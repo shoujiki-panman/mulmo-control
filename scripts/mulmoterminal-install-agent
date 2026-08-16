@@ -29,11 +29,9 @@ fi
 # MULMOCLAUDE_DIR=... を渡された場合、ファイルからは読めない。
 OVERRIDE_DIR="${MULMO_CONTROL_MULMOCLAUDE_DIR:-}"
 
-CONFIG="${HOME}/Library/Application Support/Mulmo Control/app-info.env"
-if [ -f "${CONFIG}" ]; then
-  . "${CONFIG}"
-fi
-MULMOCLAUDE_DIR="${OVERRIDE_DIR:-${MULMO_CONTROL_MULMOCLAUDE_DIR:-${HOME}/mulmoclaude}}"
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
+CONFIG_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+MULMOCLAUDE_DIR="${OVERRIDE_DIR:-${CONFIG_DIR:-${HOME}/mulmoclaude}}"
 
 # LaunchAgent の作業ディレクトリは実在しないと起動そのものが失敗する。
 # MulmoClaude を入れていない人もいるので、無ければ $HOME に逃がす。

@@ -141,6 +141,21 @@ if [ -n "${STRAY_FLAG}" ]; then
 fi
 ok "自動起動の表示に作り物のフラグを使っていない"
 
+# 設定ファイルを shell として実行しない（Issue #67）。
+#
+# `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
+# `touch ...` や `$(...)` を読んだ側の権限でそのまま走らせる。実測でも
+# `touch /tmp/...` の行が実行された。値は mulmo-config-get 経由で読む。
+#
+# このガードが無いと、事情を知らない担当がまた増やす。実際、#78 の作業で
+# 1本増えた（このIssueを読まずに作業していた）。
+SOURCED="$(grep -rn '^[[:space:]]*\(\.\|source\)[[:space:]]\+"\${CONFIG}"' "${ROOT}/scripts" 2>/dev/null || true)"
+if [ -n "${SOURCED}" ]; then
+  printf '%s\n' "${SOURCED}"
+  fail "app-info.env を shell として実行しています。mulmo-config-get を使ってください（Issue #67）"
+fi
+ok "設定ファイルを shell として実行していない"
+
 # アプリのパスには空白がある（/Applications/Mulmo Control.app）。
 # コマンド文字列に裸で埋めると /Applications/Mulmo で切れる（Issue #32）。
 #
