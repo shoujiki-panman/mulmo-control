@@ -81,8 +81,27 @@ function pkgVersion(pkgName) {
     const data = readJson(p);
     if (data?.name === pkgName) return data.version || "unknown";
   }
-  const dep = root.dependencies?.[pkgName] || root.devDependencies?.[pkgName];
-  return dep ? dep.replace(/^[~^]/, "") : "unknown";
+  // ここで package.json の宣言から版を作らない（Issue #109）。
+  //
+  // `^2.9.1` は「2.x のうち 2.9.1 以上」という範囲であって、入っている版では
+  // ないし、そもそも入っていないかもしれない。以前はこれを「入っている版」と
+  // して返していたので、node_modules が無い人に、入っていないものの版が並び、
+  // 「更新あり: 2件」と出ていた。宣言の下限が npm の最新と一致すれば、逆に
+  // 「最新」と緑で出る。
+  //
+  // 分からないときは分からないと言う。status() がこれを missing にし、
+  // 画面には「未導入」と出る（受け皿は元からある）。
+  // ここで package.json の宣言から版を作らない（Issue #109）。
+  //
+  // `^2.9.1` は「2.x のうち 2.9.1 以上」という範囲であって、入っている版では
+  // ないし、そもそも入っていないかもしれない。以前はこれを「入っている版」と
+  // して返していたので、node_modules が無い人に、入っていないものの版が並び、
+  // 「更新あり: 2件」と出ていた。宣言の下限が npm の最新と一致すれば、逆に
+  // 「最新」と緑で出る。#102 で yarn が飛ばされた人がこの状態になる。
+  //
+  // 分からないときは分からないと言う。status() がこれを missing にし、
+  // 画面には「未導入」と出る（受け皿は元からある）。
+  return "unknown";
 }
 
 const mtRaw = sh(`${process.env.HOME}/.local/bin/mulmoterminal`, ["--version"], { timeout: 10000 });
@@ -135,11 +154,18 @@ const items = [
 
 const updateCount = items.filter((item) => item.status === "update").length;
 const unknownCount = items.filter((item) => item.status === "unknown").length;
+// 入っていないものは「最新」とは言えない（Issue #109）。以前は missing を
+// 数えていなかったので、1つも入っていない人にも「すべて最新」と出ていた。
+const missingCount = items.filter((item) => item.status === "missing").length;
 const summary = updateCount > 0
   ? `更新あり: ${updateCount}件`
   : unknownCount > 0
     ? `一部未確認`
-    : `すべて最新`;
+    : missingCount === items.length
+      ? `未導入`
+      : missingCount > 0
+        ? `入っているものは最新`
+        : `すべて最新`;
 
 fs.writeFileSync(cache, JSON.stringify({
   checkedAt: new Date().toISOString(),
