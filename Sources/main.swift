@@ -298,6 +298,8 @@ enum AppFont {
 final class ControlModel: ObservableObject {
     @Published var mtRunning = false
     @Published var mcRunning = false
+    /// 二重に走らせない印（Issue #116）。
+    private var lightChecksRunning = false
     @Published var nodePath: String?
     @Published var npmPath: String?
     @Published var mtInstalled = false
@@ -373,7 +375,42 @@ final class ControlModel: ObservableObject {
         guard panelIsOpen != open else { return }
         panelIsOpen = open
         scheduleTimer()
-        if open { refresh() }
+        if open {
+            refresh()
+            refreshLightChecks()
+        }
+    }
+
+    /// パネルを開いたときに、書き置きを取り直す（Issue #116）。
+    ///
+    /// 「動作中」はその場でポートを見るが、スマホ連携と Claude のログインは
+    /// スクリプトが書いたファイルを読んでいるだけだった。そのファイルを書くのは
+    /// `確認` ボタンと6時間ごとの自動確認だけなので、繋ぎ直しても画面は切れた
+    /// ままの表示が残っていた。
+    ///
+    /// ここで走らせるのは軽い2つだけ（実測でスマホ連携 101ms・ログイン 203ms）。
+    /// npm を叩く更新確認は 2750ms かかるので、6時間の間隔のまま触らない。
+    private func refreshLightChecks() {
+        guard !lightChecksRunning else { return }
+        lightChecksRunning = true
+        let command = """
+        \(tool("mulmo-check-remote-host"))
+        \(tool("mulmo-check-claude-login"))
+        """
+        Task.detached { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            try? process.run()
+            process.waitUntilExit()
+            await MainActor.run {
+                guard let self else { return }
+                self.lightChecksRunning = false
+                self.remoteHost = readRemoteHostStatus()
+                self.mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
+                self.claudeLogin = readClaudeLoginStatus()
+            }
+        }
     }
 
     private func scheduleTimer() {
