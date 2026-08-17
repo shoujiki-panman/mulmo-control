@@ -388,23 +388,6 @@ final class ControlModel: ObservableObject {
         timer = t
     }
 
-    /// 入っているのに動いていないものが1つでもあれば、緑にしない（Issue #112）。
-    ///
-    /// 以前はどちらか一方でも動いていれば緑だったので、`MT on / MC off` と
-    /// 書きながら色は緑という食い違いが起きていた。赤になるのは両方止まった
-    /// ときだけなので、MulmoClaude が死んでも指標は赤くならず、気づく手段が
-    /// ひとつ潰れていた。
-    var titleColor: Color {
-        if hasAnyUpdates {
-            return Palette.warn
-        }
-        let watched = [(mtInstalled, mtRunning), (mcInstalled, mcRunning)].filter { $0.0 }
-        guard !watched.isEmpty else { return Color.red }
-        if watched.allSatisfy({ $0.1 }) { return Color.green }
-        if watched.contains(where: { $0.1 }) { return Palette.warn }
-        return Color.red
-    }
-
     var menuIconName: String {
         // ログイン切れは更新より先に出す。更新は後回しにできるが、
         // ログインが切れている間は MulmoClaude のチャットが使えない。
@@ -1203,7 +1186,6 @@ struct MulmoControlApp: App {
                 .onDisappear { model.setPanelOpen(false) }
         } label: {
             Image(systemName: model.menuIconName)
-                .foregroundStyle(model.titleColor)
                 .font(AppFont.section)
                 // 状態を文字で持たない（Issue #112）。以前は `MT on / MC off` を
                 // ここに渡していたが、accessibilityLabel は画面に出ないため、
