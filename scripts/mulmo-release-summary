@@ -58,16 +58,38 @@ function sectionFor(markdown, heading) {
 // 上流の語彙を当てにいくと、書き方が変わった時点で黙って動かなくなる。
 // 実際、この関数は 4.1.1 以降ずっと空振りしていた。構造だけを頼りに取り出す。
 
-/// その版の要点は、節の先頭にある太字の一文に書かれている。
+/// 装飾を落として1行にする。太字・リンク・コード・末尾の issue 番号を外す。
+function plain(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\[(.+?)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s*\([^()]*#\d+[^()]*\)\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/// 節の冒頭、最初の ### が始まるまでの地の文。その最初の一文がその版の要点。
+///
+/// 以前は「最初の太字」を要点とみなしていたが、上流が書き方を変えると壊れる。
+/// 4.9.0 では本文の途中にある `**agent**` を拾って、画面に「・agent」とだけ
+/// 出ていた。4.8.5 では条件つきの注意書きが先頭に来て、要約になっていなかった。
+/// 太字は強調であって要約ではないので、置き場所で決める。
 function leadSentence(section) {
-  const body = section
-    .split(/\n/)
-    .slice(1)                                  // 見出しの行を落とす
-    .filter((line) => !line.startsWith(">"))   // Setup guide の引用を飛ばす
-    .join("\n");
-  const bold = body.match(/\*\*([\s\S]+?)\*\*/);
-  if (!bold) return "";
-  return bold[1].replace(/\s+/g, " ").trim();
+  const lead = [];
+  for (const line of section.split(/\n/).slice(1)) {
+    if (line.startsWith("###")) break;          // 個別の項目に入ったら終わり
+    if (line.startsWith(">") || !line.trim()) continue;  // Setup guide の引用と空行
+    lead.push(line.trim());
+  }
+  const body = plain(lead.join(" "));
+  const first = body.match(/(.+?[.。])(\s|$)/);
+  return (first ? first[1] : body).trim();
+}
+
+/// 各項目の見出し。冒頭の地の文が無い版（4.8.3 など）はここから始める。
+function itemHeadings(section) {
+  return [...section.matchAll(/^###\s+(.+?)\s*$/gm)].map((m) => plain(m[1])).filter(Boolean);
 }
 
 /// 日本語のセットアップガイドへのリンク。各版の節が自分で持っている。
@@ -79,9 +101,14 @@ function japaneseGuideURL(section) {
 }
 
 function summarizeMulmoTerminal(section) {
-  const lines = [];
+  const bullets = [];
   const lead = leadSentence(section);
-  if (lead) lines.push(`・${lead}`);
+  if (lead) bullets.push(lead);
+  for (const heading of itemHeadings(section)) {
+    if (bullets.length >= 3) break;             // 画面に収まる分だけ
+    if (!bullets.includes(heading)) bullets.push(heading);
+  }
+  const lines = bullets.map((b) => `・${b}`);
   const guide = japaneseGuideURL(section);
   if (guide) lines.push(`ガイド: ${guide}`);
   return lines;
