@@ -769,10 +769,19 @@ ok "同梱スクリプト ${BUNDLED_COUNT} 本"
 codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
 # どちらで署名されているかを出す（Issue #54）。adhoc でも配れるが、その場合は
 # ブラウザで落とした人にだけ警告が出る。見えないまま配らないための表示。
-if codesign -dv "${APP}" 2>&1 | grep -q "Signature=adhoc"; then
+#
+# Developer ID で署名できているときは hardened runtime も要る。欠けていても
+# codesign は通り、notarytool も受け付けるが、審査が Invalid で返る。release.sh は
+# zip を作って提出したあとにそこまで進んでから落ちるので、手前で止める。
+# secure timestamp はここで見ない。build-app.sh の --timestamp が失敗すると
+# codesign 自体が落ちるので、ここに来た時点で付いている。
+CODESIGN_INFO="$(codesign -dv "${APP}" 2>&1)"
+if printf '%s\n' "${CODESIGN_INFO}" | grep -q "Signature=adhoc"; then
   ok "署名（adhoc・ブラウザ経由では警告が出ます）"
+elif printf '%s\n' "${CODESIGN_INFO}" | grep -q "flags=.*runtime"; then
+  ok "署名（Developer ID・hardened runtime）"
 else
-  ok "署名（Developer ID）"
+  fail "Developer ID 署名に hardened runtime がありません（公証が Invalid で返ります）"
 fi
 
 # v1.0.9 はここが抜けていて、ほとんどのボタンが動かない版を配った。

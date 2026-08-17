@@ -43,6 +43,31 @@ chmod +x "${APP_DIR}/Contents/Resources/scripts"/*
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 chmod +x "${APP_DIR}/Contents/MacOS/MulmoControl"
 xattr -cr "${APP_DIR}"
-codesign --force --deep --sign - "${APP_DIR}"
+
+# 署名（Issue #54）。
+#
+# Developer ID Application 証明書がキーチェーンにあればそれで署名する。あわせて
+# hardened runtime（--options runtime）と secure timestamp（--timestamp）を付ける。
+# どちらも公証の必須条件で、欠けていると notarytool が受け付けても Invalid で返る。
+#
+# 証明書が無ければ従来どおり adhoc（--sign -）で署名する。証明書を作る前でも
+# ビルドは通り、check.sh も release.sh も adhoc を通る道を持っている。
+#
+# 証明書は名前ではなく SHA-1 で指定する。表示名（"Developer ID Application: 氏名
+# (TEAMID)"）は氏名を含むので、別の登録者の Mac でも通るようにしてある。
+# MULMO_SIGN_IDENTITY で明示指定もできる（証明書が複数あるときはこれで選ぶ）。
+SIGN_IDENTITY="${MULMO_SIGN_IDENTITY:-}"
+if [ -z "${SIGN_IDENTITY}" ]; then
+  # grep が空振りしても代入は成功する（zsh は pipefail を既定にしない）。
+  SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep 'Developer ID Application' | head -1 | awk '{print $2}')"
+fi
+
+if [ -n "${SIGN_IDENTITY}" ]; then
+  codesign --force --deep --options runtime --timestamp \
+    --sign "${SIGN_IDENTITY}" "${APP_DIR}"
+else
+  codesign --force --deep --sign - "${APP_DIR}"
+fi
 
 echo "${APP_DIR}"
