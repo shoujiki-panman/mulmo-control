@@ -217,6 +217,16 @@ if ! printf '%s\n' "${SW}" | grep -q 'mcInstalled = FileManager.default.fileExis
 fi
 ok "「入っている」の判定がスクリプトと揃っている"
 
+# 片方が落ちていても緑、を繰り返さない（Issue #112）。
+#
+# 以前は `(mtRunning || mcRunning) ? .green : .red` で、`MT on / MC off` と
+# 書きながら色は緑だった。赤になるのは両方止まったときだけなので、
+# MulmoClaude が死んでも指標は赤くならず、気づく手段がひとつ潰れていた。
+if printf '%s\n' "${SW}" | grep -q '(mtRunning || mcRunning) ? Color.green'; then
+  fail "片方でも動いていれば緑、に戻っています（Issue #112）"
+fi
+ok "片方が落ちていたら緑にしない"
+
 # 入っていないものの版を、宣言から作らない（Issue #109）。
 #
 # `^2.9.1` は範囲であって、入っている版ではない。以前はこれを「入っている版」と
