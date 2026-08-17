@@ -634,6 +634,20 @@ grep -q '壊れたまま' "${SBX_REASONS}" 2>/dev/null ||
   fail "壊れたことを画面に出せる形で残していません（Issue #66）"
 ok "退避を戻せずに壊れたら、止まって理由を残す"
 
+# 083 理由はタブ区切りで書く。アプリはこれを分解して画面に並べるので、
+# 区切りが崩れると理由が丸ごと出なくなる。ここまでで何行か溜まっている。
+/usr/bin/python3 -c '
+import sys
+lines = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.strip()]
+if not lines:
+    raise SystemExit("理由が1行も書かれていません")
+for l in lines:
+    parts = l.split("\t")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise SystemExit(f"タブ区切りになっていません: {l!r}")
+' "${SBX_REASONS}" || fail "更新の理由がタブ区切りで読めません（083）"
+ok "更新の理由はタブ区切りで読める"
+
 rm -rf "${SBX}"
 trap - EXIT
 
@@ -709,6 +723,26 @@ ok "入っていないものは「未導入」と言う"
 [ ! -f "${REC_LOGS}/mulmo-control-last-update-summary.txt" ] ||
   fail "更新していないのに要約ファイルができています（084）"
 ok "更新していない人には要約ファイルを作らない"
+
+# 071 node を入れていない人がいる。更新の確認は node に依存しているので、
+# そこで黙って落ちると画面は前回の値のまま「最新です」と言い続ける。
+#
+# スクリプトは PATH を自分で持っているため、外から node を隠せない。写しを作って
+# PATH の行だけ差し替える。兄弟スクリプトも要るので scripts ごと写す。
+cp -R "${ROOT}/scripts" "${REC}/scripts"
+mkdir -p "${REC}/nonode"
+for c in mkdir date sed grep tr cat awk; do
+  src="$(command -v "${c}" 2>/dev/null || true)"
+  [ -n "${src}" ] && ln -sf "${src}" "${REC}/nonode/${c}"
+done
+/usr/bin/sed 's|^PATH=.*|PATH="'"${REC}"'/nonode:/usr/bin:/bin"|' \
+  "${ROOT}/scripts/mulmo-check-updates" > "${REC}/scripts/mulmo-check-updates"
+chmod +x "${REC}/scripts/mulmo-check-updates"
+HOME="${REC}" "${REC}/scripts/mulmo-check-updates" >/dev/null 2>&1 || true
+is_json "${UPD_JSON}" || fail "node が無いときに壊れた JSON を書いています（071）"
+[ "$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["summary"])' "${UPD_JSON}")" = "Node未検出" ] ||
+  fail "node が無いのに、そう言っていません（071）"
+ok "node が無いときは「Node未検出」と言う"
 
 rm -rf "${REC}"
 trap - EXIT

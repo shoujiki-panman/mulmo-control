@@ -139,7 +139,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | # | gate | 内容 | 状況 |
 |---|---|---|---|
-| 071 | fast | node がない時に update cache が `Node未検出` になる |  |
+| 071 | fast | node がない時に update cache が `Node未検出` になる | ✅ node が無いときは「Node未検出」と言う |
 | 072 | fast | npm がない時に npmLatest が `unknown` になる |  |
 | 073 | fast | npm latest timeout で落ちない |  |
 | 074 | fast | MulmoTerminal version parse が SemVer を拾う |  |
@@ -156,7 +156,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 |---|---|---|---|
 | 081 | fast | self-update status JSON が valid JSON | ✅ 同上 |
 | 082 | fast | mulmo updates cache が valid JSON | ✅ 更新の一覧は形を保つ |
-| 083 | fast | update reasons が tab-separated で読める |  |
+| 083 | fast | update reasons が tab-separated で読める | ✅ 更新の理由はタブ区切りで読める |
 | 084 | fast | last update summary が存在しない時もUIが落ちない | ✅ 更新していない人には要約ファイルを作らない |
 | 085 | fast | legacy log dir から新log dirへの逆戻りがない | ✅ ~/Documents/Codex を参照していない |
 | 086 | fast | logs path は `~/Library/Logs/Mulmo Control` に揃う | ✅ ログの置き場所は1つだけ |
@@ -184,10 +184,10 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 50 |
+| ✅ `check.sh` が見ている | 52 |
 | 🔨 実装はあるが自動検査なし | 6 |
 | ⛔ 無効 | 1 |
-| 未着手 | 43 |
+| 未着手 | 41 |
 
 🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
 「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
