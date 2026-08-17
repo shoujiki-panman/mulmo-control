@@ -701,7 +701,7 @@ if item["current"] != "unknown" or item["status"] != "missing":
     raise SystemExit(f"入れていないのに版を報告しています: {item}")
 if d["summary"] == "すべて最新":
     raise SystemExit("1つも入っていないのに「すべて最新」と言っています")
-' "${UPD_JSON}" || fail "入っていないものの版を宣言から作っています（Issue #109）"
+' "${UPD_JSON}" || fail "入っていないものについて、事実でない表示をしています（Issue #109）"
 ok "入っていないものは「未導入」と言う"
 
 # 084 まだ一度も更新していない人には、要約ファイルが無い。無いことを
