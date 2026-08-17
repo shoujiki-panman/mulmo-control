@@ -389,14 +389,32 @@ final class ControlModel: ObservableObject {
     }
 
     var menuTitle: String {
-        hasAnyUpdates ? "Mulmo 更新あり" : "\(mtRunning ? "MT on" : "MT off") / \(mcRunning ? "MC on" : "MC off")"
+        guard !hasAnyUpdates else { return "Mulmo 更新あり" }
+        return "MT \(state(installed: mtInstalled, running: mtRunning)) / MC \(state(installed: mcInstalled, running: mcRunning))"
     }
 
+    /// 入っていないものを `off` と書かない（Issue #112）。off は「動かせるのに
+    /// 止まっている」と読めるが、入っていないなら押しても動かない。
+    private func state(installed: Bool, running: Bool) -> String {
+        guard installed else { return "未導入" }
+        return running ? "on" : "off"
+    }
+
+    /// 入っているのに動いていないものが1つでもあれば、緑にしない（Issue #112）。
+    ///
+    /// 以前はどちらか一方でも動いていれば緑だったので、`MT on / MC off` と
+    /// 書きながら色は緑という食い違いが起きていた。赤になるのは両方止まった
+    /// ときだけなので、MulmoClaude が死んでも指標は赤くならず、気づく手段が
+    /// ひとつ潰れていた。
     var titleColor: Color {
         if hasAnyUpdates {
             return Palette.warn
         }
-        return (mtRunning || mcRunning) ? Color.green : Color.red
+        let watched = [(mtInstalled, mtRunning), (mcInstalled, mcRunning)].filter { $0.0 }
+        guard !watched.isEmpty else { return Color.red }
+        if watched.allSatisfy({ $0.1 }) { return Color.green }
+        if watched.contains(where: { $0.1 }) { return Palette.warn }
+        return Color.red
     }
 
     var menuIconName: String {
