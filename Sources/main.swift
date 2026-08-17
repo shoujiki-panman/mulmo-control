@@ -455,7 +455,12 @@ final class ControlModel: ObservableObject {
         mtRunning = portIsOpen(mtPort)
         mcRunning = mulmoClaudeIsRunning()
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
-        mcInstalled = FileManager.default.fileExists(atPath: mulmoClaudeDir)
+        // 「入っている」の意味は、スクリプト側と揃える（Issue #107）。
+        // 以前はフォルダの有無だけを見ていたので、空のフォルダを指していると
+        // 画面は緑で「インストール済み」、更新は毎回 `repo was not found` で
+        // 失敗、という食い違いが起きた。しかも `入手` ボタンが消えるので、
+        // 入れ直す導線まで塞がっていた。
+        mcInstalled = FileManager.default.fileExists(atPath: "\(mulmoClaudeDir)/.git")
         updateText = readUpdateText()
         let updates = readMulmoUpdates()
         updateSummary = updates.summary
