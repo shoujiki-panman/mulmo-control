@@ -388,18 +388,6 @@ final class ControlModel: ObservableObject {
         timer = t
     }
 
-    var menuTitle: String {
-        guard !hasAnyUpdates else { return "Mulmo 更新あり" }
-        return "MT \(state(installed: mtInstalled, running: mtRunning)) / MC \(state(installed: mcInstalled, running: mcRunning))"
-    }
-
-    /// 入っていないものを `off` と書かない（Issue #112）。off は「動かせるのに
-    /// 止まっている」と読めるが、入っていないなら押しても動かない。
-    private func state(installed: Bool, running: Bool) -> String {
-        guard installed else { return "未導入" }
-        return running ? "on" : "off"
-    }
-
     /// 入っているのに動いていないものが1つでもあれば、緑にしない（Issue #112）。
     ///
     /// 以前はどちらか一方でも動いていれば緑だったので、`MT on / MC off` と
@@ -1217,7 +1205,11 @@ struct MulmoControlApp: App {
             Image(systemName: model.menuIconName)
                 .foregroundStyle(model.titleColor)
                 .font(AppFont.section)
-                .accessibilityLabel(model.menuTitle)
+                // 状態を文字で持たない（Issue #112）。以前は `MT on / MC off` を
+                // ここに渡していたが、accessibilityLabel は画面に出ないため、
+                // 読み手のいない値を組み立てて直し続けることになっていた。
+                // 状態は画面を開けば分かる。ここは名前だけでよい。
+                .accessibilityLabel("Mulmo Control")
         }
         .menuBarExtraStyle(.window)
     }
