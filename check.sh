@@ -217,6 +217,22 @@ if ! printf '%s\n' "${SW}" | grep -q 'mcInstalled = FileManager.default.fileExis
 fi
 ok "「入っている」の判定がスクリプトと揃っている"
 
+# 入っていないものの版を、宣言から作らない（Issue #109）。
+#
+# `^2.9.1` は範囲であって、入っている版ではない。以前はこれを「入っている版」と
+# して返していたので、node_modules の無い人に、入っていないものの版が並び
+# 「更新あり: 2件」と出ていた。宣言の下限が npm の最新と一致すれば、逆に
+# 「最新」と緑で出る。#102 で yarn が飛ばされた人がちょうどこの状態になる。
+UPDCHK="$(grep -vE '^[[:space:]]*(//|#)' "${ROOT}/scripts/mulmo-check-updates")"
+if printf '%s\n' "${UPDCHK}" | grep -q 'dependencies?\.\[pkgName\]'; then
+  fail "入っていないものの版を package.json の宣言から作っています（Issue #109）"
+fi
+# missing を数えない要約は、1つも入っていない人にも「すべて最新」と言う。
+if ! printf '%s\n' "${UPDCHK}" | grep -q 'missingCount'; then
+  fail "要約が未導入を数えていません（Issue #109）"
+fi
+ok "入っていないものを「最新」と言わない"
+
 # ポートを持っているだけのプロセスを、確かめずに落とさない（Issue #91）。
 #
 # 5173 は Vite の既定ポートなので、他のプロジェクトを開いているだけで一致する。
@@ -663,6 +679,30 @@ if not isinstance(d["items"], list):
     raise SystemExit("items が配列ではありません")
 ' "${UPD_JSON}" || fail "更新の一覧の形が変わっています（082）"
 ok "更新の一覧は形を保つ"
+
+# 入っていないものの版を、宣言から作らない（Issue #109）。
+#
+# `^2.9.1` は範囲であって入っている版ではない。以前は node_modules に無いとき
+# これを「入っている版」として返していたので、1つも入っていない人に版が並び、
+# 「すべて最新」と出ていた。#102 で yarn が飛ばされた人がまさにこの状態になる。
+mkdir -p "${REC}/norepo"
+printf '{"name":"fake","version":"0.0.1","dependencies":{"mulmocast":"^2.9.1"}}\n' \
+  > "${REC}/norepo/package.json"
+printf 'MULMO_CONTROL_MULMOCLAUDE_DIR=%s\n' "${REC}/norepo" \
+  > "${REC}/Library/Application Support/Mulmo Control/app-info.env"
+HOME="${REC}" "${ROOT}/scripts/mulmo-check-updates" >/dev/null 2>&1 || true
+/usr/bin/python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+item = next((i for i in d["items"] if i["id"] == "mulmocast"), None)
+if item is None:
+    raise SystemExit("mulmocast の行がありません")
+if item["current"] != "unknown" or item["status"] != "missing":
+    raise SystemExit(f"入れていないのに版を報告しています: {item}")
+if d["summary"] == "すべて最新":
+    raise SystemExit("1つも入っていないのに「すべて最新」と言っています")
+' "${UPD_JSON}" || fail "入っていないものの版を宣言から作っています（Issue #109）"
+ok "入っていないものは「未導入」と言う"
 
 # 084 まだ一度も更新していない人には、要約ファイルが無い。無いことを
 # 「壊れている」と扱うと、入れた直後の画面が全部おかしくなる。
