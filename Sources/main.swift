@@ -182,6 +182,15 @@ struct MulmoUpdates: Decodable {
     let items: [MulmoUpdateItem]
 }
 
+/// スマホ連携の2行に出すボタンの文字。状態が同じなら同じ言葉が出るように、
+/// 1か所で決める。以前は同じ `never`（まだ繋いでいません）に対して、片方が
+/// 「繋ぎ方を見る」、もう片方が「設定を開く」と並んでいた。押したときの動きは
+/// どちらも「アプリを開く（止まっていれば起動してから）」で同じ。
+func remoteHostButtonTitle(_ status: RemoteHostStatus) -> String? {
+    if status.isOffline { return "繋ぎ直す" }
+    return status.state == "online" ? nil : "設定を開く"
+}
+
 /// スマホ連携（RemoteHost）の状態。切れても MulmoTerminal は動き続けるので、
 /// 放っておくと気づけない。never = 一度も繋いでいない（再接続する先が無い）。
 struct RemoteHostStatus: Decodable {
@@ -191,7 +200,6 @@ struct RemoteHostStatus: Decodable {
     let detail: String
 
     var isOffline: Bool { state == "offline" }
-    var neverConnected: Bool { state == "never" }
 }
 
 /// claude CLI のログイン状態。MulmoClaude は内部で claude を呼ぶので、
@@ -1800,16 +1808,14 @@ struct SetupPanel: View {
                         title: "スマホ連携（MulmoTerminal）",
                         detail: model.remoteHost.detail,
                         ok: model.remoteHost.state == "online",
-                        buttonTitle: model.remoteHost.isOffline ? "繋ぎ直す"
-                            : (model.remoteHost.neverConnected ? "繋ぎ方を見る" : nil),
+                        buttonTitle: remoteHostButtonTitle(model.remoteHost),
                         action: model.remoteHost.isOffline ? model.reconnectRemoteHost : model.openMT
                     )
                     SetupRow(
                         title: "スマホ連携（MulmoClaude）",
                         detail: model.mcRemoteHost.detail,
                         ok: model.mcRemoteHost.state == "online",
-                        buttonTitle: model.mcRemoteHost.isOffline ? "繋ぎ直す"
-                            : (model.mcRemoteHost.state == "online" ? nil : "設定を開く"),
+                        buttonTitle: remoteHostButtonTitle(model.mcRemoteHost),
                         action: model.mcRemoteHost.isOffline ? model.reconnectMCRemoteHost : model.openMC
                     )
                 } else {
