@@ -772,6 +772,86 @@ is_json "${UPD_JSON}" || fail "node が無いときに壊れた JSON を書い�
   fail "node が無いのに、そう言っていません（071）"
 ok "node が無いときは「Node未検出」と言う"
 
+# 072 / 077 / 078 画面のいちばん上に出る一行（summary）は npm の返事で変わる。
+# ここを間違えると、更新があるのに「すべて最新」と読める。npm を差し替えて
+# 返事を決め打ちにし、3通りの分かれ方を実際に踏む。
+#
+# node は実体なので、要るものだけを並べた置き場所に symlink で連れてくる。
+# その置き場所に npm を置くか置かないかで、npm が無い経路も踏める。
+NODE_BIN="$(command -v node 2>/dev/null || true)"
+[ -n "${NODE_BIN}" ] || fail "node が見つかりません（072/077/078 の検査に要ります）"
+
+mkdir -p "${REC}/mc"
+printf '{"name":"mulmoclaude","version":"1.0.0"}\n' > "${REC}/mc/package.json"
+printf 'MULMO_CONTROL_MULMOCLAUDE_DIR=%s\n' "${REC}/mc" \
+  > "${REC}/Library/Application Support/Mulmo Control/app-info.env"
+
+NPMLESS="${REC}/npmless"
+mkdir -p "${NPMLESS}"
+for c in mkdir date sed grep tr cat awk; do
+  src="$(command -v "${c}" 2>/dev/null || true)"
+  [ -n "${src}" ] && ln -sf "${src}" "${NPMLESS}/${c}"
+done
+ln -sf "${NODE_BIN}" "${NPMLESS}/node"
+
+# PATH をその置き場所に差し替えた写しで走らせる。スクリプトは PATH を自分で
+# 持っているので、外から環境変数で渡しても効かない（071 と同じ理由）。
+run_updates_with() {   # $1 = PATH の先頭に置く場所
+  /usr/bin/sed 's|^PATH=.*|PATH="'"$1"':/usr/bin:/bin"|' \
+    "${ROOT}/scripts/mulmo-check-updates" > "${REC}/scripts/mulmo-check-updates"
+  chmod +x "${REC}/scripts/mulmo-check-updates"
+  HOME="${REC}" "${REC}/scripts/mulmo-check-updates" >/dev/null 2>&1 || true
+}
+updates_summary() {
+  /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["summary"])' "${UPD_JSON}"
+}
+
+# 072 npm が無ければ、最新版は分からない。分からないものを分かったことにすると、
+# 古い版のまま「最新です」と出る。
+run_updates_with "${NPMLESS}"
+/usr/bin/python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+bad = [i["id"] for i in d["items"] if i.get("latest") != "unknown"]
+if bad:
+    raise SystemExit("npm が無いのに最新版を報告しています: " + ", ".join(bad))
+' "${UPD_JSON}" || fail "npm が無いときに最新版を unknown にしていません（072）"
+ok "npm が無いときは最新版を unknown と言う"
+
+# 077 npm はあるが答えが返らないとき。入っている版は分かるのに最新が分からない
+# ので「一部未確認」。ここで「すべて最新」に倒すと、確かめていないことを
+# 確かめたことにしてしまう。
+NPMSILENT="${REC}/npmsilent"
+cp -R "${NPMLESS}" "${NPMSILENT}"
+printf '#!/bin/sh\nexit 1\n' > "${NPMSILENT}/npm"
+chmod +x "${NPMSILENT}/npm"
+run_updates_with "${NPMSILENT}"
+[ "$(updates_summary)" = "一部未確認" ] \
+  || fail "確かめられないものがあるのに「$(updates_summary)」と言っています（077）"
+ok "確かめられないものがあるときは「一部未確認」と言う"
+
+# 078 更新があるときは件数を出す。「更新あり」だけでは、1つなのか全部なのかが
+# 分からない。数字が items の実際の数と合っていることまで見る。
+NPMNEWER="${REC}/npmnewer"
+cp -R "${NPMLESS}" "${NPMNEWER}"
+printf '#!/bin/sh\n[ "$1" = "view" ] && echo 9.9.9\nexit 0\n' > "${NPMNEWER}/npm"
+chmod +x "${NPMNEWER}/npm"
+run_updates_with "${NPMNEWER}"
+/usr/bin/python3 -c '
+import json, sys, re
+d = json.load(open(sys.argv[1]))
+n = len([i for i in d["items"] if i.get("status") == "update"])
+if n == 0:
+    raise SystemExit("更新があるはずの環境で update が0件です（検査の前提が崩れています）")
+summary = d["summary"]
+m = re.fullmatch(r"更新あり: (\d+)件", summary)
+if not m:
+    raise SystemExit("件数を出していません: " + summary)
+if int(m.group(1)) != n:
+    raise SystemExit("件数が合いません: 表示 " + m.group(1) + " / 実際 " + str(n))
+' "${UPD_JSON}" || fail "更新があるときに件数を正しく出していません（078）"
+ok "更新があるときは件数を出す"
+
 rm -rf "${REC}"
 trap - EXIT
 
