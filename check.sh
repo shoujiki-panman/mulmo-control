@@ -152,6 +152,33 @@ if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmo-npm-install" | grep -q 'E4
 fi
 ok "npm の 404 を回線のせいにしない"
 
+# 079 一時的な失敗は「1回だけ」再試行する。ループにすると、落ちているレジストリを
+# 相手に何度も待たされ、利用者はボタンを押したまま何分も待つことになる。
+# 呼び出しは `if attempt; then` の形ちょうど2回（1回目と、待ったあとの2回目）。
+NPM_ATTEMPTS="$(grep -cE '^if attempt; then' "${ROOT}/scripts/mulmo-npm-install" || true)"
+[ "${NPM_ATTEMPTS}" = "2" ] \
+  || fail "npm の再試行が ${NPM_ATTEMPTS} 回です（1回目と再試行の2回であるべき）"
+grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmo-npm-install" | grep -qE '^[[:space:]]*sleep ' \
+  || fail "再試行の前に待っていません（間を置かない再試行は同じ失敗を繰り返すだけ）"
+ok "npm の再試行は1回だけ・待ってから"
+
+# 080 npm のキャッシュは /private/tmp 側に置く。`/tmp` は `/private/tmp` への
+# symlink なので、綴りが揺れると同じ場所を2つの名前で指すことになり、
+# 「消したのに残っている」ように見える。既定値の綴りを固定する。
+grep -qE 'CACHE="\$\{MULMO_NPM_CACHE:-/private/tmp/' "${ROOT}/scripts/mulmo-npm-install" \
+  || fail "npm キャッシュの既定が /private/tmp 側ではありません"
+ok "npm キャッシュは /private/tmp 側"
+
+# 096 出したあと、利用者と同じ経路で取り直して版を確かめる。ここが無いと、
+# タグは作れたのに資産の添付に失敗した版を「出せた」と思い込む。
+# v1.0.44 で実際に踏んだ（要約の修正が入っていない zip を配った）。
+REL="$(grep -vE '^[[:space:]]*#' "${ROOT}/release.sh")"
+printf '%s\n' "${REL}" | grep -q 'releases/latest/download' \
+  || fail "リリース後に配信物を取り直していません"
+printf '%s\n' "${REL}" | grep -q '\[ "${PUBLISHED}" = "${VERSION}" \]' \
+  || fail "取り直した配信物の版を確かめていません"
+ok "リリース後に配信物を取り直して版を確かめる"
+
 # ポートは mulmoterminal-agent-env と main.swift の mtPort の2箇所だけが持つ
 # （Issue #7）。他所に数字を書くと、MULMOTERMINAL_PORT で逃がしたつもりでも
 # 一部だけ 34567 のまま動くという、最も気づきにくい壊れ方をする。

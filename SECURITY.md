@@ -147,8 +147,8 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 076 | fast | dependency version の `^` / `~` を剥がす |  |
 | 077 | fast | unknown がある時 summary が `一部未確認` |  |
 | 078 | fast | update がある時 summary が件数を出す |  |
-| 079 | release | `mulmo-npm-install` は一時的な失敗を1回だけ retry する | 🔨 1回だけ retry + 404 は retry しない（#71） |
-| 080 | release | npm cache は `/private/tmp` 側を使う | 🔨 /private/tmp のキャッシュ |
+| 079 | release | `mulmo-npm-install` は一時的な失敗を1回だけ retry する | ✅ 呼び出しが2回・待ちがあることを見る |
+| 080 | release | npm cache は `/private/tmp` 側を使う | ✅ 既定値の綴りを見る |
 
 ## I. logs/status JSON
 
@@ -174,7 +174,7 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | 093 | release | app bundle の scripts 数が source と一致する | ✅ 同梱スクリプト数 |
 | 094 | release | codesign verify がクリーンコピーで通る | ✅ codesign verify |
 | 095 | release | zip はクリーンコピーから作る |  |
-| 096 | release | release後に latest zip を取り直してversion確認する | 🔨 release.sh の再取得確認 |
+| 096 | release | release後に latest zip を取り直してversion確認する | ✅ 取り直しと版の比較の両方を見る |
 | 097 | governance | AI reviewer は最初 shadow mode でコメントのみ |  |
 | 098 | governance | AIが作業開始時にIssueへ方針コメントを残す | 🔨 #67 に方針コメントを残した（当初は守れていなかった） |
 | 099 | governance | 自動承認する場合は一定割合を人間がsample reviewする |  |
@@ -184,14 +184,22 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 52 |
-| 🔨 実装はあるが自動検査なし | 6 |
+| ✅ `check.sh` が見ている | 55 |
+| 🔨 実装はあるが自動検査なし | 3 |
 | ⛔ 無効 | 1 |
 | 未着手 | 41 |
 
-🔨 が多い。**実装があることと、壊れたら気づけることは別**で、今日1日で
-「作者の環境では正しく見える」不具合が6件出たのは後者が無かったため。
-🔨 を ✅ に移すのが次の作業になる。
+**実装があることと、壊れたら気づけることは別。**「作者の環境では正しく見える」
+不具合が1日で6件出たのは後者が無かったためで、🔨 を ✅ に移すのがこの表の使い道。
+
+残る 🔨 3件は、`check.sh` では見られないもの。
+
+- **060** は自動起動した MulmoTerminal の**見え方**そのもの。ロケールを補う行が
+  あることは見ているが、日本語が潰れないことは画面を見ないと分からない
+- **098 / 100** は人の運用（Issue に方針を書く・見つけた壊れ方をここへ戻す）で、
+  コードの形では表せない
+
+無理に ✅ にしない。**印が実態と違うことのほうが害が大きい**（085 で一度踏んだ）。
 
 ## 新しい壊れ方を見つけたら
 
