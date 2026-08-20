@@ -140,3 +140,73 @@ mv ~/Documents/Codex/SwiftBarTools.bak ~/Documents/Codex/SwiftBarTools
 ## 結果の記録
 
 詰まった箇所は Issue にする。**「動いた」より「どこで止まったか」のほうが価値がある。**
+
+---
+
+# #15 を閉じる条件（2026-08-21 決定）
+
+この手順書の上半分は **npm 配布に切り替える前** の実測記録。#15 に残っているのは
+「ターミナルが要らない」の1点だけで、それは署名と公証（#54）が通って初めて確かめられる。
+
+閉じる条件をここに固定する。**署名が通った日にこの節をそのまま実行する。**
+
+## 前提（#54 が済んでいること）
+
+```bash
+security find-identity -v -p codesigning | grep "Developer ID Application"
+xcrun notarytool history --keychain-profile mulmo-control | head -3
+```
+
+- [ ] Developer ID Application 証明書がある
+- [ ] notarytool の資格情報が通る
+- [ ] その状態で `./release.sh X.Y.Z` を通し、公証済みの版を出した
+
+## 本番の確認（ここが #15 の本体）
+
+**ブラウザで**（`curl` や `npx` ではなく）Releases から zip を落とす。
+隔離マークを付けるのはブラウザなので、経路を変えると意味が無くなる。
+
+```bash
+xattr -p com.apple.quarantine ~/Downloads/MulmoControl.zip
+```
+
+- [ ] 隔離マークが**付いている**（付いていなければ、経路が違う。やり直す）
+
+zip を展開し、`/Applications` にドラッグして、**ダブルクリックする**。
+
+- [ ] **警告のダイアログが出ずに開いた** ← これが満たせたら #15 は閉じられる
+- [ ] メニューバーにアイコンが出た
+
+出なかった場合、何と出たかをそのまま記録する。「開発元を確認できません」と
+「マルウェアが含まれていないことを検証できませんでした」は別の状態で、原因が違う。
+
+## 裏取り
+
+```bash
+spctl -a -vv "/Applications/Mulmo Control.app"
+codesign -dvv "/Applications/Mulmo Control.app" 2>&1 | grep -E "Authority|TeamIdentifier|flags"
+xcrun stapler validate "/Applications/Mulmo Control.app"
+```
+
+- [ ] `spctl` が `accepted` / `source=Notarized Developer ID`
+- [ ] `Authority=Developer ID Application: ...`、`TeamIdentifier=59FNRWS2H8`
+- [ ] `flags` に `runtime`（hardened runtime）
+- [ ] `stapler validate` が通る（チケットが貼られている＝オフラインでも通る）
+
+`stapler` が通らないと、ネットワークが無い場所で初めて開く人だけが止められる。
+手元では気づけない類なので、必ず見る。
+
+## README の書き換え（閉じる前に済ませる）
+
+#15 の当初の完成の定義は「README のインストール手順が zip をドラッグするだけになる」。
+確認が通ったら README をその形に直してから閉じる。
+
+- [ ] `## インストール` を **zip を落として Applications にドラッグ** に差し替える
+- [ ] `npx mulmo-control` は「ターミナル派向け」として残す（消さない。#54 の判断ログどおり）
+- [ ] 「なぜ zip をダウンロードして置く方式ではないのか」の節を消すか、
+      **署名前の経緯**として書き直す（いま書いてあることは署名後には事実でなくなる）
+
+## この節に含めないもの
+
+素の Mac でボタンが一通り動くかは **#6** の担当。ここは**入り口だけ**を見る。
+2つを混ぜると、入り口が通ったのか中が通ったのかが分からなくなる。
