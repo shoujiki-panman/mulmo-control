@@ -140,13 +140,13 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 | # | gate | 内容 | 状況 |
 |---|---|---|---|
 | 071 | fast | node がない時に update cache が `Node未検出` になる | ✅ node が無いときは「Node未検出」と言う |
-| 072 | fast | npm がない時に npmLatest が `unknown` になる |  |
+| 072 | fast | npm がない時に npmLatest が `unknown` になる | ✅ npm を外した使い捨て環境で実際に走らせる |
 | 073 | fast | npm latest timeout で落ちない |  |
 | 074 | fast | MulmoTerminal version parse が SemVer を拾う |  |
 | 075 | fast | package.json workspace package version を拾う |  |
 | 076 | fast | dependency version の `^` / `~` を剥がす |  |
-| 077 | fast | unknown がある時 summary が `一部未確認` |  |
-| 078 | fast | update がある時 summary が件数を出す |  |
+| 077 | fast | unknown がある時 summary が `一部未確認` | ✅ npm が答えない環境で summary を見る |
+| 078 | fast | update がある時 summary が件数を出す | ✅ 件数が items の実数と合うかまで見る |
 | 079 | release | `mulmo-npm-install` は一時的な失敗を1回だけ retry する | ✅ 呼び出しが2回・待ちがあることを見る |
 | 080 | release | npm cache は `/private/tmp` 側を使う | ✅ 既定値の綴りを見る |
 
@@ -184,10 +184,10 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 55 |
+| ✅ `check.sh` が見ている | 58 |
 | 🔨 実装はあるが自動検査なし | 3 |
 | ⛔ 無効 | 1 |
-| 未着手 | 41 |
+| 未着手 | 38 |
 
 **実装があることと、壊れたら気づけることは別。**「作者の環境では正しく見える」
 不具合が1日で6件出たのは後者が無かったためで、🔨 を ✅ に移すのがこの表の使い道。
