@@ -40,16 +40,24 @@ https://developer.apple.com/programs/enroll/
 
 即日のこともあれば、数日かかることもある。本人確認の連絡が来る場合がある。
 
-- [ ] 申し込んだ日: ______
-- [ ] 承認された日: ______
+- [x] 申し込んだ日: 2026-08-11（注文番号 W1803651682、¥12,980）
+- [x] 承認された日: 2026-08-11（同日。「Apple Developer Programへようこそ」と App Store Connect の案内が届いている）
 
 ### 4. 承認されたら
 
-以下を私に伝えてもらえれば、続きを実装する。
-
-- Team ID（10文字の英数字。https://developer.apple.com/account の Membership details にある）
+- Team ID: **59FNRWS2H8**（個人登録 / 更新日 2027-08-12。https://developer.apple.com/account の
+  メンバーシップの詳細で確認、2026-08-18 時点）
 
 証明書そのものは Xcode か `security` コマンドで手元に作る。**秘密鍵は Mac のキーチェーンから出さない**ので、共有する必要はない。
+
+2026-08-18 時点の手元の状態:
+
+- `security find-identity -v -p codesigning` → **0 valid identities**。証明書は未作成
+- developer.apple.com の Certificates / Keys も**どちらも空**
+- Xcode 16 系（`/Applications/Xcode.app`）と `notarytool` / `stapler` は入っている
+
+つまり残っているのは「証明書を作る」「App-specific password を作る」の2つで、
+どちらも本人の手が要る（キーチェーンとパスワード入力）。
 
 ---
 
