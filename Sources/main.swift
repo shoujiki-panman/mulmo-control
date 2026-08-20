@@ -1681,14 +1681,8 @@ struct FamilyToolRow: View {
     }
 
     private func updateDetail(_ item: MulmoUpdateItem) -> String {
-        switch item.status {
-        case "current":
-            return "最新 \(item.current)"
-        case "update":
-            return "\(item.current) → \(item.latest)"
-        default:
-            return "導入済み"
-        }
+        versionDetail(status: item.status, current: item.current, latest: item.latest,
+                      fallback: "導入済み")
     }
 
     private var detailText: String {
@@ -1860,25 +1854,21 @@ struct SetupPanel: View {
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    /// 「1.0.12 ・ 最新」のように、いま動いている版と更新の有無を並べて出す
-    /// （Issue #10）。版は Bundle.main から読むので、記録ではなく実物を見ている。
+    /// 「最新 1.0.45」「1.0.45 → 1.0.46」のように、いま動いている版と更新の有無を
+    /// 並べて出す（Issue #10）。版は Bundle.main から読むので、記録ではなく実物を
+    /// 見ている。同じ欄に並ぶ MulmoTerminal / MulmoClaude と書き方を揃えてある。
     private func mulmoControlDetail(_ status: SelfUpdateStatus) -> String {
-        let state = selfUpdateDetail(status)
-        guard !appVersion.isEmpty else { return state }
-        return "\(appVersion) ・ \(state)"
+        versionDetail(
+            status: status.status, current: appVersion, latest: status.latestVersion,
+            fallback: selfUpdateFallback(status)
+        )
     }
 
-    private func selfUpdateDetail(_ status: SelfUpdateStatus) -> String {
-        switch status.status {
-        case "current":
-            return "最新"
-        case "update":
-            return "更新あり"
-        case "unknown":
-            return "未確認"
-        default:
-            return status.detail.isEmpty ? "未確認" : status.detail
-        }
+    /// 最新でも更新中でもないときだけ使う。理由が書いてあればそれを、
+    /// 無ければ他の行と同じ「未確認 1.0.45」の形にする。
+    private func selfUpdateFallback(_ status: SelfUpdateStatus) -> String {
+        if status.status != "unknown", !status.detail.isEmpty { return status.detail }
+        return appVersion.isEmpty ? "未確認" : "未確認 \(appVersion)"
     }
 }
 
@@ -1973,14 +1963,22 @@ struct FamilyPackageRow: View {
     }
 
     private func updateDetail(_ item: MulmoUpdateItem) -> String {
-        switch item.status {
-        case "current":
-            return "最新 \(item.current)"
-        case "update":
-            return "\(item.current) → \(item.latest)"
-        default:
-            return "最新版未確認"
-        }
+        versionDetail(status: item.status, current: item.current, latest: item.latest,
+                      fallback: "最新版未確認")
+    }
+}
+
+/// 版と更新の有無を、ひとつの書き方に揃える。「最新 4.10.0」「4.9.0 → 4.10.0」。
+/// 以前は同じ欄に「1.0.45 ・ 最新」と「最新 4.10.0」が並んでいた。整形を各所に
+/// 書くとまた割れるので、増やすときはここに足す。
+func versionDetail(status: String, current: String, latest: String, fallback: String) -> String {
+    switch status {
+    case "current":
+        return current.isEmpty ? "最新" : "最新 \(current)"
+    case "update":
+        return current.isEmpty || latest.isEmpty ? "更新あり" : "\(current) → \(latest)"
+    default:
+        return fallback
     }
 }
 
@@ -2045,16 +2043,11 @@ struct UpdateRow: View {
     }
 
     private var detail: String {
-        switch item.status {
-        case "current":
-            return "最新 \(item.current)"
-        case "update":
-            return "\(item.current) → \(item.latest)"
-        case "missing":
-            return "未導入"
-        default:
-            return "未確認 \(item.current)"
-        }
+        if item.status == "missing" { return "未導入" }
+        return versionDetail(
+            status: item.status, current: item.current, latest: item.latest,
+            fallback: item.current.isEmpty ? "未確認" : "未確認 \(item.current)"
+        )
     }
 }
 
