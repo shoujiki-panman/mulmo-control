@@ -1382,6 +1382,8 @@ struct TopTabs: View {
 
 struct UpdateToolbar: View {
     @ObservedObject var model: ControlModel
+    @State private var skidOffset: CGFloat = 0
+    @State private var skidAngle: Double = 0
 
     private var updateTargets: [MulmoUpdateItem] {
         model.updateItems.filter { $0.status == "update" }
@@ -1470,8 +1472,57 @@ struct UpdateToolbar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .offset(x: skidOffset)
+        .rotationEffect(.degrees(skidAngle), anchor: .bottomLeading)
+        .onAppear { skidIfNeeded() }
+        .onChange(of: updateKey) { _, _ in skidIfNeeded() }
+    }
+
+    // ── 「更新あり」が出た瞬間だけ滑り込ませる ──────────────────
+    //
+    // 開くたびに動かすと、更新を当てるまでの数日間ずっと動き続けて邪魔になる。
+    // 同じ更新に対しては一度きりにする。
+    //
+    // 印は専用の鍵で持つ。通知の鍵（notified-update-key）に相乗りすると、
+    // 通知を許可していない人には永遠に動かない（#75 で踏んだ形と同じ）。
+    private var updateKey: String {
+        var parts = updateTargets.map { "\($0.id):\($0.current)->\($0.latest)" }
+        if hasSelfUpdate {
+            parts.append("mulmo-control:\(appVersion)->\(model.selfUpdate.latestVersion)")
+        }
+        return parts.sorted().joined(separator: "|")
+    }
+
+    private func skidIfNeeded() {
+        let key = updateKey
+        let mark = "mulmo-control.skidded-update-key"
+        guard !key.isEmpty, UserDefaults.standard.string(forKey: mark) != key else { return }
+        UserDefaults.standard.set(key, forKey: mark)
+        skidOffset = SKID_FROM
+        skidAngle = SKID_TILT
+        // 初期値を置いた同じ回で animation を掛けると、いまの位置から
+        // 画面外へ飛んでから戻る動きになる。1回ぶん待ってから掛ける。
+        DispatchQueue.main.async { runSkid() }
+    }
+
+    private func runSkid() {
+        withAnimation(.timingCurve(0, 0.7, 0.6, 1, duration: 0.55)) {
+            skidOffset = 0
+            skidAngle = SKID_TILT - 2
+        }
+        // spring の行き過ぎと揺り戻しが、CSS の 55% / 85% のキーフレームに当たる。
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.45).delay(0.5)) {
+            skidAngle = 0
+        }
     }
 }
+
+/// 滑り込みの強さ。ここだけ触れば効き具合を変えられる。
+///
+/// 傾きは CSS の -14deg から浅くしてある。パネルは幅 370 で、下端を軸に
+/// 14度ねじると右上が 90pt ほど持ち上がり、パネルからはみ出して切れる。
+private let SKID_FROM: CGFloat = 240
+private let SKID_TILT: Double = -7
 
 /// ログインが切れている間だけ、運用タブの一番上に出る。
 /// 更新のバナーと違って、押さないと MulmoClaude のチャットが直らない。
