@@ -152,6 +152,28 @@ if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmo-npm-install" | grep -q 'E4
 fi
 ok "npm の 404 を回線のせいにしない"
 
+# 101 自己更新は、自分の写しをバンドルの外に作ってからそちらへ移って走る
+# （install.sh が .app を丸ごと消すので、消えたファイルの続きを読めなくなるため）。
+# 写した先には兄弟スクリプトが無いので、使うものは連れて行く必要がある。
+#
+# 連れて行き漏れは黙って壊れる。cp は `|| true` で握り潰しているし、呼び出し側も
+# `2>/dev/null || true` なので、設定が読めないまま既定値で走る。しかも apply の
+# 経路でしか起きないので、check を押しているだけでは一生気づけない。
+#
+# 参照している兄弟スクリプトが、全部 cp の対象になっているかを見る。
+SELF_UPDATE="${ROOT}/scripts/mulmo-control-self-update"
+SELF_BODY="$(grep -vE '^[[:space:]]*#' "${SELF_UPDATE}")"
+SELF_REFS="$(printf '%s\n' "${SELF_BODY}" \
+  | grep -oE '\$\{SCRIPT_DIR\}/[A-Za-z0-9_.-]+' | sed 's|.*/||' | sort -u)"
+SELF_CARRIED="$(printf '%s\n' "${SELF_BODY}" \
+  | grep -E '^[[:space:]]*/bin/cp ' | grep -oE '\$\{SCRIPT_DIR\}/[A-Za-z0-9_.-]+' \
+  | sed 's|.*/||' | sort -u)"
+for ref in ${(f)SELF_REFS}; do
+  printf '%s\n' "${SELF_CARRIED}" | grep -qx "${ref}" \
+    || fail "自己更新が ${ref} を使っていますが、写しに連れて行っていません（apply で黙って壊れます）"
+done
+ok "自己更新は使う兄弟スクリプトを写しに連れて行く"
+
 # 079 一時的な失敗は「1回だけ」再試行する。ループにすると、落ちているレジストリを
 # 相手に何度も待たされ、利用者はボタンを押したまま何分も待つことになる。
 # 呼び出しは `if attempt; then` の形ちょうど2回（1回目と、待ったあとの2回目）。
