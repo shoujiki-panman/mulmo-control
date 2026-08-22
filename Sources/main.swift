@@ -4,6 +4,11 @@ import UserNotifications
 import ServiceManagement
 
 private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+
+/// 追加ツールの入れ先。mulmo-check-updates が版を読むのも同じ場所でなければ
+/// ならない（Issue #129）。以前はここを2箇所に書き、読む側は知らなかったので、
+/// npm が新しい版を入れても画面は古いままで「更新できませんでした」と言い続けた。
+private let familyPrefix = "\(homeDir)/.local/share/mulmo-family"
 private let localBin = "\(homeDir)/.local/bin"
 
 // MulmoTerminal のポート。3箇所に数字が散っていて、変えるときに拾い漏れる形
@@ -616,7 +621,7 @@ final class ControlModel: ObservableObject {
             showMessage(title: "npmが見つかりません", text: "先にNode.jsをインストールしてください。")
             return
         }
-        let prefix = "\(homeDir)/.local/share/mulmo-family"
+        let prefix = familyPrefix
         let binPath = "\(prefix)/node_modules/.bin/\(package.commandName)"
         run("""
         mkdir -p "\(prefix)" "\(localBin)" /private/tmp/npm-cache-mulmo-control
@@ -716,7 +721,7 @@ final class ControlModel: ObservableObject {
             showMessage(title: "npmが見つかりません", text: "先にNode.jsをインストールしてください。")
             return nil
         }
-        let prefix = "\(homeDir)/.local/share/mulmo-family"
+        let prefix = familyPrefix
         let installLines = packages.map { package in
             let binPath = "\(prefix)/node_modules/.bin/\(package.commandName)"
             return """

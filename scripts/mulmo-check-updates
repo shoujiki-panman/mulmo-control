@@ -32,6 +32,9 @@ const npm = process.env.NPM;
 const npmCache = process.env.NPM_CACHE;
 const cache = process.env.CACHE;
 const mulmoClaudeDir = process.env.MULMOCLAUDE_DIR;
+// 追加ツールの入れ先。main.swift の prefix と同じ場所を指していないと、
+// 入れたものと読むものがずれる（Issue #129）。check.sh が突き合わせている。
+const familyPrefix = `${process.env.HOME}/.local/share/mulmo-family`;
 
 function sh(file, args, options = {}) {
   try {
@@ -71,7 +74,17 @@ function pkgVersion(pkgName) {
   if (!root) return "unknown";
   if (root.name === pkgName) return root.version || "unknown";
 
+  // 入れた場所を先に見る（Issue #129）。
+  //
+  // 追加ツールは Mulmo Control が familyPrefix に入れる。以前はここを知らず、
+  // MulmoClaude 側の node_modules だけを見ていたので、npm が正しく新しい版を
+  // 入れても画面は古い版のままで、「更新できませんでした」と言い続けていた。
+  // 押しても直らないので、利用者からは壊れているようにしか見えない。
+  //
+  // MulmoClaude 側の node_modules は MulmoClaude 自身の依存で、Mulmo Control が
+  // 管理しているものではない。消さずに、順番だけを入れ替える。
   const workspacePaths = [
+    `${familyPrefix}/node_modules/${pkgName}/package.json`,
     `${mulmoClaudeDir}/packages/mulmoclaude/package.json`,
     `${mulmoClaudeDir}/packages/core/package.json`,
     `${mulmoClaudeDir}/packages/client/package.json`,
