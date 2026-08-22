@@ -281,6 +281,27 @@ JS_PREFIX="$(grep -oE '\.local/share/[A-Za-z0-9_-]+' "${ROOT}/scripts/mulmo-chec
   || fail "追加ツールの入れ先と読み先が違います（入れ先: ${SWIFT_PREFIX} / 読み先: ${JS_PREFIX}）"
 ok "追加ツールの入れ先と読み先が同じ"
 
+# 131 更新一覧に、どのボタンでも更新できない項目を入れない。
+#
+# 一覧に載ると「更新あり」を点けるが、押せるものが無ければ永久に消えない。
+# しかも @mulmobridge/client は「最新版」欄にも「追加ツール」欄にも出ないので、
+# 画面のどこにも現れないまま amber を点け続けていた。利用者からは、押すものが
+# 無いのに更新ありと言われ続ける状態になる。#129 と同じ「押しても直らない」型。
+#
+# 更新できるのは mulmoterminal / mulmoclaude と、追加ツール（familyPackages）だけ。
+UPDATE_IDS="$(grep -oE '^[[:space:]]+id: "[A-Za-z0-9_-]+"' "${ROOT}/scripts/mulmo-check-updates" \
+  | sed 's/.*"\(.*\)"/\1/' | sort -u)"
+FAMILY_IDS="$(grep -oE '^[[:space:]]+id: "[A-Za-z0-9_-]+"' "${ROOT}/Sources/main.swift" \
+  | sed 's/.*"\(.*\)"/\1/' | sort -u)"
+[ -n "${UPDATE_IDS}" ] || fail "更新一覧の項目を読み取れません（131）"
+[ -n "${FAMILY_IDS}" ] || fail "追加ツールの一覧を読み取れません（131）"
+for uid in ${(f)UPDATE_IDS}; do
+  case "${uid}" in mulmoterminal|mulmoclaude) continue ;; esac
+  printf '%s\n' "${FAMILY_IDS}" | grep -qx "${uid}" \
+    || fail "更新一覧の ${uid} は、どのボタンでも更新できません（「更新あり」が消えなくなります）"
+done
+ok "更新一覧の項目はすべて更新する手段がある"
+
 
 # 入っていないものの版を、宣言から作らない（Issue #109）。
 #

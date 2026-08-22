@@ -11,6 +11,12 @@ set -eu
 # 毎回やるべき確認も同じ場所に入れてある。v1.0.9 では配信物を確かめずに出して、
 # ほとんどのボタンが動かない版を配ってしまった。順番と確認を人の記憶に
 # 頼らないための script。
+#
+# **走らせている間、同じ作業ツリーで git を触らないこと。** この script は最後に
+# `git add Info.plist package.json` → commit → `git push origin HEAD:main` をする。
+# 公証を待っている数分の間にブランチを切ると、その HEAD が main へ push される。
+# 2026-08-22 に実際にやった（幸い内容は同じだったので実害は出なかった）。
+# 並行して作業したいときは worktree を分ける。
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "${ROOT}"
