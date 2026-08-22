@@ -266,6 +266,21 @@ if ! printf '%s\n' "${SW}" | grep -q 'mcInstalled = FileManager.default.fileExis
 fi
 ok "「入っている」の判定がスクリプトと揃っている"
 
+# 129 追加ツールを「入れる場所」と「版を読む場所」が同じかどうか。
+#
+# 入れるのは main.swift、読むのは mulmo-check-updates。片方だけ変えると、
+# npm は成功しているのに画面は古い版のまま「更新できませんでした」と言い続ける。
+# 押しても直らないので、利用者からは壊れているようにしか見えない。実際に起きた。
+#
+# 綴りを直接比べる。どちらかに別の場所が増えれば、行数が合わなくなって落ちる。
+SWIFT_PREFIX="$(grep -oE '\.local/share/[A-Za-z0-9_-]+' "${ROOT}/Sources/main.swift" | sort -u)"
+JS_PREFIX="$(grep -oE '\.local/share/[A-Za-z0-9_-]+' "${ROOT}/scripts/mulmo-check-updates" | sort -u)"
+[ -n "${SWIFT_PREFIX}" ] || fail "追加ツールの入れ先が main.swift から消えています（129）"
+[ -n "${JS_PREFIX}" ] || fail "追加ツールの読み先が mulmo-check-updates から消えています（129）"
+[ "${SWIFT_PREFIX}" = "${JS_PREFIX}" ] \
+  || fail "追加ツールの入れ先と読み先が違います（入れ先: ${SWIFT_PREFIX} / 読み先: ${JS_PREFIX}）"
+ok "追加ツールの入れ先と読み先が同じ"
+
 
 # 入っていないものの版を、宣言から作らない（Issue #109）。
 #
