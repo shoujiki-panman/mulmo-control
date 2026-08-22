@@ -145,12 +145,12 @@ const items = [
     current: pkgVersion("mulmocast-vision"),
     latest: npmLatest("mulmocast-vision")
   },
-  {
-    id: "mulmobridge-client",
-    name: "@mulmobridge/client",
-    current: pkgVersion("@mulmobridge/client"),
-    latest: npmLatest("@mulmobridge/client")
-  },
+  // @mulmobridge/client はここに載せない（Issue #131）。
+  //
+  // MulmoClaude が使うライブラリで、追加ツールの一覧に無く、押せるボタンが1つも
+  // 無い。しかも「最新版」欄にも「追加ツール」欄にも出ないので、画面のどこにも
+  // 現れないまま「更新あり」だけを点け続けていた。押しても消えないので、
+  // 利用者からは壊れているようにしか見えない。MulmoClaude 側の更新で動く。
   {
     id: "mulmobridge-cli",
     name: "@mulmobridge/cli",
