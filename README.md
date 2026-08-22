@@ -25,7 +25,7 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 ## 対象
 
 - macOS 14 以降
-- Node.js / npm が入っているMac
+- Node.js / npm（**アプリを入れるだけなら要りません**。MulmoTerminal / MulmoClaude を動かすのに要ります）
 - MulmoTerminal を `localhost:34567` で使いたい人
 - MulmoClaude を使う人（既定は `~/mulmoclaude`。別の場所も指定できます）
 
@@ -178,7 +178,12 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 ./release.sh 1.0.14 --dry-run       # 出さずに、ビルドと検証だけ通す
 ```
 
-`Info.plist` の版を書き換え、ビルドし、zip にして Releases を作るまでを一度にやります。
+`Info.plist` の版を書き換え、ビルドし、**Apple の公証に出して**、チケットを貼り、zip にして
+Releases を作るまでを一度にやります。公証は Apple 側の審査なので **数分待ちます**
+（`Current status: In Progress...` が並びます）。固まったわけではありません。
+
+公証には Developer ID 証明書と、`notarytool` の資格情報（keychain profile 名 `mulmo-control`）が
+要ります。どちらも無いときは公証を飛ばし、自己署名のまま出します。**止まりません。**
 
 配る前後に確認も入ります。版がそろっているか、補助スクリプトが `scripts/` と同じ本数だけ同梱されたか、署名が通るか、空白を含むパスから実行できるか。最後に**利用者と同じ URL から zip を取り直して**、配信されているものが期待どおりか確かめます。
 
@@ -188,7 +193,6 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 
 これは個人用途から切り出した実験版です。
 
-- Apple Developer ID 署名や notarization は未対応です
 - MulmoClaude の場所はインストール時に `MULMOCLAUDE_DIR` で変えられます
 - `claude` と `codex` は PATH から探すので、Homebrew でも npm global でも動きます
 - UI やセットアップ導線はまだ改善中です
