@@ -1924,9 +1924,30 @@ struct SetupPanel: View {
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
             LinkedText(text: model.lastUpdateReport)
+            if let note = lastUpdateNote {
+                Text(note)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.ok)
+            }
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// 「前回の更新」に残った失敗が、その後どうなったかを添える（Issue #136）。
+    ///
+    /// この記録は更新した瞬間に書かれ、次の更新まで書き換わらない。あとから別の
+    /// 経路で最新になっても失敗の記録だけが残り、同じ画面の上半分が「すべて最新」
+    /// なのに下半分が失敗を訴える、という矛盾になる。実際に起きた（#129 を直した
+    /// あとの化石が「MulmoCast: 2.9.2 のまま」と言い続けていた）。
+    ///
+    /// 記録は消さない。当時動かなかったこと自体は事実で、理由を残すと決めた場所
+    /// でもある（#104）。いまどうなっているかを1行足すだけにする。
+    private var lastUpdateNote: String? {
+        guard model.lastUpdateReport.contains("更新されなかったもの") else { return nil }
+        guard model.selfUpdate.status != "update",
+              model.updateItems.allSatisfy({ $0.status != "update" }) else { return nil }
+        return "その後、すべて最新になっています"
     }
 
     /// 「最新 1.0.45」「1.0.45 → 1.0.46」のように、いま動いている版と更新の有無を
