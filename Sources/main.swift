@@ -88,6 +88,19 @@ private let legacyLogDir = "\(homeDir)/Documents/Codex/SwiftBarLogs"
 /// 中に SwiftBar 本体のログなど、こちらの与り知らぬものが混ざっている
 /// 可能性があるため。
 private func migrateLegacyLogsIfNeeded() {
+    // 一度やったら、二度と ~/Documents を見ない（Issue #134）。
+    //
+    // 見に行くだけで macOS は「"書類" フォルダ内のファイルへのアクセス権を
+    // 求められています」を出す。引き継ぎは一度で済むのに、毎起動で聞きに
+    // 行っていた。Documents を iCloud で同期している人には、こちらの与り
+    // 知らぬフォルダを毎回開くことにもなる。#4 で移した理由そのもの。
+    //
+    // 印は「やる前」に立てる。拒否されたときに毎回聞き直すのを避けるため。
+    // 引き継ぐのは SwiftBar 時代のログで、新しい置き場所には既に全部ある。
+    let mark = "mulmo-control.legacy-logs-migrated"
+    guard !UserDefaults.standard.bool(forKey: mark) else { return }
+    UserDefaults.standard.set(true, forKey: mark)
+
     let fm = FileManager.default
     guard fm.fileExists(atPath: legacyLogDir) else { return }
     try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)

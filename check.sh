@@ -408,6 +408,19 @@ if [ -n "${LEGACY}" ]; then
 fi
 ok "~/Documents/Codex を参照していない"
 
+# 134 古い置き場所からの引き継ぎは、印で守られていること。
+#
+# ~/Documents を読むと macOS が「"書類" フォルダ内のファイルへのアクセス権を
+# 求められています」を出す。引き継ぎは一度で済むのに、守りが無いと毎起動で
+# 聞きに行く。Documents を iCloud で同期している人には毎回開くことにもなる。
+#
+# 印が消えたら落とす。関数の中に UserDefaults の guard があることを見る。
+MIGRATION="$(awk '/^private func migrateLegacyLogsIfNeeded/,/^}/' "${ROOT}/Sources/main.swift")"
+[ -n "${MIGRATION}" ] || fail "引き継ぎの関数が見つかりません（134）"
+printf '%s\n' "${MIGRATION}" | grep -q 'UserDefaults' \
+  || fail "古い置き場所の引き継ぎが毎起動で走ります。~/Documents を読むたびに許可を聞かれます（134）"
+ok "古い置き場所の引き継ぎは一度きり"
+
 # 上のガードは「古い場所に戻っていないか」しか見ない。3つ目の場所が増えるのは
 # 素通りする（`Library/Logs/MulmoControl` のような空白なしの綴りなど）。
 # 置き場所は1つだけと決めているので、許すものを並べる形にする（#83 の教訓）。
