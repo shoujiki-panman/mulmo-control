@@ -436,6 +436,24 @@ printf '%s\n' "${SW_REPORT}" | grep -q 'lastUpdateNote' \
   || fail "「前回の更新」に、その後どうなったかを添えていません（解消しても失敗が残ります・136）"
 ok "「前回の更新」の失敗は解消したら添える"
 
+# 139 停止中に、起動ボタンが出ること。
+#
+# 「停止中」と書いてある隣に「開く」しか無く、そこから起動できるとは読めなかった。
+# 起動を担う startAction は未インストール枝にしか描かれておらず、isAvailable は
+# インストール済みそのものなので、入れた人には永遠に到達しないデッドコードだった。
+# openAction も止まっていれば起動してから開くが、それが分かるのは押したあと。
+# 押す前に画面から分かる必要がある。
+#
+# ServicePanel の中で startAction が2箇所（停止中・未インストール）から
+# 呼ばれていることを見る。片方に戻ると1になって落ちる。
+PANEL="$(awk '/^struct ServicePanel/,/^struct Hairline/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${PANEL}" ] || fail "ServicePanel が見つかりません（139）"
+PANEL_STARTS="$(printf '%s\n' "${PANEL}" | grep -c 'action: startAction' || true)"
+[ "${PANEL_STARTS}" -ge 2 ] \
+  || fail "停止中に起動ボタンが出ません。押せるのが「開く」だけに戻っています（139）"
+ok "停止中に起動ボタンが出る"
+
 # 上のガードは「古い場所に戻っていないか」しか見ない。3つ目の場所が増えるのは
 # 素通りする（`Library/Logs/MulmoControl` のような空白なしの綴りなど）。
 # 置き場所は1つだけと決めているので、許すものを並べる形にする（#83 の教訓）。
