@@ -38,7 +38,24 @@ if [ -z "${YARN}" ]; then
   echo "yarn was not found" >>"${ERR_LOG}"
   exit 1
 fi
-nohup "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
+# PORT は渡さない（#141）。
+#
+# MulmoClaude のバックエンドは PORT を読む。Mulmo Control 自身が MulmoTerminal
+# のセルの中から起動されていると PORT=34567（MulmoTerminal のポート）を持って
+# いて、それがここから yarn dev まで素通りする。バックエンドは MulmoTerminal の
+# ポートを奪おうとして5回落ち、concurrently -k が vite を道連れにする。
+#
+# 見つけにくいのは、その間 5173 だけが数秒立つこと。生存判定は 5173 を見ている
+# ので「動作中」と出て、ブラウザにもページが出る。中身が空なだけで、直ったように
+# 見える。mulmoclaude-pids も 5173 と 3001 しか見ないので、34567 で溺れている
+# バックエンドは最初から居ないものとして扱われる。
+#
+# ここは MulmoClaude をサービスとして起こす場所で、呼び出し元シェルの続きでは
+# ない。どのポートで待つかは MulmoClaude の .env と既定が決める。
+if [ -n "${PORT:-}" ]; then
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] 引き継いだ PORT=${PORT} を外して起動します" >>"${OUT_LOG}"
+fi
+nohup /usr/bin/env -u PORT "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
 
 sleep 2
 # ブラウザを開くかどうかはアプリ側が決める（`開く` だけが開く）。
