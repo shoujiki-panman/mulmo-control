@@ -204,7 +204,6 @@ Releases を作るまでを一度にやります。公証は Apple 側の審査�
 
 - [Issue を立てる](https://github.com/shoujiki-panman/mulmo-control/issues/new) — スクリーンショットが1枚あると、それだけで原因が分かることがよくあります
 - 既にある Issue へのコメントでも構いません
-- BootCamp Slack の `#p_mulmo_beta_users` に書いてもらっても届きます
 
 作者の Mac で正しく見えてしまう不具合は、こちらでは気づけません。ダークモードで
 文字が読めなくなっていた件も、使っている方が写真を送ってくれて初めて分かりました。
