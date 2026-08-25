@@ -1279,7 +1279,7 @@ struct ControlView: View {
                         Button("ログ", action: model.openActionLog)
                             .buttonStyle(.plain)
                             .font(AppFont.action)
-                            .foregroundStyle(Palette.accent)
+                            .foregroundStyle(Palette.accentText)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -1326,7 +1326,7 @@ struct ControlView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "terminal.fill")
                     .font(AppFont.section)
-                    .foregroundStyle(Palette.accent)
+                    .foregroundStyle(Palette.accentText)
                     .frame(width: 30, height: 30)
                     .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 5) {
@@ -1605,7 +1605,7 @@ struct LinkedText: View {
                 if let url = block.url {
                     Link(label(block.body), destination: url)
                         .font(AppFont.small)
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.accentText)
                 } else if !block.body.isEmpty {
                     Text(block.body)
                         .font(AppFont.small)
@@ -1814,7 +1814,7 @@ struct LogDisclosure: View {
                 Button("ログフォルダを開く", action: action)
                     .buttonStyle(.plain)
                     .font(AppFont.action)
-                    .foregroundStyle(Palette.accent)
+                    .foregroundStyle(Palette.accentText)
             }
             .padding(14)
             .frame(width: 190)
@@ -2033,7 +2033,7 @@ struct FamilyPackageRow: View {
                     Button("インストール", action: installAction)
                         .buttonStyle(.plain)
                         .font(AppFont.action)
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.accentText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Palette.controlFill, in: Capsule())
@@ -2103,7 +2103,7 @@ struct SetupRow: View {
                 Button(buttonTitle, action: action)
                     .buttonStyle(.plain)
                     .font(AppFont.small)
-                    .foregroundStyle(Palette.accent)
+                    .foregroundStyle(Palette.accentText)
             }
         }
     }
@@ -2165,7 +2165,11 @@ struct ServicePanel<Extra: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(isRunning ? accent : Color.secondary.opacity(0.35))
+                    // 下敷きではなく「印」なので accentText 側。accent は白い文字を
+                    // 乗せるために暗く抑えてあり、暗い台紙の上では 2.7:1 まで落ちて
+                    // 図形の基準（3:1）を割る。明るいときは両者が同じ値なので、
+                    // ライトモードの見た目は変わらない。
+                    .fill(isRunning ? Palette.accentText : Color.secondary.opacity(0.35))
                     .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
@@ -2217,15 +2221,50 @@ struct ServicePanel<Extra: View>: View {
     }
 }
 
+/// 明るいときと暗いときで、違う色を返す（#143）。
+///
+/// 台紙は `.ultraThinMaterial` で、これは OS の外観にひとりでについていく。
+/// 色のほうが決め打ちだったので、夜になると台紙だけが暗くなり、文字と罫線は
+/// 明るいとき用の濃さのまま残っていた。補助的な文字から順に沈んで、利用者の
+/// 写真では「最新版」の版番号が完全に消えていた。
+///
+/// 作者の Mac がライトモードなら、この状態は一度も画面に出ない。#6 と同じ穴。
+///
+/// SwiftUI の `Color` は自分で外観を見られないので、`NSColor` の
+/// dynamicProvider に預ける。描画のたびに、そのビューの外観で評価される。
+/// 静的に1回決めてしまう書き方（`Color(NSApp.effectiveAppearance ...)` など）だと、
+/// 起動後に夜になった人には切り替わらない。
+private func adaptive(light: NSColor, dark: NSColor) -> Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+    })
+}
+
+/// `Color(red:green:blue:)` は sRGB。NSColor 側も sRGB で揃える。
+/// `NSColor(red:...)` は calibrated RGB なので、同じ数値でも色がずれる。
+private func srgb(_ r: Double, _ g: Double, _ b: Double, _ a: Double = 1) -> NSColor {
+    NSColor(srgbRed: r, green: g, blue: b, alpha: a)
+}
+
 enum Palette {
-    static let primaryText = Color(red: 0.12, green: 0.12, blue: 0.14)
-    static let secondaryText = Color(red: 0.43, green: 0.44, blue: 0.48)
-    static let panelFill = Color.white.opacity(0.30)
-    static let controlFill = Color(red: 0.47, green: 0.47, blue: 0.50).opacity(0.16)
-    static let hairline = Color.black.opacity(0.13)
-    static let accent = Color(red: 0.00, green: 0.48, blue: 0.78)
-    static let ok = Color(red: 0.20, green: 0.76, blue: 0.36)
-    static let warn = Color(red: 0.90, green: 0.58, blue: 0.18)
+    // light: の値は従来のまま。ライトモードの見た目は変えない。
+    static let primaryText = adaptive(light: srgb(0.12, 0.12, 0.14), dark: srgb(0.93, 0.93, 0.96))
+    static let secondaryText = adaptive(light: srgb(0.43, 0.44, 0.48), dark: srgb(0.69, 0.70, 0.75))
+    // 暗いときは、白を重ねて浮かせる。明るいときと同じ 30% だと白すぎる。
+    static let panelFill = adaptive(light: srgb(1, 1, 1, 0.30), dark: srgb(1, 1, 1, 0.07))
+    static let controlFill = adaptive(light: srgb(0.47, 0.47, 0.50, 0.16), dark: srgb(1, 1, 1, 0.14))
+    static let hairline = adaptive(light: srgb(0, 0, 0, 0.13), dark: srgb(1, 1, 1, 0.16))
+    // accent は下敷き用。選択中のタブ、主ボタン、動作中のドットに使う。白い文字を
+    // 乗せるので、明るくしすぎるとその白が浮く。
+    //
+    // 文字色は accentText に分けた。1色で兼ねることはできない。暗い台紙の上で
+    // 文字として 4.5:1 を出すには輝度 0.41 以上が要る一方、白い文字の下敷きとして
+    // 4.5:1 を保つには 0.18 以下でなければならない。両立しない範囲なので、明るい
+    // ときは同じ色、暗いときだけ分かれる。
+    static let accent = adaptive(light: srgb(0.00, 0.48, 0.78), dark: srgb(0.10, 0.53, 0.85))
+    static let accentText = adaptive(light: srgb(0.00, 0.48, 0.78), dark: srgb(0.45, 0.75, 1.00))
+    static let ok = adaptive(light: srgb(0.20, 0.76, 0.36), dark: srgb(0.32, 0.85, 0.47))
+    static let warn = adaptive(light: srgb(0.90, 0.58, 0.18), dark: srgb(0.98, 0.72, 0.30))
 }
 
 struct Hairline: View {
