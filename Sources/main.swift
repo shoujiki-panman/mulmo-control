@@ -2191,7 +2191,12 @@ struct ServicePanel<Extra: View>: View {
                         .padding(.vertical, 7)
                         .background(Palette.controlFill, in: Capsule())
                     } else {
-                        Spacer()
+                        // 停止中に出るボタンが「開く」だけで、起動できるとは読めなかった
+                        // （#139）。`startAction` はこの枝が空だったせいで未インストール
+                        // のときにしか描かれず、インストール済みなら到達できなかった。
+                        // `openAction` も止まっていれば起動してから開くが、それが分かるのは
+                        // 押したあとで、画面を見て分かる必要がある。
+                        CapsuleButton(title: inactiveTitle, systemImage: inactiveSystemImage, style: .quiet, action: startAction)
                     }
                 }
             } else {
