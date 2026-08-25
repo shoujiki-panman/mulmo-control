@@ -454,6 +454,20 @@ PANEL_STARTS="$(printf '%s\n' "${PANEL}" | grep -c 'action: startAction' || true
   || fail "停止中に起動ボタンが出ません。押せるのが「開く」だけに戻っています（139）"
 ok "停止中に起動ボタンが出る"
 
+# 141 起こす MulmoClaude に PORT を引き継がせない。
+#
+# Mulmo Control が MulmoTerminal のセルから起動されていると PORT=34567 を持つ。
+# それが yarn dev まで素通りすると、MulmoClaude のバックエンドは MulmoTerminal
+# のポートを奪おうとして5回落ち、concurrently -k が vite を道連れにする。
+# その間 5173 だけが数秒立つので生存判定は「動作中」と言い、直ったように見える。
+#
+# yarn dev を起こす行が PORT を外していることを見る。
+YARN_DEV="$(grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmoclaude-start" | grep 'nohup' || true)"
+[ -n "${YARN_DEV}" ] || fail "mulmoclaude-start が yarn dev を起こす行を見失いました（141）"
+printf '%s\n' "${YARN_DEV}" | grep -q 'env -u PORT' \
+  || fail "起こす MulmoClaude に PORT が引き継がれます。MulmoTerminal のポートを奪って落ちます（141）"
+ok "起こす MulmoClaude に PORT を渡さない"
+
 # 上のガードは「古い場所に戻っていないか」しか見ない。3つ目の場所が増えるのは
 # 素通りする（`Library/Logs/MulmoControl` のような空白なしの綴りなど）。
 # 置き場所は1つだけと決めているので、許すものを並べる形にする（#83 の教訓）。
