@@ -468,6 +468,24 @@ printf '%s\n' "${YARN_DEV}" | grep -q 'env -u PORT' \
   || fail "起こす MulmoClaude に PORT が引き継がれます。MulmoTerminal のポートを奪って落ちます（141）"
 ok "起こす MulmoClaude に PORT を渡さない"
 
+# 143 配色が、外観に応じた値であること。
+#
+# 台紙は .ultraThinMaterial で、OS の外観にひとりでについていく。色のほうが
+# 決め打ちだと、夜は台紙だけが暗くなり、文字と罫線は明るいとき用の濃さのまま
+# 沈む。利用者の写真では「最新版」の版番号が完全に消えていた。
+#
+# 作者の Mac がライトモードなら、この状態は一度も画面に出ない。だから目で見て
+# 気づくことに頼れない。Palette の各行が adaptive( を通っていることを見る。
+PALETTE="$(awk '/^enum Palette \{/,/^\}/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${PALETTE}" ] || fail "Palette が見つかりません（143）"
+PALETTE_VARS="$(printf '%s\n' "${PALETTE}" | grep -c 'static let' || true)"
+PALETTE_ADAPTIVE="$(printf '%s\n' "${PALETTE}" | grep 'static let' | grep -c 'adaptive(' || true)"
+[ "${PALETTE_VARS}" -gt 0 ] || fail "Palette に色がありません（143）"
+[ "${PALETTE_VARS}" = "${PALETTE_ADAPTIVE}" ] \
+  || fail "配色に決め打ちの色が混ざっています。ダークモードで沈みます（${PALETTE_ADAPTIVE}/${PALETTE_VARS}・143）"
+ok "配色が外観に応じて変わる"
+
 # 上のガードは「古い場所に戻っていないか」しか見ない。3つ目の場所が増えるのは
 # 素通りする（`Library/Logs/MulmoControl` のような空白なしの綴りなど）。
 # 置き場所は1つだけと決めているので、許すものを並べる形にする（#83 の教訓）。
