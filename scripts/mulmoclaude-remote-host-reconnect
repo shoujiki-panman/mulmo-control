@@ -1,18 +1,32 @@
 #!/bin/zsh
 set -u
 
-# 切れた「スマホ連携（MulmoClaude）」を繋ぎ直す（Issue #23）。
+# 「スマホ連携（MulmoClaude）」を繋ぐ / 繋ぎ直す（Issue #23, #145）。
 #
 # スマホ連携は2つある。ターミナル側は mulmo-remote-host-reconnect が見る。
 # こちらは MulmoClaude(3001) 側で、同じ Google アカウントを使うが接続は別々。
 # 片方だけ切れることがあるので、繋ぎ直す口も別々に要る。
 #
 # 初回接続はブラウザでの Google サインイン（idToken）が要るのでここでは代われない。
-# 一度繋がっていれば session が発行されているので、それを送れば戻せる。
+# 一度繋がっていれば session blob が発行されているので、それを送れば戻せる。
+#
+# blob の出どころは2つ（Issue #145）。
+#
+#   1. 動いている MulmoClaude の `/api/remote-host/status`
+#      → プロセスが生きている（＝接続だけ切れている）ときはこれで足りる
+#   2. Mulmo Control が Keychain に預かった控え
+#      → MulmoClaude を止めると 1 は消える。blob はホスト側ではメモリにしか
+#        無く、ブラウザの localStorage にしか残らないため。画面を開いていない
+#        間は繋ぎ直す主体がいないので、控えが要る
+#
+# 2 があるときは、止まっていれば起こしてから繋ぐ。ブラウザは開かない。
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 鍵の置き場所は共有定義が持つ（Issue #145）。書く側と読む側で綴りが食い違うと
+# 「預けたのに読めない」形になる（#129 と同じ壊れ方）。
+. "${SCRIPT_DIR}/mulmoterminal-agent-env"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 LOG="${LOG_DIR}/remote-host.log"
 
@@ -21,12 +35,51 @@ MC_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
 MC_DIR="${MC_DIR:-${HOME}/mulmoclaude}"
 BASE="http://127.0.0.1:3001"
 
+# 起動を待つ上限。`yarn dev` は冷えていると十数秒かかる。
+STARTUP_WAIT_SECONDS=60
+
 mkdir -p "${LOG_DIR}"
-echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] reconnect requested (mulmoclaude)" >>"${LOG}"
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] connect requested (mulmoclaude)" >>"${LOG}"
+
+# 預かった鍵。中身は一切ログに出さない（Firebase の refreshToken を含む）。
+stashed_session() {
+  /usr/bin/security find-generic-password -w \
+    -s "${MULMO_MC_SESSION_SERVICE}" -a "${MULMO_MC_SESSION_ACCOUNT}" 2>/dev/null || true
+}
+
+# 期限切れの控えを持ち続けると、画面は「繋げる」と言い続けて毎回失敗する。
+forget_stash() {
+  /usr/bin/security delete-generic-password \
+    -s "${MULMO_MC_SESSION_SERVICE}" -a "${MULMO_MC_SESSION_ACCOUNT}" >/dev/null 2>&1 || true
+}
+
+read_token() {
+  [ -f "${MC_DIR}/.session-token" ] && /bin/cat "${MC_DIR}/.session-token" 2>/dev/null || true
+}
+
+# MulmoClaude が止まっているなら、控えがある場合に限って起こす。
+# 控えが無ければ起こしても Google サインインが要るので、画面へ案内する。
+if [ -z "$("${SCRIPT_DIR}/mulmoclaude-pids")" ]; then
+  if [ -z "$(stashed_session)" ]; then
+    echo "MulmoClaude が動いていません。画面から一度接続してください。" | tee -a "${LOG}"
+    exit 2
+  fi
+  echo "MulmoClaude を起動しています…" | tee -a "${LOG}"
+  "${SCRIPT_DIR}/mulmoclaude-start" >>"${LOG}" 2>&1 || true
+  WAITED=0
+  while [ "${WAITED}" -lt "${STARTUP_WAIT_SECONDS}" ]; do
+    TOKEN="$(read_token)"
+    if [ -n "${TOKEN}" ] && /usr/bin/curl -s -m 3 -o /dev/null \
+      -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/remote-host/status" 2>/dev/null; then
+      break
+    fi
+    sleep 2
+    WAITED=$((WAITED + 2))
+  done
+fi
 
 # API は Bearer 認証。トークンはワークスペース直下に置かれている。
-TOKEN=""
-[ -f "${MC_DIR}/.session-token" ] && TOKEN="$(/bin/cat "${MC_DIR}/.session-token" 2>/dev/null || true)"
+TOKEN="$(read_token)"
 if [ -z "${TOKEN}" ]; then
   echo "MulmoClaude が動いていません。先に起動してください。" | tee -a "${LOG}"
   exit 1
@@ -39,6 +92,20 @@ if [ -z "${STATUS}" ]; then
   exit 1
 fi
 
+# 繋がっているのに reconnect を叩くと 401 が返る（#23 で実測）。既存の接続は
+# 無傷だが、成功しているのに「期限切れ」と言うことになる。先に引き返す。
+if [ "$(STATUS="${STATUS}" /usr/bin/python3 -c "
+import json, os
+try:
+    print('yes' if json.loads(os.environ['STATUS']).get('status', {}).get('connected') else 'no')
+except ValueError:
+    print('no')
+")" = "yes" ]; then
+  echo "スマホ連携（MulmoClaude）はすでに繋がっています" | tee -a "${LOG}"
+  "${SCRIPT_DIR}/mulmo-check-remote-host" >/dev/null 2>&1 || true
+  exit 0
+fi
+
 # session は JSON 文字列がそのまま入っている（実測）。中身は見ずにそのまま返す。
 # ここでログに出さないこと。Firebase の refreshToken を含む。
 SESSION="$(STATUS="${STATUS}" /usr/bin/python3 -c "
@@ -48,6 +115,9 @@ try:
 except ValueError:
     print('')
 ")"
+
+# 生きているプロセスが持っていなければ、預かった控えを使う（Issue #145）。
+[ -z "${SESSION}" ] && SESSION="$(stashed_session)"
 
 if [ -z "${SESSION}" ]; then
   echo "繋ぎ直す手がかりがありません。MulmoClaude の画面から一度接続してください。" | tee -a "${LOG}"
@@ -61,10 +131,17 @@ import json, os
 print(json.dumps({'session': os.environ['SESSION']}))
 ")" \
   "${BASE}/api/remote-host/reconnect" 2>/dev/null || echo 000)"
+unset SESSION
 
 case "${CODE}" in
-  200) echo "スマホ連携（MulmoClaude）を繋ぎ直しました" | tee -a "${LOG}" ;;
-  401) echo "接続の有効期限が切れています。MulmoClaude の画面から繋ぎ直してください。" | tee -a "${LOG}"; exit 2 ;;
+  200) echo "スマホ連携（MulmoClaude）を繋ぎました" | tee -a "${LOG}" ;;
+  401)
+    # 401 は「この blob では利用者を復元できない」の意味。控えを持ち続けても
+    # 毎回同じ失敗をするだけなので捨てる。画面は「設定を開く」に戻る。
+    forget_stash
+    echo "接続の有効期限が切れています。MulmoClaude の画面から繋ぎ直してください。" | tee -a "${LOG}"
+    exit 2
+    ;;
   *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
 esac
 
