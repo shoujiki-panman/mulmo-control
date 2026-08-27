@@ -566,7 +566,7 @@ if [ -n "${BARE_SERVICE}" ]; then
   printf '%s\n' "${BARE_SERVICE}"
   fail "鍵の置き場所を直に書いています。mulmoterminal-agent-env の定義を使ってください（Issue #145 / #129）"
 fi
-KEYCHAIN_CALLS="$(grep -rn 'security \(add\|find\|delete\)-generic-password' \
+KEYCHAIN_CALLS="$(grep -rnE 'security (add|find|delete)-generic-password' \
   "${ROOT}/scripts" "${ROOT}/uninstall.sh" 2>/dev/null \
   | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
 if [ -z "${KEYCHAIN_CALLS}" ]; then
