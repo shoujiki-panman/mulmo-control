@@ -645,6 +645,64 @@ if [ "${DISPLAY_RC}" != "0" ]; then
 fi
 ok "${DISPLAY_OUT}"
 
+# ── 版の比べ方 ──────────────────────────────────────────────────
+# SECURITY.md の E 節（041・043〜045）。Issue #67。
+#
+# 写しが兄弟を連れて行くかは、既に「同梱スクリプトの自己完結」が見ている。
+#
+# 「更新があります」を出すかどうかは版の比較で決まる。ここを文字列比較で
+# 書くと、1.0.9 と 1.0.53 で逆になる（文字列では 1.0.9 が後）。新しい版を
+# 入れた人に更新を勧め続ける形になり、押しても直らない。
+#
+# 呼ぶ側は上流を git ls-remote で読むので、そのままでは網がかけられない。
+# 比較だけ mulmo-version-status に切り出してあるので、それを実際に動かす。
+step "版の比べ方"
+
+VERSION_STATUS="${ROOT}/scripts/mulmo-version-status"
+# 上の step でも同じものを見ているが、そちらの変数に頼らない。step の順番を
+# 入れ替えた瞬間に空になる。
+SELF_UPDATE="${ROOT}/scripts/mulmo-control-self-update"
+
+[ -x "${VERSION_STATUS}" ] || fail "scripts/mulmo-version-status がありません（Issue #67）"
+
+# 043〜045 入っている版と最新版の全組み合わせ。
+# 「入っている版 / 最新版 / 期待」。空は「読めなかった」を表す。
+VERSION_CASES='1.0.53|1.0.53|current
+1.0.53|1.0.54|update
+1.0.54|1.0.53|current
+1.0.9|1.0.53|update
+1.0.53|1.0.9|current
+1.0.9|1.0.10|update
+1.2.0|1.10.0|update
+||unknown
+1.0.53||unknown
+|1.0.53|unknown'
+VERSION_BAD=0
+printf '%s\n' "${VERSION_CASES}" | while IFS='|' read -r INSTALLED LATEST EXPECT; do
+  ACTUAL="$("${VERSION_STATUS}" "${INSTALLED}" "${LATEST}" 2>/dev/null || echo "(落ちた)")"
+  if [ "${ACTUAL}" != "${EXPECT}" ]; then
+    printf '  入っている版=%s 最新=%s: 期待 %s / 実際 %s\n' \
+      "${INSTALLED:-（読めない）}" "${LATEST:-（読めない）}" "${EXPECT}" "${ACTUAL}"
+    VERSION_BAD=1
+  fi
+  [ "${VERSION_BAD}" = "0" ] || echo "MISMATCH"
+done | tee "${TMPDIR:-/tmp}/mulmo-version-cases.$$" >/dev/null
+if grep -q MISMATCH "${TMPDIR:-/tmp}/mulmo-version-cases.$$" 2>/dev/null; then
+  grep -v '^MISMATCH$' "${TMPDIR:-/tmp}/mulmo-version-cases.$$"
+  rm -f "${TMPDIR:-/tmp}/mulmo-version-cases.$$"
+  fail "版の比べ方が期待と違います（Issue #67 / 043〜045）"
+fi
+rm -f "${TMPDIR:-/tmp}/mulmo-version-cases.$$"
+ok "版の比べ方 10 通りすべて一致"
+
+# 041 入っている版は Info.plist から読む。
+#
+# ソースの HEAD で報告すると、入っていない版を「最新です」と言う（#31）。
+grep -q 'defaults read "${APP_PLIST}" CFBundleShortVersionString' "${SELF_UPDATE}" \
+  || fail "入っている版を Info.plist から読んでいません（Issue #31 / 041）"
+ok "入っている版は Info.plist から読む"
+
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #

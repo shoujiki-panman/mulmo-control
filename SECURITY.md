@@ -94,11 +94,11 @@ Mulmo Control の検査カタログ。出典は Issue #67。
 
 | # | gate | 内容 | 状況 |
 |---|---|---|---|
-| 041 | fast | self-update check は installed version を Info.plist から読む |  |
+| 041 | fast | self-update check は installed version を Info.plist から読む | ✅ ソースの HEAD ではなくアプリ自身から読んでいることを見る（#31） |
 | 042 | fast | release tag が読めない時は `unknown` status を書く | ✅ 上流を確かめられないときは unknown と書く |
-| 043 | fast | installed が latest と同じなら `current` |  |
-| 044 | fast | installed が latest より新しければ `current` |  |
-| 045 | fast | installed が古ければ `update` |  |
+| 043 | fast | installed が latest と同じなら `current` | ✅ `mulmo-version-status` を**実際に動かして**10通りと突き合わせる |
+| 044 | fast | installed が latest より新しければ `current` | ✅ 同上（手元ビルドがリリースより先の場合） |
+| 045 | fast | installed が古ければ `update` | ✅ 同上。1.0.9 と 1.0.53 が**文字列比較で逆になる**ことも見る |
 | 046 | fast | self-update apply は detached copy で動く |  |
 | 047 | release | source repo が既存gitなら fetch/pullする |  |
 | 048 | release | source repo がなければ cloneする |  |
@@ -228,10 +228,10 @@ blob はそちらからも取れる。ここで防いでいるのは**ファイ�
 
 | 状況 | 件数 |
 |---|---|
-| ✅ `check.sh` が見ている | 71 |
+| ✅ `check.sh` が見ている | 75 |
 | 🔨 実装はあるが自動検査なし | 4 |
 | ⛔ 無効 | 1 |
-| 未着手 | 39 |
+| 未着手 | 35 |
 
 101 は 100番（新しい壊れ方を見つけたらここへ戻す）を1周させて足したもの。
 自己更新の写しが `mulmo-config-get` しか連れて行かないことに気づいたが、
