@@ -633,7 +633,11 @@ if ! xcrun swiftc -parse-as-library "${STATUS_DISPLAY}" "${DISPLAY_TEST}" -o "${
   rm -rf "$(dirname "${DISPLAY_BIN}")"
   fail "状態と表示の検査を組めませんでした（Issue #149）"
 fi
-DISPLAY_OUT="$("${DISPLAY_BIN}" 2>&1)"; DISPLAY_RC=$?
+# `set -e` があるので、失敗を代入で受けるとメッセージを出す前にここで
+# 中断する（以降の検査も全部飛ぶ）。`|| DISPLAY_RC=$?` で受け止める。
+DISPLAY_OUT=""
+DISPLAY_RC=0
+DISPLAY_OUT="$("${DISPLAY_BIN}" 2>&1)" || DISPLAY_RC=$?
 rm -rf "$(dirname "${DISPLAY_BIN}")"
 if [ "${DISPLAY_RC}" != "0" ]; then
   printf '%s\n' "${DISPLAY_OUT}"
