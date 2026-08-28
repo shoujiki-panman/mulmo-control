@@ -26,3 +26,15 @@ MULMO_AGENT_HOST="${MULMOTERMINAL_HOST:-127.0.0.1}"
 MULMO_AGENT_PLIST="${HOME}/Library/LaunchAgents/${MULMO_AGENT_LABEL}.plist"
 MULMO_AGENT_DOMAIN="gui/$(id -u)"
 MULMO_AGENT_LOG_DIR="${HOME}/.mulmoterminal/logs"
+
+# Mulmo Control が預かる「スマホ連携（MulmoClaude）の鍵」の置き場所（Issue #145）。
+#
+# MulmoClaude を止めると、接続に使う session blob はホスト側から消える。
+# ブラウザの localStorage にも同じものが park されているが、MulmoClaude の画面を
+# 開いていない間は繋ぎ直す主体がいない。だから Mulmo Control が控えを持つ。
+#
+# 書く側（mulmo-check-remote-host）・読む側（mulmoclaude-remote-host-reconnect）・
+# 消す側（同上と uninstall.sh）が別のファイルなので、綴りが食い違うと「預けたのに
+# 読めない」形になる。#129 で実際に踏んだ壊れ方なので、ここ1箇所が持つ。
+MULMO_MC_SESSION_SERVICE="${MULMO_MC_SESSION_SERVICE:-mulmo-control-remote-host-mulmoclaude}"
+MULMO_MC_SESSION_ACCOUNT="${MULMO_MC_SESSION_ACCOUNT:-session}"

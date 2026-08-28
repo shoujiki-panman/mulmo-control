@@ -80,13 +80,24 @@ PY
 MC_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
 MC_DIR="${MC_DIR:-${HOME}/mulmoclaude}"
 
+# 預かった鍵があるかどうか（Issue #145）。中身は読まない。あるかどうかだけ。
+#
+# これが true なら、MulmoClaude が止まっていても Mulmo Control 側から繋げる。
+# 画面のボタンはこれを見て「繋ぐ」と「設定を開く」を出し分ける。
+# `-w` を付けないので、この呼び出しは blob そのものを標準出力に出さない。
+STASHED=false
+if /usr/bin/security find-generic-password \
+  -s "${MULMO_MC_SESSION_SERVICE}" -a "${MULMO_MC_SESSION_ACCOUNT}" >/dev/null 2>&1; then
+  STASHED=true
+fi
+
 write_mc() {
-  /usr/bin/python3 -c '
-import json, sys, datetime
+  STASHED="${STASHED}" /usr/bin/python3 -c '
+import json, os, sys, datetime
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 json.dump({"checkedAt": now, "state": sys.argv[2], "hasSession": sys.argv[3] == "true",
-           "detail": sys.argv[4]}, open(sys.argv[1], "w", encoding="utf-8"),
-          ensure_ascii=False, indent=2)
+           "detail": sys.argv[4], "hasStash": os.environ.get("STASHED") == "true"},
+          open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 ' "${OUT_MC}" "$1" "$2" "$3"
 }
 
@@ -106,9 +117,38 @@ if [ -z "${MC_RAW}" ]; then
   exit 0
 fi
 
-RAW="${MC_RAW}" OUT="${OUT_MC}" /usr/bin/python3 <<'PY2'
+# 繋がっているうちに鍵を預かる（Issue #145）。
+#
+# MulmoClaude を止めると、この blob はホスト側から消える（メモリにしか無い）。
+# ブラウザの localStorage にも同じものが park されているが、MulmoClaude の画面を
+# 開いていない間は繋ぎ直す主体がいない。ここで控えておけば、止まっていても
+# Mulmo Control 側から繋げる。
+#
+# **この値を echo / printf / tee に渡さないこと。** run() はスクリプトの
+# stdout/stderr を丸ごと ~/Library/Logs 配下のファイルへ落とす。中身は
+# Firebase の refreshToken を含む。
+#
+# 鍵の更新に失敗しても、状態を書く仕事は続ける（`|| true`）。預かりは
+# 次の巡回でやり直せるが、状態が書けないと画面が「未確認」に落ちる。
+MC_SESSION="$(MC_RAW="${MC_RAW}" /usr/bin/python3 -c '
+import json, os
+try:
+    print(json.loads(os.environ["MC_RAW"]).get("session") or "")
+except ValueError:
+    print("")
+')"
+if [ -n "${MC_SESSION}" ]; then
+  /usr/bin/security add-generic-password -U \
+    -s "${MULMO_MC_SESSION_SERVICE}" -a "${MULMO_MC_SESSION_ACCOUNT}" \
+    -w "${MC_SESSION}" >/dev/null 2>&1 || true
+  STASHED=true
+fi
+unset MC_SESSION
+
+RAW="${MC_RAW}" OUT="${OUT_MC}" STASHED="${STASHED}" /usr/bin/python3 <<'PY2'
 import json, os, datetime
 raw = os.environ["RAW"]; out = os.environ["OUT"]
+stashed = os.environ.get("STASHED") == "true"
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 try:
     data = json.loads(raw)
@@ -126,6 +166,6 @@ else:
     else:
         state, detail = "never", "まだ繋いでいません"
 with open(out, "w", encoding="utf-8") as f:
-    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail},
-              f, ensure_ascii=False, indent=2)
+    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail,
+               "hasStash": stashed}, f, ensure_ascii=False, indent=2)
 PY2

@@ -205,8 +205,12 @@ struct MulmoUpdates: Decodable {
 /// 「繋ぎ方を見る」、もう片方が「設定を開く」と並んでいた。押したときの動きは
 /// どちらも「アプリを開く（止まっていれば起動してから）」で同じ。
 func remoteHostButtonTitle(_ status: RemoteHostStatus) -> String? {
+    if status.state == "online" { return nil }
     if status.isOffline { return "繋ぎ直す" }
-    return status.state == "online" ? nil : "設定を開く"
+    // 鍵を預かっていれば、MulmoClaude が止まっていても繋げる（Issue #145）。
+    // 「繋ぎ直す」と分けているのは、押したときに起動まで走るのがこちらだけだから。
+    if status.canConnectFromControl { return "繋ぐ" }
+    return "設定を開く"
 }
 
 /// スマホ連携（RemoteHost）の状態。切れても MulmoTerminal は動き続けるので、
@@ -216,8 +220,18 @@ struct RemoteHostStatus: Decodable {
     let state: String   // online / offline / never / unknown
     let hasSession: Bool
     let detail: String
+    /// Mulmo Control が Keychain に鍵を預かっているか（Issue #145）。
+    ///
+    /// Optional なのは、MulmoTerminal 側の書き置きにこの項目が無いから。
+    /// 非 Optional にすると、項目が1つ足りないだけで復号ごと失敗し、画面が
+    /// 「未確認」に落ちる（SelfUpdateStatus で一度踏んだ形）。古い版が書いた
+    /// MulmoClaude 側の書き置きにも無いので、更新直後も同じことが起きる。
+    let hasStash: Bool?
 
     var isOffline: Bool { state == "offline" }
+
+    /// MulmoClaude が止まっていても、預かった鍵で繋げる状態か。
+    var canConnectFromControl: Bool { hasStash == true }
 }
 
 /// claude CLI のログイン状態。MulmoClaude は内部で claude を呼ぶので、
@@ -586,8 +600,11 @@ final class ControlModel: ObservableObject {
     }
 
     /// チャット側は接続が別なので、繋ぎ直す口も別（Issue #23）。片方だけ切れる。
+    ///
+    /// 鍵を預かっていれば、MulmoClaude が止まっていても繋げる（Issue #145）。
+    /// その場合は起動を待つ分だけ長くかかるので、表示は「繋いでいます」にする。
     func reconnectMCRemoteHost() {
-        run(tool("mulmoclaude-remote-host-reconnect"), label: "スマホ連携（MulmoClaude）を繋ぎ直しています")
+        run(tool("mulmoclaude-remote-host-reconnect"), label: "スマホ連携（MulmoClaude）を繋いでいます")
     }
 
     /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
@@ -1885,7 +1902,9 @@ struct SetupPanel: View {
                         detail: model.mcRemoteHost.detail,
                         ok: model.mcRemoteHost.state == "online",
                         buttonTitle: remoteHostButtonTitle(model.mcRemoteHost),
-                        action: model.mcRemoteHost.isOffline ? model.reconnectMCRemoteHost : model.openMC
+                        action: model.mcRemoteHost.isOffline || model.mcRemoteHost.canConnectFromControl
+                            ? model.reconnectMCRemoteHost
+                            : model.openMC
                     )
                 } else {
                     SetupRow(
@@ -2466,7 +2485,7 @@ func readLastUpdateReport() -> String {
 func readRemoteHostStatus(_ path: String = remoteHostPath) -> RemoteHostStatus {
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
           let status = try? JSONDecoder().decode(RemoteHostStatus.self, from: data) else {
-        return RemoteHostStatus(checkedAt: "", state: "unknown", hasSession: false, detail: "未確認")
+        return RemoteHostStatus(checkedAt: "", state: "unknown", hasSession: false, detail: "未確認", hasStash: nil)
     }
     return status
 }

@@ -523,6 +523,80 @@ if ! grep -vE '^[[:space:]]*#' "${ROOT}/scripts/start-mulmoterminal.sh" \
 fi
 ok "起動前に二重起動を避けている"
 
+# ── スマホ連携の鍵 ──────────────────────────────────────────────
+# SECURITY.md の K 節（109〜112）。Issue #145。
+#
+# Mulmo Control は「スマホ連携（MulmoClaude）」の session blob を Keychain に
+# 預かる。中身は Firebase の refreshToken なので、扱いを間違えると平文で
+# ログに残る／アンインストールしても残る、という形になる。
+step "スマホ連携の鍵"
+
+MC_RECONNECT="${ROOT}/scripts/mulmoclaude-remote-host-reconnect"
+MC_CHECK="${ROOT}/scripts/mulmo-check-remote-host"
+
+# 109 預かった鍵をログに出さない。
+#
+# run() はスクリプトの stdout/stderr を丸ごと ~/Library/Logs 配下のファイルへ
+# 落とす（`( … ) >"${actionLogPath}" 2>&1`）。つまり **echo した時点でログに
+# 平文で残る**。「デバッグに一行足す」で壊れる種類なので、綴りではなく
+# 「秘密を持つ変数が出力コマンドに渡っていないか」を見る。
+#
+# 対象の変数は、blob そのもの（SESSION / MC_SESSION）、blob を含む API の応答
+# （STATUS / RAW / MC_RAW）、Bearer トークン（TOKEN / MC_TOKEN）。
+SECRET_VARS='SESSION|MC_SESSION|STATUS|RAW|MC_RAW|TOKEN|MC_TOKEN'
+LEAK="$(grep -rnE '(^|[;&|(]|[[:space:]])(echo|print|printf|tee|cat)([[:space:]]|$)' \
+  "${MC_RECONNECT}" "${MC_CHECK}" 2>/dev/null \
+  | grep -E "\\\$\\{?(${SECRET_VARS})\\}?" \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${LEAK}" ]; then
+  printf '%s\n' "${LEAK}"
+  fail "預かった鍵/トークンを出力コマンドに渡しています。ログに平文で残ります（Issue #145）"
+fi
+ok "預かった鍵をログに出していない"
+
+# 110 鍵の置き場所（service / account）の綴りを1箇所だけが持つ。
+#
+# 書く側・読む側・消す側が別のファイルにある。綴りが食い違うと「預けたのに
+# 読めない」形になり、画面は永遠に `設定を開く` のままになる。#129 は入れる
+# 場所と読む場所が食い違って実際に起きた。
+BARE_SERVICE="$(grep -rn 'mulmo-control-remote-host-mulmoclaude' \
+  "${ROOT}/scripts" "${ROOT}/uninstall.sh" "${ROOT}/install.sh" 2>/dev/null \
+  | grep -v 'scripts/mulmoterminal-agent-env:' || true)"
+if [ -n "${BARE_SERVICE}" ]; then
+  printf '%s\n' "${BARE_SERVICE}"
+  fail "鍵の置き場所を直に書いています。mulmoterminal-agent-env の定義を使ってください（Issue #145 / #129）"
+fi
+KEYCHAIN_CALLS="$(grep -rnE 'security (add|find|delete)-generic-password' \
+  "${ROOT}/scripts" "${ROOT}/uninstall.sh" 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -z "${KEYCHAIN_CALLS}" ]; then
+  fail "Keychain を触る箇所が1つもありません。鍵を預かる実装が消えています（Issue #145）"
+fi
+ok "鍵の置き場所は共有定義だけが持つ"
+
+# 111 期限切れの鍵と、アンインストール時の鍵を捨てる。
+#
+# 401 は「この blob では利用者を復元できない」の意味。持ち続けると画面は
+# 「繋げる」と言い続けて毎回失敗する。アンインストールで残ると、アプリを
+# 消したあとの Mac に refreshToken が残る。
+grep -q 'delete-generic-password' "${MC_RECONNECT}" \
+  || fail "期限切れ（401）の鍵を捨てていません（Issue #145）"
+grep -q 'delete-generic-password' "${ROOT}/uninstall.sh" \
+  || fail "アンインストールで鍵を消していません。refreshToken が残ります（Issue #145）"
+ok "期限切れとアンインストールで鍵を捨てる"
+
+# 112 繋がっているときに reconnect を叩かない。
+#
+# #23 で実測した: 繋がっている状態で reconnect を叩くと 401 が返る。既存の
+# 接続は無傷だが、成功しているのに「期限切れです」と言うことになる。
+# 引き返す判定が POST より前にあることを、行番号で見る。
+GUARD_LINE="$(grep -n "get('status', {}).get('connected')" "${MC_RECONNECT}" | head -1 | cut -d: -f1)"
+POST_LINE="$(grep -n '/api/remote-host/reconnect' "${MC_RECONNECT}" | head -1 | cut -d: -f1)"
+if [ -z "${GUARD_LINE}" ] || [ -z "${POST_LINE}" ] || [ "${GUARD_LINE}" -ge "${POST_LINE}" ]; then
+  fail "繋がっているかを確かめる前に reconnect を叩いています。401 になります（Issue #23 / #145）"
+fi
+ok "繋がっているときは reconnect を叩かない"
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #
