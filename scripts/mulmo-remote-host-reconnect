@@ -24,6 +24,22 @@ if [ -z "${STATUS}" ]; then
   exit 1
 fi
 
+# 繋がっているのに reconnect を叩くと 401 が返る（#23 / #147 で実測）。既存の
+# 接続は無傷だが、繋がっているのに「期限切れです」と言うことになり、利用者は
+# 直すものが無いまま画面を探すことになる。MulmoClaude 側（#145）と同じく、
+# POST の前に引き返す。
+if [ "$(STATUS="${STATUS}" /usr/bin/python3 -c "
+import json, os
+try:
+    print('yes' if json.loads(os.environ['STATUS']).get('status', {}).get('connected') else 'no')
+except ValueError:
+    print('no')
+")" = "yes" ]; then
+  echo "スマホ連携はすでに繋がっています" | tee -a "${LOG}"
+  "${SCRIPT_DIR}/mulmo-check-remote-host" >/dev/null 2>&1 || true
+  exit 0
+fi
+
 SESSION="$(STATUS="${STATUS}" /usr/bin/python3 -c "
 import json, os
 try:

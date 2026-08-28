@@ -533,6 +533,9 @@ step "スマホ連携の鍵"
 
 MC_RECONNECT="${ROOT}/scripts/mulmoclaude-remote-host-reconnect"
 MC_CHECK="${ROOT}/scripts/mulmo-check-remote-host"
+# 繋ぎ直す口は2つある。ターミナル側も同じ blob を握るので同じ規則を掛ける
+# （#147 — 109 と 112 が MulmoClaude 側にしか掛かっておらず、実際に漏れた）。
+MT_RECONNECT="${ROOT}/scripts/mulmo-remote-host-reconnect"
 
 # 109 預かった鍵をログに出さない。
 #
@@ -545,7 +548,7 @@ MC_CHECK="${ROOT}/scripts/mulmo-check-remote-host"
 # （STATUS / RAW / MC_RAW）、Bearer トークン（TOKEN / MC_TOKEN）。
 SECRET_VARS='SESSION|MC_SESSION|STATUS|RAW|MC_RAW|TOKEN|MC_TOKEN'
 LEAK="$(grep -rnE '(^|[;&|(]|[[:space:]])(echo|print|printf|tee|cat)([[:space:]]|$)' \
-  "${MC_RECONNECT}" "${MC_CHECK}" 2>/dev/null \
+  "${MC_RECONNECT}" "${MC_CHECK}" "${MT_RECONNECT}" 2>/dev/null \
   | grep -E "\\\$\\{?(${SECRET_VARS})\\}?" \
   | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
 if [ -n "${LEAK}" ]; then
@@ -590,12 +593,14 @@ ok "期限切れとアンインストールで鍵を捨てる"
 # #23 で実測した: 繋がっている状態で reconnect を叩くと 401 が返る。既存の
 # 接続は無傷だが、成功しているのに「期限切れです」と言うことになる。
 # 引き返す判定が POST より前にあることを、行番号で見る。
-GUARD_LINE="$(grep -n "get('status', {}).get('connected')" "${MC_RECONNECT}" | head -1 | cut -d: -f1)"
-POST_LINE="$(grep -n '/api/remote-host/reconnect' "${MC_RECONNECT}" | head -1 | cut -d: -f1)"
-if [ -z "${GUARD_LINE}" ] || [ -z "${POST_LINE}" ] || [ "${GUARD_LINE}" -ge "${POST_LINE}" ]; then
-  fail "繋がっているかを確かめる前に reconnect を叩いています。401 になります（Issue #23 / #145）"
-fi
-ok "繋がっているときは reconnect を叩かない"
+for RECONNECT in "${MC_RECONNECT}" "${MT_RECONNECT}"; do
+  GUARD_LINE="$(grep -n "get('status', {}).get('connected')" "${RECONNECT}" | head -1 | cut -d: -f1)"
+  POST_LINE="$(grep -n '/api/remote-host/reconnect' "${RECONNECT}" | head -1 | cut -d: -f1)"
+  if [ -z "${GUARD_LINE}" ] || [ -z "${POST_LINE}" ] || [ "${GUARD_LINE}" -ge "${POST_LINE}" ]; then
+    fail "$(basename "${RECONNECT}") が、繋がっているかを確かめる前に reconnect を叩いています。401 になります（Issue #23 / #145 / #147）"
+  fi
+done
+ok "繋がっているときは reconnect を叩かない（両方）"
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
