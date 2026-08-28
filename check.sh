@@ -602,6 +602,45 @@ for RECONNECT in "${MC_RECONNECT}" "${MT_RECONNECT}"; do
 done
 ok "繋がっているときは reconnect を叩かない（両方）"
 
+# ── 状態と表示の対応 ────────────────────────────────────────────
+# SECURITY.md の K 節（115）。Issue #149。
+#
+# 直近5件の不具合のうち4件が「アプリが世界の状態について嘘をつく」形だった
+# （#139 #143 #145 #147）。ここまでの検査は main.swift を **文字列として
+# grep しているだけで、一度も動かしていない**。だから嘘が出ても気づけない。
+#
+# 表示を決める部分だけ Sources/StatusDisplay.swift に分けてあるので、
+# そこと検査を swiftc で組んで実際に走らせる。アプリと同じ1本を読む。
+step "状態と表示の対応"
+
+STATUS_DISPLAY="${ROOT}/Sources/StatusDisplay.swift"
+DISPLAY_TEST="${ROOT}/tests/status-display-test.swift"
+
+# 115 状態の全組み合わせで、出る言葉が対応表と一致する。
+[ -f "${STATUS_DISPLAY}" ] || fail "Sources/StatusDisplay.swift がありません（Issue #149）"
+[ -f "${DISPLAY_TEST}" ] || fail "tests/status-display-test.swift がありません（Issue #149）"
+
+# 外の世界に触るものが混ざると、検査から動かせなくなる。混ざる前に止める。
+IMPURE="$(grep -nE '^[[:space:]]*import[[:space:]]+(SwiftUI|AppKit|UserNotifications)|FileManager|URLSession|Process\(' \
+  "${STATUS_DISPLAY}" 2>/dev/null || true)"
+if [ -n "${IMPURE}" ]; then
+  printf '%s\n' "${IMPURE}"
+  fail "StatusDisplay.swift が外の世界に触っています。検査から動かせなくなります（Issue #149）"
+fi
+
+DISPLAY_BIN="$(mktemp -d "${TMPDIR:-/tmp}/mulmo-display-XXXXXX")/test"
+if ! xcrun swiftc -parse-as-library "${STATUS_DISPLAY}" "${DISPLAY_TEST}" -o "${DISPLAY_BIN}" 2>&1; then
+  rm -rf "$(dirname "${DISPLAY_BIN}")"
+  fail "状態と表示の検査を組めませんでした（Issue #149）"
+fi
+DISPLAY_OUT="$("${DISPLAY_BIN}" 2>&1)"; DISPLAY_RC=$?
+rm -rf "$(dirname "${DISPLAY_BIN}")"
+if [ "${DISPLAY_RC}" != "0" ]; then
+  printf '%s\n' "${DISPLAY_OUT}"
+  fail "状態と表示が食い違っています（Issue #149）"
+fi
+ok "${DISPLAY_OUT}"
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #
