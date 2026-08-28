@@ -721,7 +721,9 @@ if [ -n "${TRUST_WRITE}" ]; then
   printf '%s\n' "${TRUST_WRITE}"
   fail "claude の信頼フラグを書こうとしています。同意は人が踏むものです（Issue #152 / 116）"
 fi
-TRUST_READ="$(grep -rn 'hasTrustDialogAccepted' "${ROOT}/scripts" 2>/dev/null || true)"
+# 部分一致だと、末尾に1文字足すだけの改名を見逃す（実際に見逃した）。
+# 使われている形（クォートか括弧で閉じる）まで見る。
+TRUST_READ="$(grep -rnE 'hasTrustDialogAccepted["'"'"']' "${ROOT}/scripts" 2>/dev/null || true)"
 [ -n "${TRUST_READ}" ] || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #152 / 116）"
 ok "claude の信頼フラグは読むだけ"
 
