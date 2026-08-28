@@ -200,40 +200,6 @@ struct MulmoUpdates: Decodable {
     let items: [MulmoUpdateItem]
 }
 
-/// スマホ連携の2行に出すボタンの文字。状態が同じなら同じ言葉が出るように、
-/// 1か所で決める。以前は同じ `never`（まだ繋いでいません）に対して、片方が
-/// 「繋ぎ方を見る」、もう片方が「設定を開く」と並んでいた。押したときの動きは
-/// どちらも「アプリを開く（止まっていれば起動してから）」で同じ。
-func remoteHostButtonTitle(_ status: RemoteHostStatus) -> String? {
-    if status.state == "online" { return nil }
-    if status.isOffline { return "繋ぎ直す" }
-    // 鍵を預かっていれば、MulmoClaude が止まっていても繋げる（Issue #145）。
-    // 「繋ぎ直す」と分けているのは、押したときに起動まで走るのがこちらだけだから。
-    if status.canConnectFromControl { return "繋ぐ" }
-    return "設定を開く"
-}
-
-/// スマホ連携（RemoteHost）の状態。切れても MulmoTerminal は動き続けるので、
-/// 放っておくと気づけない。never = 一度も繋いでいない（再接続する先が無い）。
-struct RemoteHostStatus: Decodable {
-    let checkedAt: String
-    let state: String   // online / offline / never / unknown
-    let hasSession: Bool
-    let detail: String
-    /// Mulmo Control が Keychain に鍵を預かっているか（Issue #145）。
-    ///
-    /// Optional なのは、MulmoTerminal 側の書き置きにこの項目が無いから。
-    /// 非 Optional にすると、項目が1つ足りないだけで復号ごと失敗し、画面が
-    /// 「未確認」に落ちる（SelfUpdateStatus で一度踏んだ形）。古い版が書いた
-    /// MulmoClaude 側の書き置きにも無いので、更新直後も同じことが起きる。
-    let hasStash: Bool?
-
-    var isOffline: Bool { state == "offline" }
-
-    /// MulmoClaude が止まっていても、預かった鍵で繋げる状態か。
-    var canConnectFromControl: Bool { hasStash == true }
-}
-
 /// claude CLI のログイン状態。MulmoClaude は内部で claude を呼ぶので、
 /// ここが切れるとチャットだけが死ぬ。サーバーは動いたままなので気づきにくい。
 struct ClaudeLoginStatus: Decodable {
