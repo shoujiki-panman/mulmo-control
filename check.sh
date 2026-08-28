@@ -702,6 +702,42 @@ grep -q 'defaults read "${APP_PLIST}" CFBundleShortVersionString' "${SELF_UPDATE
   || fail "入っている版を Info.plist から読んでいません（Issue #31 / 041）"
 ok "入っている版は Info.plist から読む"
 
+# ── プロジェクトのセッション ────────────────────────────────────
+# SECURITY.md の L 節（116・117）。Issue #152。
+step "プロジェクトのセッション"
+
+PROJECT_STATUS="${ROOT}/scripts/mulmo-project-status"
+[ -x "${PROJECT_STATUS}" ] || fail "scripts/mulmo-project-status がありません（Issue #152）"
+
+# 116 claude の信頼フラグを、こちらから書かない。
+#
+# ディレクトリの信頼は ~/.claude.json の hasTrustDialogAccepted に入っている。
+# ここを立てれば初回の確認を飛ばせるが、**人間の同意を機械が偽造する形**に
+# なる。読むのはよい（押す前に「確認が要ります」と伝えるため）。書かない。
+TRUST_WRITE="$(grep -rnE 'claude\.json' "${ROOT}/scripts" "${ROOT}/Sources" 2>/dev/null \
+  | grep -E '>|tee|dump|open\([^)]*[\"'"'"']w' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${TRUST_WRITE}" ]; then
+  printf '%s\n' "${TRUST_WRITE}"
+  fail "claude の信頼フラグを書こうとしています。同意は人が踏むものです（Issue #152 / 116）"
+fi
+TRUST_READ="$(grep -rn 'hasTrustDialogAccepted' "${ROOT}/scripts" 2>/dev/null || true)"
+[ -n "${TRUST_READ}" ] || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #152 / 116）"
+ok "claude の信頼フラグは読むだけ"
+
+# 117 プロジェクトの登録を shell として実行しない。
+#
+# projects.json は利用者が触るデータ。source すると、紛れ込んだ $(...) が
+# 読んだ側の権限で走る（#67 と同じ穴）。JSON として読むこと。
+grep -qE 'json\.load' "${PROJECT_STATUS}" \
+  || fail "projects.json を JSON として読んでいません（Issue #152 / #67）"
+BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${PROJECT_STATUS}" || true)"
+if [ -n "${BAD_SOURCE}" ]; then
+  printf '%s\n' "${BAD_SOURCE}"
+  fail "プロジェクトの登録を shell として実行しています（Issue #152 / #67）"
+fi
+ok "プロジェクトの登録は JSON として読む"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。

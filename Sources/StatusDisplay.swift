@@ -41,3 +41,47 @@ struct RemoteHostStatus: Decodable {
     /// MulmoClaude が止まっていても、預かった鍵で繋げる状態か。
     var canConnectFromControl: Bool { hasStash == true }
 }
+
+/// 登録したプロジェクトと、そのディレクトリで動いているリモートセッション
+/// （Issue #152）。スマホから使うので、**セッション名がそのまま向こうで
+/// 探す手がかりになる**。だから状態だけでなく名前を出す。
+///
+/// 状態は自前で持たない。`claude agents --json` が cwd 付きで返すものを
+/// 毎回読み直している。pid を覚えないので、アプリを再起動しても戻る。
+struct ProjectSession: Decodable {
+    let name: String
+    let path: String
+    /// 登録したディレクトリが実在するか。消したあとも登録は残る。
+    let exists: Bool
+    /// claude 側がこのディレクトリの信頼確認を通しているか。通っていないと
+    /// 初回起動で確認が出て止まるので、押す前に伝える必要がある。
+    let trusted: Bool
+    let autoStart: Bool
+    /// 動いているセッションの名前。止まっているときは空。
+    let sessionName: String
+    let sessionCount: Int
+    /// busy / idle / running / stopped
+    let status: String
+
+    var isRunning: Bool { status != "stopped" }
+}
+
+/// プロジェクトの行に出す説明。
+///
+/// 「停止中」と「フォルダが無い」を混ぜないこと。起動を押せば直るのは前者
+/// だけで、後者は登録し直すしかない（#23 で「切れた」と「繋いでいない」を
+/// 混ぜて時間を使ったのと同じ形）。
+func projectSessionDetail(_ project: ProjectSession) -> String {
+    if !project.exists { return "フォルダが見つかりません" }
+    if !project.isRunning {
+        return project.trusted ? "停止中" : "停止中・初回は確認が要ります"
+    }
+    let label = project.sessionName.isEmpty ? "セッション" : project.sessionName
+    if project.sessionCount > 1 { return "\(label) ほか\(project.sessionCount - 1)件" }
+    return label
+}
+
+/// 行の左の印を緑にしてよいか。動いていて、かつ実在するときだけ。
+func projectSessionOK(_ project: ProjectSession) -> Bool {
+    project.exists && project.isRunning
+}

@@ -57,6 +57,41 @@ private func stash(_ value: Bool?) -> String {
 private let states = ["online", "offline", "never", "unknown"]
 private let stashes: [Bool?] = [true, false, nil]
 
+/// プロジェクトの行（Issue #152）。判断に効く入力は4つだけ:
+/// 実在するか / 動いているか / 信頼済みか / セッションが複数か。
+/// 2×2×2×2 = 16通りを全部並べる。
+private struct ProjectCase {
+    let exists: Bool
+    let running: Bool
+    let trusted: Bool
+    let multi: Bool
+    let expected: String
+}
+
+private func projectCases() -> [ProjectCase] {
+    var built: [ProjectCase] = []
+    for exists in [true, false] {
+        for running in [true, false] {
+            for trusted in [true, false] {
+                for multi in [true, false] {
+                    let expected: String
+                    if !exists {
+                        expected = "フォルダが見つかりません"
+                    } else if !running {
+                        expected = trusted ? "停止中" : "停止中・初回は確認が要ります"
+                    } else {
+                        expected = multi ? "s1 ほか1件" : "s1"
+                    }
+                    built.append(ProjectCase(exists: exists, running: running,
+                                             trusted: trusted, multi: multi,
+                                             expected: expected))
+                }
+            }
+        }
+    }
+    return built
+}
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -96,10 +131,38 @@ struct StatusDisplayTest {
                 ))
             }
         }
+        // ③ プロジェクトの行（Issue #152）
+        let projects = projectCases()
+        if projects.count != 16 {
+            FileHandle.standardError.write(Data("プロジェクトの組み合わせが16通りありません\n".utf8))
+            failures += 1
+        }
+        for item in projects {
+            let project = ProjectSession(
+                name: "p", path: "~/p", exists: item.exists, trusted: item.trusted,
+                autoStart: false, sessionName: item.running ? "s1" : "",
+                sessionCount: item.running ? (item.multi ? 2 : 1) : 0,
+                status: item.running ? "idle" : "stopped"
+            )
+            let actual = projectSessionDetail(project)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  実在=\(item.exists) 動作=\(item.running) 信頼=\(item.trusted) 複数=\(item.multi): 期待 \(item.expected) / 実際 \(actual)\n".utf8))
+            }
+            // 緑にしてよいのは、実在して動いているときだけ。
+            let expectOK = item.exists && item.running
+            if projectSessionOK(project) != expectOK {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  実在=\(item.exists) 動作=\(item.running): 印の期待 \(expectOK) / 実際 \(projectSessionOK(project))\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通りすべて一致")
+        print("\(cases.count) 通り + プロジェクト \(projects.count) 通りすべて一致")
     }
 }

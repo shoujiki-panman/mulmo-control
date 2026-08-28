@@ -122,6 +122,7 @@ private let remoteHostPath = "\(logDir)/remote-host.json"
 // （Issue #78）。以前は前者しか見ていないのに主語なしで「スマホ連携」と出して
 // いたので、MulmoClaude 側が切れていても「使えます」と表示していた。
 private let mcRemoteHostPath = "\(logDir)/remote-host-mulmoclaude.json"
+private let projectsPath = "\(logDir)/projects-status.json"
 private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
@@ -317,6 +318,7 @@ final class ControlModel: ObservableObject {
     @Published var claudeLogin = readClaudeLoginStatus()
     @Published var remoteHost = readRemoteHostStatus()
     @Published var mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
+    @Published var projects = readProjectsStatus()
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -394,14 +396,16 @@ final class ControlModel: ObservableObject {
     /// `確認` ボタンと6時間ごとの自動確認だけなので、繋ぎ直しても画面は切れた
     /// ままの表示が残っていた。
     ///
-    /// ここで走らせるのは軽い2つだけ（実測でスマホ連携 101ms・ログイン 203ms）。
-    /// npm を叩く更新確認は 2750ms かかるので、6時間の間隔のまま触らない。
+    /// ここで走らせるのは軽い3つだけ（実測でスマホ連携 101ms・ログイン 203ms・
+    /// プロジェクト 280ms）。npm を叩く更新確認は 2750ms かかるので、6時間の
+    /// 間隔のまま触らない。
     private func refreshLightChecks() {
         guard !lightChecksRunning else { return }
         lightChecksRunning = true
         let command = """
         \(tool("mulmo-check-remote-host"))
         \(tool("mulmo-check-claude-login"))
+        \(tool("mulmo-project-status"))
         """
         Task.detached { [weak self] in
             let process = Process()
@@ -415,6 +419,7 @@ final class ControlModel: ObservableObject {
                 self.remoteHost = readRemoteHostStatus()
                 self.mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
                 self.claudeLogin = readClaudeLoginStatus()
+                self.projects = readProjectsStatus()
             }
         }
     }
@@ -501,6 +506,7 @@ final class ControlModel: ObservableObject {
         claudeLogin = readClaudeLoginStatus()
         remoteHost = readRemoteHostStatus()
         mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
+        projects = readProjectsStatus()
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -1669,6 +1675,7 @@ struct OperateView: View {
                     Button("入手", action: model.openMCRepo)
                 }
             }
+            ProjectsPanel(model: model)
             InstalledFamilyPanel(model: model)
         }
     }
@@ -1827,6 +1834,42 @@ struct EnvironmentView: View {
 
     var body: some View {
         SetupPanel(model: model)
+    }
+}
+
+/// 登録したプロジェクトごとの、リモートセッションの一覧（Issue #152）。
+///
+/// この段では**読むだけ**。起動 / 停止は次で足す。先に「いま何が動いて
+/// いるか」だけを正しく出せることを確かめる。
+struct ProjectsPanel: View {
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("プロジェクト")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+
+            if model.projects.projects.isEmpty {
+                SetupRow(
+                    title: "登録がありません",
+                    detail: model.projects.state == "no-cli"
+                        ? "claude が見つかりません"
+                        : "ディレクトリを登録すると、スマホから使えるセッションを立てられます",
+                    ok: false
+                )
+            } else {
+                VStack(spacing: 7) {
+                    ForEach(model.projects.projects, id: \.path) { project in
+                        SetupRow(
+                            title: project.name,
+                            detail: projectSessionDetail(project),
+                            ok: projectSessionOK(project)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2452,6 +2495,22 @@ func readRemoteHostStatus(_ path: String = remoteHostPath) -> RemoteHostStatus {
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
           let status = try? JSONDecoder().decode(RemoteHostStatus.self, from: data) else {
         return RemoteHostStatus(checkedAt: "", state: "unknown", hasSession: false, detail: "未確認", hasStash: nil)
+    }
+    return status
+}
+
+/// 登録したプロジェクトの一覧と、その稼働状態（Issue #152）。
+struct ProjectsStatus: Decodable {
+    let checkedAt: String
+    let state: String   // ok / empty / no-cli
+    let detail: String
+    let projects: [ProjectSession]
+}
+
+func readProjectsStatus() -> ProjectsStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: projectsPath)),
+          let status = try? JSONDecoder().decode(ProjectsStatus.self, from: data) else {
+        return ProjectsStatus(checkedAt: "", state: "unknown", detail: "未確認", projects: [])
     }
     return status
 }

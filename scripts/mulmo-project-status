@@ -1,0 +1,121 @@
+#!/bin/zsh
+set -u
+
+# 登録したプロジェクトごとに、リモートセッションが立っているかを見る（Issue #152）。
+#
+# 状態は自前で持たない。`claude agents --json` が cwd 付きで教えてくれるので、
+# 毎回それを読み直す。**pid を覚えないことが肝。** アプリを再起動しても、
+# セッションを立て直さずに状態が戻る（「再起動すると消える」が元の不満）。
+#
+# projects.json は利用者が触るデータなので、shell として実行しない（Issue #67）。
+# JSON として読み、想定した形でなければ捨てる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
+CONFIG="${APP_SUPPORT}/projects.json"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+OUT="${LOG_DIR}/projects-status.json"
+
+mkdir -p "${LOG_DIR}"
+
+write_empty() {
+  cat > "${OUT}" <<JSON
+{
+  "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "state": "$1",
+  "detail": "$2",
+  "projects": []
+}
+JSON
+}
+
+if [ ! -f "${CONFIG}" ]; then
+  # まだ1つも登録していない。異常ではないので、そう言う。
+  write_empty "empty" "プロジェクトが登録されていません"
+  exit 0
+fi
+
+CLAUDE="$(command -v claude || true)"
+if [ -z "${CLAUDE}" ]; then
+  # claude が無いのに「停止中」と言うと、起動を押せば直ると読める。別の話。
+  write_empty "no-cli" "claude が見つかりません"
+  exit 0
+fi
+
+# 落ちたり固まったりしても、状態を「不明」にするだけで済ませる。
+AGENTS="$(timeout 20 "${CLAUDE}" agents --json 2>/dev/null || true)"
+
+CONFIG="${CONFIG}" AGENTS="${AGENTS}" OUT="${OUT}" TRUST="${HOME}/.claude.json" \
+  /usr/bin/python3 <<'PY'
+import json, os, datetime
+
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def load(path, default):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return default
+
+config = load(os.environ["CONFIG"], None)
+entries = config.get("projects") if isinstance(config, dict) else None
+if not isinstance(entries, list):
+    entries = []
+
+try:
+    agents = json.loads(os.environ["AGENTS"] or "[]")
+except ValueError:
+    agents = []
+if not isinstance(agents, list):
+    agents = []
+
+# 信頼は claude 側がディレクトリ単位で持っている。こちらからは書かない
+# （人間の同意を機械が偽造する形になる）。読むだけ。
+trusted_paths = set()
+trust = load(os.environ["TRUST"], {})
+for path, item in (trust.get("projects") or {}).items():
+    if isinstance(item, dict) and item.get("hasTrustDialogAccepted"):
+        trusted_paths.add(os.path.realpath(os.path.expanduser(path)))
+
+def sessions_for(path):
+    found = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        cwd = agent.get("cwd")
+        if not isinstance(cwd, str):
+            continue
+        if os.path.realpath(os.path.expanduser(cwd)) == path:
+            found.append(agent)
+    return found
+
+projects = []
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
+    name = entry.get("name")
+    raw_path = entry.get("path")
+    if not isinstance(name, str) or not isinstance(raw_path, str) or not name or not raw_path:
+        continue
+    path = os.path.realpath(os.path.expanduser(raw_path))
+    live = sessions_for(path)
+    # 同じディレクトリに複数立っていることがある。busy を優先して1つ出す。
+    pick = next((s for s in live if s.get("status") == "busy"), live[0] if live else None)
+    projects.append({
+        "name": name,
+        "path": raw_path,
+        "exists": os.path.isdir(path),
+        "trusted": path in trusted_paths,
+        "autoStart": bool(entry.get("autoStart")),
+        "sessionName": (pick or {}).get("name") or "",
+        "sessionCount": len(live),
+        "status": (pick or {}).get("status") or (pick or {}).get("state") or ("running" if pick else "stopped"),
+    })
+
+state = "ok" if projects else "empty"
+detail = "" if projects else "プロジェクトが登録されていません"
+with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
+    json.dump({"checkedAt": now, "state": state, "detail": detail, "projects": projects},
+              handle, ensure_ascii=False, indent=2)
+PY
