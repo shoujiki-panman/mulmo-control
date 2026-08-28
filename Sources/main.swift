@@ -397,7 +397,7 @@ final class ControlModel: ObservableObject {
     /// ままの表示が残っていた。
     ///
     /// ここで走らせるのは軽い3つだけ（実測でスマホ連携 101ms・ログイン 203ms・
-    /// プロジェクト 280ms）。npm を叩く更新確認は 2750ms かかるので、6時間の
+    /// プロジェクト 51ms）。npm を叩く更新確認は 2750ms かかるので、6時間の
     /// 間隔のまま触らない。
     private func refreshLightChecks() {
         guard !lightChecksRunning else { return }
@@ -563,6 +563,20 @@ final class ControlModel: ObservableObject {
         \(tool("mulmo-check-claude-login"))
         \(tool("mulmo-check-remote-host"))
         """, label: "更新を確認中")
+    }
+
+    /// プロジェクトのリモートセッションを繋ぐ / 止める（Issue #152）。
+    ///
+    /// 初回のフォルダは、スクリプトがターミナルを開いて信頼確認を出す。
+    /// そこは人が踏むところなので、こちらでは代われない。
+    func startProject(_ name: String) {
+        run("\(tool("mulmo-project-start")) \(shellQuoted(name))",
+            label: "「\(name)」を繋いでいます")
+    }
+
+    func stopProject(_ name: String) {
+        run("\(tool("mulmo-project-stop")) \(shellQuoted(name))",
+            label: "「\(name)」を止めています")
     }
 
     /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
@@ -1864,7 +1878,15 @@ struct ProjectsPanel: View {
                         SetupRow(
                             title: project.name,
                             detail: projectSessionDetail(project),
-                            ok: projectSessionOK(project)
+                            ok: projectSessionOK(project),
+                            buttonTitle: projectButtonTitle(project),
+                            action: {
+                                if project.isRunning {
+                                    model.stopProject(project.name)
+                                } else {
+                                    model.startProject(project.name)
+                                }
+                            }
                         )
                     }
                 }

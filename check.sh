@@ -740,6 +740,36 @@ if [ -n "${BAD_SOURCE}" ]; then
 fi
 ok "プロジェクトの登録は JSON として読む"
 
+PROJECT_START="${ROOT}/scripts/mulmo-project-start"
+PROJECT_STOP="${ROOT}/scripts/mulmo-project-stop"
+
+# 120 セッションの画面出力を保存しない。
+#
+# --remote-control は PTY 越しに TUI をそのまま吐く。ファイルに落とすと
+# **会話が平文でログに残る**。立ったかどうかは控えた pid で分かるので、
+# 画面は捨てる。
+[ -f "${PROJECT_START}" ] || fail "scripts/mulmo-project-start がありません（Issue #152）"
+# 起動行は `\` で折り返しているので、畳んでから見る。畳まないと、次の行に
+# ある `>/dev/null` を見落として「捨てていない」と誤って落ちる。
+START_FOLDED="$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) $0 = $0 nxt; else break } print }' "${PROJECT_START}")"
+printf '%s\n' "${START_FOLDED}" | grep -qE 'script -q /dev/null .*>/dev/null' \
+  || fail "セッションの画面出力を捨てていません。会話が平文でログに残ります（Issue #152 / 120）"
+ok "セッションの画面出力は保存しない"
+
+# 121 止めるのは自分が立てたものだけ。
+#
+# pkill / killall で名前で薙ぐと、同じフォルダで人が手で開いた作業中の
+# セッションまで消える。控えた pid のものだけ落とす。
+BROAD_KILL="$(grep -nE 'pkill|killall' "${PROJECT_START}" "${PROJECT_STOP}" 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${BROAD_KILL}" ]; then
+  printf '%s\n' "${BROAD_KILL}"
+  fail "名前でまとめて止めています。人が開いたセッションまで消えます（Issue #152 / 121）"
+fi
+grep -q 'kill "${PID}"' "${PROJECT_STOP}" \
+  || fail "控えた pid で止めていません（Issue #152 / 121）"
+ok "止めるのは自分が立てたものだけ"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
