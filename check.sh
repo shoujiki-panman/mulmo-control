@@ -727,6 +727,18 @@ TRUST_READ="$(grep -rnE 'hasTrustDialogAccepted["'"'"']' "${ROOT}/scripts" 2>/de
 [ -n "${TRUST_READ}" ] || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #152 / 116）"
 ok "claude の信頼フラグは読むだけ"
 
+# 信頼を確かめてから起動する。順番が逆だと、信頼していないフォルダで
+# 切り離したまま確認ダイアログが出て、誰にも見えないまま止まる。こちらは
+# 「繋ぎました」と言ってしまう。行番号で見る（112 と同じ形）。
+TRUST_LINE="$(grep -n '\${TRUSTED}' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
+# コメントを数えない。冒頭の説明文にも nohup の語が出るので、そのままだと
+# 「起動行が信頼確認より前にある」と誤って落ちる（実際に落ちた）。
+LAUNCH_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*nohup' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
+if [ -z "${TRUST_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ "${TRUST_LINE}" -ge "${LAUNCH_LINE}" ]; then
+  fail "信頼を確かめる前にセッションを立てています。見えない確認で止まります（Issue #152 / 116）"
+fi
+ok "信頼を確かめてから立てる"
+
 # 117 プロジェクトの登録を shell として実行しない。
 #
 # projects.json は利用者が触るデータ。source すると、紛れ込んだ $(...) が
