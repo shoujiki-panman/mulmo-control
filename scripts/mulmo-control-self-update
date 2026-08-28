@@ -13,10 +13,14 @@ if [ "${1:-check}" = "apply" ] && [ "${MULMO_SELF_UPDATE_DETACHED:-0}" != "1" ];
   detached_dir="$(/usr/bin/mktemp -d -t mulmo-control-self-update)"
   detached="${detached_dir}/mulmo-control-self-update"
   /bin/cat "$0" > "${detached}"
-  # 設定パーサも一緒に持っていく。写した先には兄弟スクリプトが無いので、
-  # 連れて行かないと再実行後に設定が読めない（Issue #67）。
+  # 使う兄弟スクリプトは全部一緒に持っていく。写した先には兄弟が無いので、
+  # 連れて行かないものは再実行後に「無い」まま進む（Issue #67）。
+  # ここに足し忘れると、写した先だけ静かに違う答えを出す形になる。
+  # check.sh が「${SCRIPT_DIR}/ で呼んでいるものが全部 cp されているか」を見る。
   /bin/cp "${SCRIPT_DIR}/mulmo-config-get" "${detached_dir}/" 2>/dev/null || true
-  /bin/chmod +x "${detached}" "${detached_dir}/mulmo-config-get" 2>/dev/null || true
+  /bin/cp "${SCRIPT_DIR}/mulmo-version-status" "${detached_dir}/" 2>/dev/null || true
+  /bin/chmod +x "${detached}" "${detached_dir}/mulmo-config-get" \
+    "${detached_dir}/mulmo-version-status" 2>/dev/null || true
   MULMO_SELF_UPDATE_DETACHED=1 exec "${detached}" "$@"
 fi
 # 写した先で走っているときは、SCRIPT_DIR もそちらを指す（パーサを連れてきている）
@@ -82,9 +86,9 @@ if [ -z "${latest_version}" ]; then
   exit 0
 fi
 
-# 手元ビルドはリリースより先に進んでいることがある。その場合も「最新」でよい。
-newer="$(printf '%s\n%s\n' "${installed_version}" "${latest_version}" | /usr/bin/sort -V | /usr/bin/tail -1)"
-if [ "${installed_version}" = "${latest_version}" ] || [ "${newer}" = "${installed_version}" ]; then
+# 版の比べ方は mulmo-version-status が持つ（Issue #67）。検査が同じ1本を
+# 動かして全組み合わせを確かめられるように、ここには書かない。
+if [ "$("${SCRIPT_DIR}/mulmo-version-status" "${installed_version}" "${latest_version}")" = "current" ]; then
   write_status "current" "${latest_version}" "最新版です"
   exit 0
 fi

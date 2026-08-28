@@ -1,0 +1,33 @@
+#!/bin/zsh
+set -u
+
+# 入っている版と上流の最新版から、更新の要否を決める（Issue #67 / 043〜045）。
+#
+#   使い方: mulmo-version-status <installed> <latest>
+#   出力  : current / update / unknown
+#
+# 切り出してあるのは **検査から動かすため**。呼ぶ側（mulmo-control-self-update）は
+# 上流を git ls-remote で読むので、そのままでは網がかけられない。写しを作らず、
+# アプリと検査が同じ1本を読む。
+#
+# **文字列で比べないこと。** 1.0.9 と 1.0.53 を文字列で並べると 1.0.9 が後に
+# なるので、新しい版を入れた人に「更新があります」と言い続けることになる。
+# sort -V（版として並べる）で比べる。
+
+INSTALLED="${1:-}"
+LATEST="${2:-}"
+
+# どちらか読めていないときに current / update を名乗らない。読めていないことは
+# 読めていないと言う（042 と同じ構え）。
+if [ -z "${INSTALLED}" ] || [ -z "${LATEST}" ]; then
+  echo unknown
+  exit 0
+fi
+
+# 手元ビルドはリリースより先に進んでいることがある。その場合も「最新」でよい。
+NEWER="$(printf '%s\n%s\n' "${INSTALLED}" "${LATEST}" | /usr/bin/sort -V | /usr/bin/tail -1)"
+if [ "${INSTALLED}" = "${LATEST}" ] || [ "${NEWER}" = "${INSTALLED}" ]; then
+  echo current
+else
+  echo update
+fi
