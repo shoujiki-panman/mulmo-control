@@ -883,9 +883,12 @@ GUARD_LINE="$(grep -n '^  if another_app_serving; then' "${CODEX_REMOTE}" | cut 
 if [ -z "${GUARD_LINE}" ] || [ -z "${START_CALL}" ]; then
   fail "枠を確かめる前に繋ぎに行っています。409 を回し続けます（Issue #164 / 132）"
 fi
-# 弾かれたまま置くのも同じこと。畳む口があることを見る。
-grep -q 'codex remote-control stop' "${CODEX_REMOTE}" \
-  || fail "弾かれたときにデーモンを畳んでいません（Issue #164 / 132）"
+# 弾かれたまま置くのも同じこと。**弾かれた枝の中で**畳んでいることを見る。
+# ファイルのどこかにあればよい書き方だと、`do_stop` の1行で通ってしまう
+# （実際に通った。116 と同じ穴を3度目）。
+FAIL_BRANCH="$(awk '/errored\*\|\*Error/ { inside = 1 } inside { print } inside && /;;/ { exit }' "${CODEX_REMOTE}")"
+printf '%s\n' "${FAIL_BRANCH}" | grep -q 'codex remote-control stop' \
+  || fail "弾かれた枝でデーモンを畳んでいません。409 を回し続けます（Issue #164 / 132）"
 ok "枠が埋まっているときは繋ぎに行かない"
 
 
