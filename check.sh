@@ -582,9 +582,15 @@ ok "鍵の置き場所は共有定義だけが持つ"
 # 401 は「この blob では利用者を復元できない」の意味。持ち続けると画面は
 # 「繋げる」と言い続けて毎回失敗する。アンインストールで残ると、アプリを
 # 消したあとの Mac に refreshToken が残る。
+# 「捨てる関数がある」だけでは足りない。定義したまま呼ばずにいると、この検査は
+# 通るのに控えは残る（実際に、呼び出しだけ消して通してしまった）。**401 の枝の
+# 中に**捨てる呼び出しがあることを見る。
 for RECONNECT in "${MC_RECONNECT}" "${MT_RECONNECT}"; do
   grep -q 'delete-generic-password' "${RECONNECT}" \
     || fail "$(basename "${RECONNECT}") が期限切れ（401）の鍵を捨てていません（Issue #145 / #154）"
+  BRANCH_401="$(awk '/^[[:space:]]*401\)/ { inside = 1 } inside { print } inside && /;;/ { exit }' "${RECONNECT}")"
+  printf '%s\n' "${BRANCH_401}" | grep -qE 'forget_stash|delete-generic-password' \
+    || fail "$(basename "${RECONNECT}") が 401 の枝で控えを捨てていません。毎回同じ失敗を繰り返します（Issue #145 / #154）"
 done
 # 預かる先は2つある。片方だけ消すと、アプリを消した Mac にもう片方が残る。
 for SERVICE_VAR in MULMO_MC_SESSION_SERVICE MULMO_MT_SESSION_SERVICE; do
