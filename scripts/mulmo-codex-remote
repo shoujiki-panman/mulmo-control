@@ -21,6 +21,19 @@ ERR_FILE="${LOG_DIR}/codex-remote-error.txt"
 
 mkdir -p "${LOG_DIR}"
 
+# 先に誰かが繋いでいないか（Issue #164）。
+#
+# リモートは**マシン名ごとに1つ**しか登録できない。ChatGPT デスクトップアプリは
+# 自前の app-server を抱えていて、動いている間はそれが枠を取っている。こちらが
+# 繋ごうとすると 409 Conflict（`Remote app server already online`）で弾かれ、
+# 12秒おきに再接続を試み続ける（実測で1時間に79回）。
+#
+# 弾かれるのは異常ではない。**既に繋がっている**というだけなので、そう言う。
+another_app_serving() {
+  /bin/ps -ax -o command= 2>/dev/null \
+    | grep -q '^/Applications/ChatGPT.app/.*/codex .* app-server'
+}
+
 daemon_running() {
   # ソケットが無ければ、繋ぎに行くだけ無駄（エラー文が出るだけ）。
   [ -S "${HOME}/.codex/app-server-control/app-server-control.sock" ] || return 1
@@ -43,6 +56,12 @@ do_status() {
     write_status "no-cli" "見つかりません"
     return 0
   fi
+  if another_app_serving; then
+    # 枠は埋まっている。押す先が無いので `繋ぐ` も出さない。
+    /bin/rm -f "${ERR_FILE}"
+    write_status "taken" "別のアプリが繋いでいます"
+    return 0
+  fi
   if ! daemon_running; then
     # 止まっているなら、前に見たエラーはもう関係ない。
     /bin/rm -f "${ERR_FILE}"
@@ -62,6 +81,11 @@ do_start() {
     do_status
     return 1
   fi
+  if another_app_serving; then
+    echo "別のアプリが繋いでいます。こちらから繋ぐ必要はありません" | tee -a "${LOG}"
+    do_status
+    return 0
+  fi
   echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] codex remote start requested" >>"${LOG}"
   RESULT="$(codex remote-control start 2>&1 || true)"
   case "${RESULT}" in
@@ -69,6 +93,9 @@ do_start() {
       # そのまま画面に出すと英語の一文になる。何が起きたかは日本語で言い、
       # 原文はログに残す。
       printf '%s\n' "${RESULT}" >>"${LOG}"
+      # 弾かれたまま置いておくと、12秒おきに再接続を試み続ける（#164）。
+      # 繋がらないと決まった時点で、こちらのデーモンは畳む。
+      codex remote-control stop >>"${LOG}" 2>&1 || true
       printf '%s\n' "接続がエラーです" > "${ERR_FILE}"
       echo "スマホ連携（Codex）は繋がりませんでした" | tee -a "${LOG}"
       do_status

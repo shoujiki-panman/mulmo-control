@@ -49,7 +49,10 @@ struct RemoteHostStatus: Decodable {
 /// 入口の URL が出る。Codex は **Mac に1つのデーモン**で、URL は無く、代わりに
 /// ペアリングコードで端末を繋ぐ。違うのはそこだけなので、状態は1つの形で持つ。
 struct AgentRemote: Decodable {
-    /// online / offline / untrusted / error / no-cli / no-dir
+    /// online / taken / offline / untrusted / error / no-cli / no-dir
+    ///
+    /// taken = 別のアプリが枠を取っている（Issue #164）。繋がってはいるので
+    /// 使えるが、こちらから繋ぐ先は無い。
     let state: String
     /// 画面に出す説明。作るのはスクリプト側（スマホ連携の2行と同じやり方）。
     let detail: String
@@ -71,6 +74,8 @@ struct AgentRemote: Decodable {
 /// おらず、繋がったのに使えなかった。
 func agentRemoteButtonTitle(_ status: AgentRemote) -> String? {
     if status.state == "no-cli" || status.state == "no-dir" { return nil }
+    // 枠が埋まっているときは、押しても弾かれるだけ（#164 で1時間に79回弾かれた）
+    if status.state == "taken" { return nil }
     if status.state == "online" { return status.openURL.isEmpty ? nil : "開く" }
     return "繋ぐ"
 }
@@ -80,5 +85,9 @@ func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
     status.state == "online" || status.state == "error"
 }
 
+/// 使える状態か。`taken` は他所が繋いでいるが、スマホからは使える。
+
 /// 行の左の印を緑にしてよいか。エラーは緑にしない（動いてはいるが使えない）。
-func agentRemoteOK(_ status: AgentRemote) -> Bool { status.state == "online" }
+func agentRemoteOK(_ status: AgentRemote) -> Bool {
+    status.state == "online" || status.state == "taken"
+}

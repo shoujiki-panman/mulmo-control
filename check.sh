@@ -866,6 +866,23 @@ if [ -n "${DETAIL_LONG}" ]; then
 fi
 ok "行に出す説明は、入る長さで書く"
 
+# 132 枠が埋まっているときに、繋ぎに行かない。
+#
+# リモートはマシン名ごとに1つ。ChatGPT アプリが枠を取っている間にこちらから
+# 繋ぐと 409 で弾かれ、**12秒おきに再接続を試み続ける**（実測で1時間に79回）。
+# 押せば直ると思わせたまま、裏で無駄を回すことになる。先に見て、引き返す。
+grep -q 'another_app_serving' "${CODEX_REMOTE}" \
+  || fail "先に繋いでいるアプリを見ていません。409 を回し続けます（Issue #164 / 132）"
+GUARD_LINE="$(grep -n '^  if another_app_serving; then' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
+START_CALL="$(grep -n 'codex remote-control start' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
+if [ -z "${GUARD_LINE}" ] || [ -z "${START_CALL}" ] || [ "${GUARD_LINE}" -ge "${START_CALL}" ]; then
+  fail "枠を確かめる前に繋ぎに行っています。409 を回し続けます（Issue #164 / 132）"
+fi
+# 弾かれたまま置くのも同じこと。畳む口があることを見る。
+grep -q 'codex remote-control stop' "${CODEX_REMOTE}" \
+  || fail "弾かれたときにデーモンを畳んでいません（Issue #164 / 132）"
+ok "枠が埋まっているときは繋ぎに行かない"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
