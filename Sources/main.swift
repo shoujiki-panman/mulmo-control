@@ -129,6 +129,29 @@ private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
 private let updateReasonsPath = "\(logDir)/mulmo-update-reasons.txt"
 private let lastUpdateSummaryPath = "\(logDir)/mulmo-control-last-update-summary.txt"
+/// 直近のリリースの内容（Issue #176）。`scripts/mulmo-release-notes` が控える。
+private let releaseNotesPath = "\(logDir)/mulmo-control-release-notes.md"
+let mulmoControlReleases = "https://github.com/shoujiki-panman/mulmo-control/releases"
+
+/// 更新を勧めておいて中身を見せないのは筋が悪い（Issue #176）。ここが無かった
+/// ので、v1.0.61 で開くアドレスが変わったことの理由と戻し方に、アプリからは
+/// 辿り着けなかった。
+struct ReleaseNotes {
+    let tag: String
+    let date: String
+    let body: String
+}
+
+/// 1行目がタグ、2行目が公開日、残りが本文。控えが無ければ nil。
+/// **取れていないことは失敗ではない。** 呼ぶ側は nil でも GitHub へ飛ぶ口を出す。
+func readReleaseNotes() -> ReleaseNotes? {
+    guard let text = try? String(contentsOfFile: releaseNotesPath, encoding: .utf8) else { return nil }
+    let lines = text.components(separatedBy: "\n")
+    guard lines.count > 2 else { return nil }
+    let body = lines.dropFirst(2).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !lines[0].isEmpty, !body.isEmpty else { return nil }
+    return ReleaseNotes(tag: lines[0], date: lines[1], body: body)
+}
 /// MulmoClaude をどちらのモードで起こすか（Issue #168）。
 ///
 /// `app` は production serve。ビルド済みの画面を配るだけなので Vite は立たず、
@@ -396,6 +419,8 @@ final class ControlModel: ObservableObject {
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
     @Published var lastUpdateReport = readLastUpdateReport()
+    /// 直近のリリースの内容（Issue #176）。ファイルを読むだけ。
+    @Published var releaseNotes = readReleaseNotes()
     /// MulmoClaude をどちらのモードで起こすか（Issue #168）。
     @Published var mcMode = MulmoClaudeMode.current()
 
@@ -571,6 +596,7 @@ final class ControlModel: ObservableObject {
         // 起動より先に読む。ポートも URL もここから決まるので、古いモードの
         // まま判定すると「起動したのに停止中と出る」になる。
         mcMode = MulmoClaudeMode.current()
+        releaseNotes = readReleaseNotes()
         mcRunning = mulmoClaudeIsRunning()
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         // 「入っている」の意味は、スクリプト側と揃える（Issue #107）。
@@ -824,6 +850,7 @@ final class ControlModel: ObservableObject {
         run(updateCommand(tool("mulmoclaude-update-latest")), label: "MulmoClaudeを更新中")
     }
     func openMCRepo() { openURL(mulmoClaudeRepo) }
+    func openReleases() { openURL(mulmoControlReleases) }
 
     func openLogs() {
         NSWorkspace.shared.open(URL(fileURLWithPath: "\(homeDir)/.mulmoterminal/logs"))
@@ -882,6 +909,7 @@ final class ControlModel: ObservableObject {
         ) || rc=$?
         \(tool("mulmo-check-updates"))
         \(releaseSummaryCommand())
+        \(tool("mulmo-release-notes")) || true
         exit $rc
         """
     }
@@ -1551,6 +1579,73 @@ struct TopTabs: View {
     }
 }
 
+/// 直近のリリースの内容を、その場で読めるようにする（Issue #176）。
+///
+/// 更新を勧めておいて中身を見せないのは筋が悪い。v1.0.61 では MulmoClaude の
+/// 開くアドレスが 5173 から 3001 に変わったが、その理由と戻し方はリリース
+/// ノートにしか無く、アプリからは辿り着けなかった。
+///
+/// **控えが無くても口を閉じない。** ネットが無い / GitHub が落ちている / API の
+/// 上限に当たった、のいずれでも「読めません」と言いながら GitHub へ飛ぶボタン
+/// は出す。取得を前提に画面を組むと、繋がらない日にいちばん困る人が行き先を
+/// 失う。
+struct ReleaseNotesButton: View {
+    @ObservedObject var model: ControlModel
+    @State private var showsDetail = false
+
+    var body: some View {
+        Button("リリースノート") {
+            showsDetail.toggle()
+        }
+        .buttonStyle(.plain)
+        .font(AppFont.action)
+        .foregroundStyle(Palette.secondaryText)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
+        .background(Palette.controlFill, in: Capsule())
+        .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let notes = model.releaseNotes {
+                    HStack(spacing: 6) {
+                        Text(notes.tag)
+                            .font(AppFont.section)
+                            .foregroundStyle(Palette.primaryText)
+                        Text(notes.date)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                    ScrollView {
+                        Text(notes.body)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 280)
+                } else {
+                    Text("リリースノート")
+                        .font(AppFont.section)
+                        .foregroundStyle(Palette.primaryText)
+                    Text("まだ読み込めていません。`確認` を押すと取りに行きます。繋がらないときは GitHub で読めます。")
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("GitHub で見る") {
+                    model.openReleases()
+                    showsDetail = false
+                }
+                .buttonStyle(.plain)
+                .font(AppFont.action)
+                .foregroundStyle(Palette.accentText)
+            }
+            .padding(14)
+            .frame(width: 320)
+        }
+    }
+}
+
 struct UpdateToolbar: View {
     @ObservedObject var model: ControlModel
     @State private var skidOffset: CGFloat = 0
@@ -1617,6 +1712,7 @@ struct UpdateToolbar: View {
                     .lineLimit(1)
             }
             Spacer()
+            ReleaseNotesButton(model: model)
             Button("確認", action: model.checkAllUpdates)
                 .buttonStyle(.plain)
                 .font(AppFont.action)

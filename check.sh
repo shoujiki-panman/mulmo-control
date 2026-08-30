@@ -450,6 +450,43 @@ grep -q 'trailingControl:.*ModeButton' "${SWIFT_SRC}" \
   || fail "ボタンの列にモードを描く口が足りません。動作中と停止中の両方に要ります（Issue #170）"
 ok "モードが押さずに分かる"
 
+# ── リリースノート（Issue #176）─────────────────────────────────
+# 更新を勧めておいて中身を見せないのは筋が悪い。ただし取りに行く先はネットの
+# 向こうなので、**取れなかった日に口ごと消えないこと**のほうが大事。
+NOTES_PROBE="$(mktemp -d)"
+NOTES_OUT="${HOME}/Library/Logs/Mulmo Control/mulmo-control-release-notes.md"
+
+# 届かない URL を渡しても、0 で終わること。ここで失敗を返すと、更新の確認
+# そのものが落ちたように見える。
+if ! MULMO_RELEASE_NOTES_API="http://127.0.0.1:9/none" "${ROOT}/scripts/mulmo-release-notes" >/dev/null 2>&1; then
+  rm -rf "${NOTES_PROBE}"
+  fail "取れなかったときに失敗を返しています（Issue #176）"
+fi
+
+# しかも控えを壊さないこと。空で上書きすると、昨日まで読めていたものが消える。
+printf 'v0.0.0\n2026-01-01\nprobe body\n' > "${NOTES_PROBE}/keep.md"
+cp "${NOTES_PROBE}/keep.md" "${NOTES_PROBE}/before.md"
+if [ -f "${NOTES_OUT}" ]; then cp "${NOTES_OUT}" "${NOTES_PROBE}/real.md"; fi
+cp "${NOTES_PROBE}/keep.md" "${NOTES_OUT}"
+MULMO_RELEASE_NOTES_API="http://127.0.0.1:9/none" "${ROOT}/scripts/mulmo-release-notes" >/dev/null 2>&1 || true
+if ! /usr/bin/cmp -s "${NOTES_OUT}" "${NOTES_PROBE}/before.md"; then
+  if [ -f "${NOTES_PROBE}/real.md" ]; then cp "${NOTES_PROBE}/real.md" "${NOTES_OUT}"; fi
+  rm -rf "${NOTES_PROBE}"
+  fail "取れなかったときに控えを壊しています（Issue #176）"
+fi
+if [ -f "${NOTES_PROBE}/real.md" ]; then cp "${NOTES_PROBE}/real.md" "${NOTES_OUT}"; else rm -f "${NOTES_OUT}"; fi
+rm -rf "${NOTES_PROBE}"
+
+# 控えが無くても GitHub へ飛べること。取得を前提に画面を組むと、繋がらない日に
+# いちばん困る人が行き先を失う。
+sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" | grep -q 'model.openReleases()' \
+  || fail "リリースノートから GitHub へ飛ぶ口がありません（Issue #176）"
+sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" | /usr/bin/awk '/} else {/,/^        }/' | grep -q 'Text(' \
+  || fail "控えが無いときの表示がありません。飛ぶ口ごと消えます（Issue #176）"
+grep -q 'ReleaseNotesButton(model: model)' "${ROOT}/Sources/main.swift" \
+  || fail "リリースノートを開く口が更新の帯にありません（Issue #176）"
+ok "リリースノートが読める（取れない日も飛べる）"
+
 # ── 止めたら止まること（Issue #172）──────────────────────────────
 # ポートを持っているプロセスだけ落としても、MulmoClaude は止まらない。親の
 # `dev-server.mjs` は**落ちた子を起こし直すのが仕事**なので、すぐ戻ってくる。
