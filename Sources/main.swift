@@ -1901,13 +1901,7 @@ struct ProjectsPanel: View {
             header
 
             if model.projects.projects.isEmpty {
-                SetupRow(
-                    title: "登録がありません",
-                    detail: model.projects.state == "no-cli"
-                        ? "claude が見つかりません"
-                        : "フォルダを登録すると、スマホから使えるセッションを立てられます",
-                    ok: false
-                )
+                ProjectsEmptyState(state: model.projects.state)
             } else {
                 VStack(spacing: 7) {
                     ForEach(Array(model.projects.projects.enumerated()), id: \.element.path) { index, project in
@@ -1955,6 +1949,33 @@ struct ProjectsPanel: View {
                 .buttonStyle(.plain)
                 .font(AppFont.small)
                 .foregroundStyle(Palette.accentText)
+        }
+    }
+}
+
+/// 何も登録していないときに、この欄が何をするものかを説明する（Issue #156）。
+///
+/// ここは `SetupRow` を使わない。あれは「短い状態を1行で言う」ための部品で、
+/// `lineLimit(1)` と真ん中を潰す `truncationMode(.middle)` が入っている。
+/// 状態にはそれでよいが、説明文を入れると
+/// 「フォルダを登録する…ョンを立てられます」になって読めない（実際になった）。
+///
+/// この欄が何をするものかは、この文にしか書いていない。潰すと、何の機能か
+/// 分からないまま終わる。
+struct ProjectsEmptyState: View {
+    let state: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // claude が無いのは状態なので、行のまま出す。押せば直るものでは
+            // ないことを、下の説明と混ぜない。
+            if state == "no-cli" {
+                SetupRow(title: "Claude Code", detail: "見つかりません", ok: false)
+            }
+            Text("フォルダを登録すると、そのフォルダで動くセッションを立てられます。立てたセッションは、外出先のスマホから続きを操作できます。")
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
