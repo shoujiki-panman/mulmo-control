@@ -394,13 +394,30 @@ case ",$(mode_ports app)," in
   *,5173,*) fail "通常モードが 5173 を待っています。production serve では Vite は立ちません（Issue #168）" ;;
 esac
 
-# 設定が無い / 壊れているときは開発モード。既定を通常モードに倒すと、
-# いま使っている人の開くアドレスが黙って変わる。
+# 設定が無い / 壊れているときは通常モード（Issue #174）。#168 では逆向きに
+# 見ていた。開発者モードを選んだ人は一人もおらず、守っていたのは選択ではなく
+# 事故だったので、向きを変えた。自分で選んだ人は設定ファイルを持つので、
+# ここは「選んでいない人に何が起きるか」を見ている。
 printf 'app; rm -rf /\n' > "${MODE_PROBE}/mode"
+[ "$(MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-mode")" = "app" ] \
+  || fail "知らない値を既定へ倒していません（Issue #174 / #67）"
+[ "$(MULMO_MODE_FILE="${MODE_PROBE}/none" "${ROOT}/scripts/mulmoclaude-mode")" = "app" ] \
+  || fail "設定が無いときの既定が通常モードではありません（Issue #174）"
+printf 'dev\n' > "${MODE_PROBE}/mode"
 [ "$(MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-mode")" = "dev" ] \
-  || fail "知らない値を既定へ倒していません（Issue #168 / #67）"
-[ "$(MULMO_MODE_FILE="${MODE_PROBE}/none" "${ROOT}/scripts/mulmoclaude-mode")" = "dev" ] \
-  || fail "設定が無いときの既定が開発モードではありません（Issue #168）"
+  || fail "自分で開発モードを選んだ人の設定が効いていません（Issue #174）"
+
+# 既定を変えたことを、一度は知らせること。黙って変えると、開くアドレスが
+# 変わった理由が誰にも分からない — 手がかりが無かったこと自体が #174 の中身。
+grep -q 'func announceModeDefaultIfNeeded' "${ROOT}/Sources/main.swift" \
+  || fail "既定が変わったことを知らせる口がありません（Issue #174）"
+# 定義そのものに当たらない綴りで探す。`announceModeDefaultIfNeeded()` だと
+# `private func announceModeDefaultIfNeeded() {` に当たり、呼び出しを消しても
+# 通ってしまう（実際に一度そう書いて素通りした）。
+grep -q 'self\.announceModeDefaultIfNeeded()' "${ROOT}/Sources/main.swift" \
+  || fail "知らせる口を呼んでいません（Issue #174）"
+sed -n '/func announceModeDefaultIfNeeded/,/^    }/p' "${ROOT}/Sources/main.swift" | grep -q 'MulmoClaudeMode.chosen' \
+  || fail "自分で選んだ人にも知らせようとしています（Issue #174）"
 
 # 通常モードの起動が production serve になっていること。どちらか一方でも
 # 欠けると、express は画面を配らないので、起動はするのに真っ白になる。

@@ -139,7 +139,10 @@ private let lastUpdateSummaryPath = "\(logDir)/mulmo-control-last-update-summary
 /// 定義どおりの動作」として NOT_PLANNED）。どちらで起こすかを選べるように
 /// するのがここ。
 ///
-/// 既定は `dev`。いま使っている人の挙動を変えないため。
+/// 既定は `app`（Issue #174）。#168 では `dev` にした — 「いま使っている人の
+/// 挙動を変えない」ためだったが、**開発者モードを選んだ人は一人もいなかった。**
+/// 他に道が無かっただけで、しかも気づく手がかりが1つも無い。守っていたのは
+/// 選択ではなく事故だった。
 ///
 /// 置き場所は app-info.env ではない。install.sh はあのファイルを更新のたびに
 /// 丸ごと書き直すので（install.sh:132）、置くと更新のたびにモードが戻る。
@@ -156,10 +159,13 @@ enum MulmoClaudeMode: String {
     static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/mulmoclaude-mode"
 
     static func current() -> MulmoClaudeMode {
-        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return .dev }
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return .app }
         let word = text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces) ?? ""
-        return MulmoClaudeMode(rawValue: word) ?? .dev
+        return MulmoClaudeMode(rawValue: word) ?? .app
     }
+
+    /// 自分で選んだことがあるか。既定が変わったことを知らせる相手を決めるのに使う。
+    static var chosen: Bool { FileManager.default.fileExists(atPath: filePath) }
 
     /// 通常モードでは Vite が立たないので 5173 は開かない。
     var ports: [Int] { self == .app ? [3001] : [5173, 3001] }
@@ -1196,6 +1202,7 @@ final class ControlModel: ObservableObject {
             Task { @MainActor in
                 self.enableLaunchAtLoginOnFirstRunIfNeeded(granted: granted)
                 self.announceFirstLaunchIfNeeded(granted: granted)
+                self.announceModeDefaultIfNeeded()
             }
         }
     }
@@ -1249,6 +1256,30 @@ final class ControlModel: ObservableObject {
     /// 印は UserDefaults に置く。issue には app-info.env に置く案が書かれて
     /// いたが、あれは install.sh が毎回書き直すので、更新のたびに通知が
     /// 再発してしまう。
+    /// 既定が通常モードに変わったことを、一度だけ知らせる（Issue #174）。
+    ///
+    /// 相手は「自分でモードを選んだことがない人」= 設定ファイルを持たない人。
+    /// 黙って変えると、開くアドレスが 3001 に変わった理由が誰にも分からない。
+    /// **気づく手がかりが1つも無かったこと自体が #174 の中身**なので、ここで
+    /// 黙るのは同じ過ちを繰り返すことになる。
+    ///
+    /// 印は UserDefaults。`app-info.env` は install.sh が更新のたびに書き直すので、
+    /// そこに置くと更新のたびに再発する（初回アナウンスと同じ理由）。
+    private func announceModeDefaultIfNeeded() {
+        let key = "mulmo-control.mode-default-announced"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        // 自分で選んでいる人には、何も変わっていない。
+        guard !MulmoClaudeMode.chosen else { return }
+        notice = NoticeMessage(
+            title: "MulmoClaude の起動のしかたが変わりました",
+            text: "これまでは開発者向けのモードで起動していました。作業中に画面が勝手に更新され、"
+                + "入力中の文字や貼った画像が消えることがあったのは、そのためです。"
+                + "これからは通常モードで起動します。開くアドレスは 3001 に変わります。"
+                + "元に戻すときは、MulmoClaude の「モード」から。"
+        )
+    }
+
     private func announceFirstLaunchIfNeeded(granted: Bool) {
         let key = "mulmo-control.first-launch-announced"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
