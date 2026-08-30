@@ -702,6 +702,180 @@ grep -q 'defaults read "${APP_PLIST}" CFBundleShortVersionString' "${SELF_UPDATE
   || fail "入っている版を Info.plist から読んでいません（Issue #31 / 041）"
 ok "入っている版は Info.plist から読む"
 
+# ── プロジェクトのセッション ────────────────────────────────────
+# SECURITY.md の L 節（116〜125）。Issue #152。
+step "プロジェクトのセッション"
+
+PROJECT_STATUS="${ROOT}/scripts/mulmo-project-status"
+[ -x "${PROJECT_STATUS}" ] || fail "scripts/mulmo-project-status がありません（Issue #152）"
+
+# 116 claude の信頼フラグを、こちらから書かない。
+#
+# ディレクトリの信頼は ~/.claude.json の hasTrustDialogAccepted に入っている。
+# ここを立てれば初回の確認を飛ばせるが、**人間の同意を機械が偽造する形**に
+# なる。読むのはよい（押す前に「確認が要ります」と伝えるため）。書かない。
+TRUST_WRITE="$(grep -rnE 'claude\.json' "${ROOT}/scripts" "${ROOT}/Sources" 2>/dev/null \
+  | grep -E '>|tee|dump|open\([^)]*[\"'"'"']w' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${TRUST_WRITE}" ]; then
+  printf '%s\n' "${TRUST_WRITE}"
+  fail "claude の信頼フラグを書こうとしています。同意は人が踏むものです（Issue #152 / 116）"
+fi
+# 部分一致だと、末尾に1文字足すだけの改名を見逃す（実際に見逃した）。
+# 使われている形（クォートか括弧で閉じる）まで見る。
+TRUST_READ="$(grep -rnE 'hasTrustDialogAccepted["'"'"']' "${ROOT}/scripts" 2>/dev/null || true)"
+[ -n "${TRUST_READ}" ] || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #152 / 116）"
+ok "claude の信頼フラグは読むだけ"
+
+# 信頼を確かめてから起動する。順番が逆だと、信頼していないフォルダで
+# 切り離したまま確認ダイアログが出て、誰にも見えないまま止まる。こちらは
+# 「繋ぎました」と言ってしまう。行番号で見る（112 と同じ形）。
+TRUST_LINE="$(grep -n '\${TRUSTED}' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
+# コメントを数えない。冒頭の説明文にも nohup の語が出るので、そのままだと
+# 「起動行が信頼確認より前にある」と誤って落ちる（実際に落ちた）。
+LAUNCH_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*nohup' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
+if [ -z "${TRUST_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ "${TRUST_LINE}" -ge "${LAUNCH_LINE}" ]; then
+  fail "信頼を確かめる前にセッションを立てています。見えない確認で止まります（Issue #152 / 116）"
+fi
+ok "信頼を確かめてから立てる"
+
+# 117 プロジェクトの登録を shell として実行しない。
+#
+# projects.json は利用者が触るデータ。source すると、紛れ込んだ $(...) が
+# 読んだ側の権限で走る（#67 と同じ穴）。JSON として読むこと。
+grep -qE 'json\.load' "${PROJECT_STATUS}" \
+  || fail "projects.json を JSON として読んでいません（Issue #152 / #67）"
+BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${PROJECT_STATUS}" || true)"
+if [ -n "${BAD_SOURCE}" ]; then
+  printf '%s\n' "${BAD_SOURCE}"
+  fail "プロジェクトの登録を shell として実行しています（Issue #152 / #67）"
+fi
+ok "プロジェクトの登録は JSON として読む"
+
+PROJECT_START="${ROOT}/scripts/mulmo-project-start"
+PROJECT_STOP="${ROOT}/scripts/mulmo-project-stop"
+
+# 120 セッションの画面出力を保存しない。
+#
+# --remote-control は PTY 越しに TUI をそのまま吐く。ファイルに落とすと
+# **会話が平文でログに残る**。立ったかどうかは控えた pid で分かるので、
+# 画面は捨てる。
+[ -f "${PROJECT_START}" ] || fail "scripts/mulmo-project-start がありません（Issue #152）"
+# 起動行は `\` で折り返しているので、畳んでから見る。畳まないと、次の行に
+# ある `>/dev/null` を見落として「捨てていない」と誤って落ちる。
+START_FOLDED="$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) $0 = $0 nxt; else break } print }' "${PROJECT_START}")"
+printf '%s\n' "${START_FOLDED}" | grep -qE 'script -q /dev/null .*>/dev/null' \
+  || fail "セッションの画面出力を捨てていません。会話が平文でログに残ります（Issue #152 / 120）"
+ok "セッションの画面出力は保存しない"
+
+# 121 止めるのは自分が立てたものだけ。
+#
+# pkill / killall で名前で薙ぐと、同じフォルダで人が手で開いた作業中の
+# セッションまで消える。控えた pid のものだけ落とす。
+BROAD_KILL="$(grep -nE 'pkill|killall' "${PROJECT_START}" "${PROJECT_STOP}" 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${BROAD_KILL}" ]; then
+  printf '%s\n' "${BROAD_KILL}"
+  fail "名前でまとめて止めています。人が開いたセッションまで消えます（Issue #152 / 121）"
+fi
+grep -q 'kill "${PID}"' "${PROJECT_STOP}" \
+  || fail "控えた pid で止めていません（Issue #152 / 121）"
+ok "止めるのは自分が立てたものだけ"
+
+PROJECT_ADD="${ROOT}/scripts/mulmo-project-add"
+PROJECT_REMOVE="${ROOT}/scripts/mulmo-project-remove"
+PROJECT_MOVE="${ROOT}/scripts/mulmo-project-move"
+for W in "${PROJECT_ADD}" "${PROJECT_REMOVE}" "${PROJECT_MOVE}"; do
+  [ -x "${W}" ] || fail "$(basename "${W}") がありません（Issue #152）"
+  # 117 は読む側だけの話ではない。書く側が source すれば同じ穴が開く。
+  grep -qE 'json\.load' "${W}" \
+    || fail "$(basename "${W}") が projects.json を JSON として読んでいません（Issue #152 / #67）"
+  BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${W}" || true)"
+  if [ -n "${BAD_SOURCE}" ]; then
+    printf '%s\n' "${BAD_SOURCE}"
+    fail "$(basename "${W}") が登録を shell として実行しています（Issue #152 / #67）"
+  fi
+  # 124 書き換えは一時ファイル経由で入れ替える。開いて書いている途中で落ちると、
+  # 登録が半分だけの JSON になり、次に読んだ側は全部を捨てる。
+  grep -q 'os\.replace' "${W}" \
+    || fail "$(basename "${W}") が登録を直接書いています。途中で落ちると全部消えます（Issue #152 / 124）"
+done
+ok "登録を書き換える側も JSON として読み、入れ替えで書く"
+
+# 123 はずす前に止める。
+#
+# 一覧から先に消すと、動いているセッションを止める口がどこにも無くなる。
+# 次にログアウトするまで残り続け、こちらからは見えない。行番号で見る。
+STOP_CALL_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*mulmo-project-stop' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
+UNREGISTER_LINE="$(grep -n 'os\.replace' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
+if [ -z "${STOP_CALL_LINE}" ] || [ -z "${UNREGISTER_LINE}" ] || [ "${STOP_CALL_LINE}" -ge "${UNREGISTER_LINE}" ]; then
+  fail "はずす前に止めていません。止める口の無いセッションが残ります（Issue #152 / 123）"
+fi
+ok "はずす前に止める"
+
+# ここから先は実際に走らせる。名前が重ならないことは、grep では確かめられない。
+PRJ="$(mktemp -d "${TMPDIR:-/tmp}/mulmo projects XXXXXX")"
+PRJ_CONFIG="${PRJ}/Library/Application Support/Mulmo Control/projects.json"
+mkdir -p "${PRJ}/github/mulmoclaude" "${PRJ}/work/mulmoclaude"
+prj_names() {
+  CONFIG="${PRJ_CONFIG}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["CONFIG"], encoding="utf-8") as handle:
+        print(" ".join(e["name"] for e in json.load(handle)["projects"]))
+except (OSError, ValueError, KeyError, TypeError):
+    print("")
+'
+}
+
+# 122 名前は重ねない。**名前は控えの鍵**で、pid の控えとセッション名がこれで
+# 決まる。同じ名前を2つ登録すると、片方を止めたときにもう片方も止まる。
+# フォルダ名が同じ2つ（github/mulmoclaude と work/mulmoclaude）は普通にある。
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
+PRJ_NAMES="$(prj_names)"
+case "${PRJ_NAMES}" in
+  *" "*) : ;;
+  *) fail "同じフォルダ名の2つを登録できていません: ${PRJ_NAMES}（Issue #152 / 122）" ;;
+esac
+[ "$(printf '%s\n' "${PRJ_NAMES}" | /usr/bin/tr ' ' '\n' | sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = "2" ] \
+  || fail "登録した名前が重なっています: ${PRJ_NAMES}（Issue #152 / 122）"
+ok "フォルダ名が同じでも、名前は重ならない"
+
+# 同じ場所を二度登録しない。押し間違えるたびに増えると、どれが本物か分からなくなる。
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_NAMES}" ] \
+  || fail "同じ場所が二重に登録されました: $(prj_names)（Issue #152）"
+ok "同じ場所は二度登録しない"
+
+# 並び替えは入れ替えるだけ。端で押しても、消えたり増えたりしない。
+PRJ_SECOND="${PRJ_NAMES#* }"
+HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
+  || fail "並び替えが効いていません: $(prj_names)（Issue #152）"
+HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
+  || fail "端で押したら並びが変わりました: $(prj_names)（Issue #152）"
+ok "並び替えは入れ替えるだけ"
+
+# 125 読めない登録の上に書かない。
+#
+# 手で直している最中かもしれない。読めないからと空から作り直すと、
+# 他のプロジェクトの登録ごと消える。読めないと言って、そのまま残すこと。
+printf 'これは JSON ではない\n' > "${PRJ_CONFIG}"
+PRJ_BEFORE="$(/bin/cat "${PRJ_CONFIG}")"
+set +e
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
+PRJ_RC=$?
+set -e
+[ "${PRJ_RC}" -ne 0 ] || fail "読めない登録なのに、成功したと言っています（Issue #152 / 125）"
+[ "$(/bin/cat "${PRJ_CONFIG}")" = "${PRJ_BEFORE}" ] \
+  || fail "読めない登録を上書きしました。他の登録ごと消えます（Issue #152 / 125）"
+ok "読めない登録の上には書かない"
+
+rm -rf "${PRJ}"
+
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
