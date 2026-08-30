@@ -762,9 +762,14 @@ grep -qE 'hasTrustDialogAccepted["'"'"']' "${CLAUDE_REMOTE}" \
   || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #160 / 116）"
 # 信頼を確かめてから起動する。順番が逆だと、信頼していないフォルダで切り離した
 # まま確認ダイアログが出て、誰にも見えないまま止まる。コメント行は数えない。
-TRUST_LINE="$(grep -n 'trusted)" != "yes"' "${CLAUDE_REMOTE}" | head -1 | cut -d: -f1)"
+# 確認は2箇所にある（状態を見るときと、立てるとき）。**立てる側**が消えたのを
+# 見つけたいので、`do_start` の中にあることまで見る。ファイルのどこかに1つ
+# あればよい書き方だと、状態側が残っているだけで通ってしまう（実際に通った）。
+START_LINE="$(grep -n '^do_start()' "${CLAUDE_REMOTE}" | head -1 | cut -d: -f1)"
 LAUNCH_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*nohup /usr/bin/script' "${CLAUDE_REMOTE}" | head -1 | cut -d: -f1)"
-if [ -z "${TRUST_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ "${TRUST_LINE}" -ge "${LAUNCH_LINE}" ]; then
+TRUST_LINE="$(grep -n 'trusted)" != "yes"' "${CLAUDE_REMOTE}" | cut -d: -f1 \
+  | awk -v lo="${START_LINE:-0}" -v hi="${LAUNCH_LINE:-0}" '$1 > lo && $1 < hi { print $1; exit }')"
+if [ -z "${START_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ -z "${TRUST_LINE}" ]; then
   fail "信頼を確かめる前にセッションを立てています。見えない確認で止まります（Issue #160 / 116）"
 fi
 ok "claude の信頼フラグは読むだけ・確かめてから立てる"
