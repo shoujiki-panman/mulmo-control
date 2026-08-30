@@ -176,6 +176,13 @@ enum MulmoClaudeMode: String {
             ? "画面は作り済みのものを配ります。作業中に勝手にリロードされません"
             : "保存のたびに画面が作り直されます。MulmoClaude 自体を開発する人向け"
     }
+
+    /// パネルの1行目に添える一言（Issue #170）。押さずに、いまどちらで
+    /// 動いているかが分かる必要がある — 画面が勝手にリロードされるかどうかが
+    /// ここで決まっているため。
+    var note: String {
+        self == .app ? "作業中にリロードされません" : "保存すると画面が作り直されます"
+    }
 }
 
 /// 書くのは1語だけ。読む側（`scripts/mulmoclaude-mode`）が知らない語を既定へ
@@ -1762,6 +1769,17 @@ struct NoticeCard: View {
     }
 }
 
+/// MulmoClaude のパネル1行目（Issue #170）。
+///
+/// 「動作中・ブラウザで使えます」だけでは、**いまどちらのモードで動いて
+/// いるか**が分からない。作業中に画面が勝手にリロードされるかどうかがそこで
+/// 決まっているので、押さずに見える場所はここしかない。
+@MainActor func mulmoClaudeSubtitle(_ model: ControlModel) -> String {
+    guard model.mcInstalled else { return "未インストール" }
+    if model.mcRunning { return "動作中・\(model.mcMode.label)（\(model.mcMode.note)）" }
+    return "停止中・次は\(model.mcMode.label)で起動します"
+}
+
 struct OperateView: View {
     @ObservedObject var model: ControlModel
 
@@ -1784,7 +1802,7 @@ struct OperateView: View {
             }
             ServicePanel(
                 title: "MulmoClaude",
-                subtitle: model.mcInstalled ? (model.mcRunning ? "動作中・ブラウザで使えます" : "停止中") : "未インストール",
+                subtitle: mulmoClaudeSubtitle(model),
                 isRunning: model.mcRunning,
                 isAvailable: model.mcInstalled,
                 accent: Palette.accent,
@@ -1793,11 +1811,11 @@ struct OperateView: View {
                 openAction: model.openMC,
                 startAction: model.mcInstalled ? model.startMC : model.openMCRepo,
                 stopAction: model.stopMC,
-                restartAction: model.restartMC
+                restartAction: model.restartMC,
+                trailingControl: { model.mcInstalled ? AnyView(ModeButton(model: model)) : AnyView(EmptyView()) }
             ) {
                 if model.mcInstalled {
                     LogDisclosure(action: model.openMCLogs)
-                    ModeDisclosure(model: model)
                 } else {
                     Button("入手", action: model.openMCRepo)
                 }
@@ -1938,27 +1956,22 @@ struct LogDisclosure: View {
     }
 }
 
-/// MulmoClaude をどちらのモードで起こすかの切り替え（Issue #168）。
+/// MulmoClaude をどちらのモードで起こすかの切り替え（Issue #168 / #170）。
 ///
-/// ログと同じ「小さい行 + ポップオーバー」の形にしてある。常時見えるのは
-/// いまのモード名だけで、押すと違いの説明が出る。切り替えは滅多にしないが、
-/// **いまどちらで動いているかは常に見えている必要がある** — 画面が勝手に
-/// リロードされる／されないの差がここで決まるため。
-struct ModeDisclosure: View {
+/// 最初はログと同じ「小さいテキストの行」にしたが、**入れた本人以外は
+/// 見つけられなかった。** 状態の表示も兼ねていたので、押せる物に読めない。
+/// ログは押さなくても困らないもの、モードは押さなくても分かる必要がある
+/// もので、性質が違う。状態は panel の1行目へ移し、切り替えは開く / 再起動 /
+/// 停止と同じボタンの列に置く。
+struct ModeButton: View {
     @ObservedObject var model: ControlModel
     @State private var showsDetail = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text(model.mcMode.label)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold, design: .default))
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
+        CapsuleButton(title: "モード", systemImage: "arrow.left.arrow.right", style: .quiet) {
             showsDetail.toggle()
         }
-        .popover(isPresented: $showsDetail, arrowEdge: .trailing) {
+        .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("起動のしかた")
                     .font(AppFont.section)
@@ -2387,6 +2400,10 @@ struct ServicePanel<Extra: View>: View {
     let startAction: () -> Void
     let stopAction: () -> Void
     let restartAction: () -> Void
+    /// 動いているときのボタン列に足すもの（Issue #170）。押して選ぶものは、
+    /// 下のテキストの行ではなくここに置く。あちらはログ用で、押さなくても
+    /// 困らないものの置き場所。
+    var trailingControl: () -> AnyView = { AnyView(EmptyView()) }
     @ViewBuilder let extra: () -> Extra
 
     var body: some View {
@@ -2422,6 +2439,7 @@ struct ServicePanel<Extra: View>: View {
                         .padding(.horizontal, 13)
                         .padding(.vertical, 7)
                         .background(Palette.controlFill, in: Capsule())
+                        trailingControl()
                     } else {
                         // 停止中に出るボタンが「開く」だけで、起動できるとは読めなかった
                         // （#139）。`startAction` はこの枝が空だったせいで未インストール
@@ -2429,6 +2447,7 @@ struct ServicePanel<Extra: View>: View {
                         // `openAction` も止まっていれば起動してから開くが、それが分かるのは
                         // 押したあとで、画面を見て分かる必要がある。
                         CapsuleButton(title: inactiveTitle, systemImage: inactiveSystemImage, style: .quiet, action: startAction)
+                        trailingControl()
                     }
                 }
             } else {
