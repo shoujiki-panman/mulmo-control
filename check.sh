@@ -703,7 +703,7 @@ grep -q 'defaults read "${APP_PLIST}" CFBundleShortVersionString' "${SELF_UPDATE
 ok "入っている版は Info.plist から読む"
 
 # ── プロジェクトのセッション ────────────────────────────────────
-# SECURITY.md の L 節（116・117）。Issue #152。
+# SECURITY.md の L 節（116〜125）。Issue #152。
 step "プロジェクトのセッション"
 
 PROJECT_STATUS="${ROOT}/scripts/mulmo-project-status"
@@ -781,6 +781,100 @@ fi
 grep -q 'kill "${PID}"' "${PROJECT_STOP}" \
   || fail "控えた pid で止めていません（Issue #152 / 121）"
 ok "止めるのは自分が立てたものだけ"
+
+PROJECT_ADD="${ROOT}/scripts/mulmo-project-add"
+PROJECT_REMOVE="${ROOT}/scripts/mulmo-project-remove"
+PROJECT_MOVE="${ROOT}/scripts/mulmo-project-move"
+for W in "${PROJECT_ADD}" "${PROJECT_REMOVE}" "${PROJECT_MOVE}"; do
+  [ -x "${W}" ] || fail "$(basename "${W}") がありません（Issue #152）"
+  # 117 は読む側だけの話ではない。書く側が source すれば同じ穴が開く。
+  grep -qE 'json\.load' "${W}" \
+    || fail "$(basename "${W}") が projects.json を JSON として読んでいません（Issue #152 / #67）"
+  BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${W}" || true)"
+  if [ -n "${BAD_SOURCE}" ]; then
+    printf '%s\n' "${BAD_SOURCE}"
+    fail "$(basename "${W}") が登録を shell として実行しています（Issue #152 / #67）"
+  fi
+  # 124 書き換えは一時ファイル経由で入れ替える。開いて書いている途中で落ちると、
+  # 登録が半分だけの JSON になり、次に読んだ側は全部を捨てる。
+  grep -q 'os\.replace' "${W}" \
+    || fail "$(basename "${W}") が登録を直接書いています。途中で落ちると全部消えます（Issue #152 / 124）"
+done
+ok "登録を書き換える側も JSON として読み、入れ替えで書く"
+
+# 123 はずす前に止める。
+#
+# 一覧から先に消すと、動いているセッションを止める口がどこにも無くなる。
+# 次にログアウトするまで残り続け、こちらからは見えない。行番号で見る。
+STOP_CALL_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*mulmo-project-stop' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
+UNREGISTER_LINE="$(grep -n 'os\.replace' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
+if [ -z "${STOP_CALL_LINE}" ] || [ -z "${UNREGISTER_LINE}" ] || [ "${STOP_CALL_LINE}" -ge "${UNREGISTER_LINE}" ]; then
+  fail "はずす前に止めていません。止める口の無いセッションが残ります（Issue #152 / 123）"
+fi
+ok "はずす前に止める"
+
+# ここから先は実際に走らせる。名前が重ならないことは、grep では確かめられない。
+PRJ="$(mktemp -d "${TMPDIR:-/tmp}/mulmo projects XXXXXX")"
+PRJ_CONFIG="${PRJ}/Library/Application Support/Mulmo Control/projects.json"
+mkdir -p "${PRJ}/github/mulmoclaude" "${PRJ}/work/mulmoclaude"
+prj_names() {
+  CONFIG="${PRJ_CONFIG}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["CONFIG"], encoding="utf-8") as handle:
+        print(" ".join(e["name"] for e in json.load(handle)["projects"]))
+except (OSError, ValueError, KeyError, TypeError):
+    print("")
+'
+}
+
+# 122 名前は重ねない。**名前は控えの鍵**で、pid の控えとセッション名がこれで
+# 決まる。同じ名前を2つ登録すると、片方を止めたときにもう片方も止まる。
+# フォルダ名が同じ2つ（github/mulmoclaude と work/mulmoclaude）は普通にある。
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
+PRJ_NAMES="$(prj_names)"
+case "${PRJ_NAMES}" in
+  *" "*) : ;;
+  *) fail "同じフォルダ名の2つを登録できていません: ${PRJ_NAMES}（Issue #152 / 122）" ;;
+esac
+[ "$(printf '%s\n' "${PRJ_NAMES}" | /usr/bin/tr ' ' '\n' | sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = "2" ] \
+  || fail "登録した名前が重なっています: ${PRJ_NAMES}（Issue #152 / 122）"
+ok "フォルダ名が同じでも、名前は重ならない"
+
+# 同じ場所を二度登録しない。押し間違えるたびに増えると、どれが本物か分からなくなる。
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_NAMES}" ] \
+  || fail "同じ場所が二重に登録されました: $(prj_names)（Issue #152）"
+ok "同じ場所は二度登録しない"
+
+# 並び替えは入れ替えるだけ。端で押しても、消えたり増えたりしない。
+PRJ_SECOND="${PRJ_NAMES#* }"
+HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
+  || fail "並び替えが効いていません: $(prj_names)（Issue #152）"
+HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
+[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
+  || fail "端で押したら並びが変わりました: $(prj_names)（Issue #152）"
+ok "並び替えは入れ替えるだけ"
+
+# 125 読めない登録の上に書かない。
+#
+# 手で直している最中かもしれない。読めないからと空から作り直すと、
+# 他のプロジェクトの登録ごと消える。読めないと言って、そのまま残すこと。
+printf 'これは JSON ではない\n' > "${PRJ_CONFIG}"
+PRJ_BEFORE="$(/bin/cat "${PRJ_CONFIG}")"
+set +e
+HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
+PRJ_RC=$?
+set -e
+[ "${PRJ_RC}" -ne 0 ] || fail "読めない登録なのに、成功したと言っています（Issue #152 / 125）"
+[ "$(/bin/cat "${PRJ_CONFIG}")" = "${PRJ_BEFORE}" ] \
+  || fail "読めない登録を上書きしました。他の登録ごと消えます（Issue #152 / 125）"
+ok "読めない登録の上には書かない"
+
+rm -rf "${PRJ}"
+
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────

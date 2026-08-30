@@ -1,0 +1,96 @@
+#!/bin/zsh
+set -u
+
+# 並び順を変える（Issue #152）。
+#
+#   使い方: mulmo-project-move <プロジェクト名> up|down
+#
+# 一覧はこの順で出る。よく使うものを上に置けるようにするだけで、
+# 起動しているものには何も触らない。
+#
+# projects.json は JSON として読み、同じフォルダの一時ファイル経由で入れ替える。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
+CONFIG="${APP_SUPPORT}/projects.json"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/projects.log"
+
+NAME="${1:-}"
+WAY="${2:-}"
+mkdir -p "${LOG_DIR}"
+
+if [ -z "${NAME}" ] || { [ "${WAY}" != "up" ] && [ "${WAY}" != "down" ]; }; then
+  echo "使い方: mulmo-project-move <プロジェクト名> up|down" | tee -a "${LOG}"
+  exit 1
+fi
+
+RESULT="$(NAME="${NAME}" WAY="${WAY}" CONFIG="${CONFIG}" /usr/bin/python3 <<'PY'
+import json, os, tempfile
+
+config_path = os.environ["CONFIG"]
+if not os.path.exists(config_path):
+    print("no")
+    raise SystemExit(0)
+try:
+    with open(config_path, encoding="utf-8") as handle:
+        config = json.load(handle)
+except (OSError, ValueError):
+    config = None
+# 読めない登録の上に書かない（add / remove と同じ）。
+if not isinstance(config, dict) or not isinstance(config.get("projects"), list):
+    print("broken")
+    raise SystemExit(0)
+
+entries = config["projects"]
+target = os.environ["NAME"]
+index = next((i for i, e in enumerate(entries)
+              if isinstance(e, dict) and e.get("name") == target), None)
+if index is None:
+    print("no")
+    raise SystemExit(0)
+
+swap = index - 1 if os.environ["WAY"] == "up" else index + 1
+if swap < 0 or swap >= len(entries):
+    # 端まで来ている。動かせないだけで、失敗ではない。
+    print("edge")
+    raise SystemExit(0)
+
+entries[index], entries[swap] = entries[swap], entries[index]
+config["projects"] = entries
+directory = os.path.dirname(config_path)
+handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=directory, delete=False)
+try:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+    handle.close()
+    os.replace(handle.name, config_path)
+except BaseException:
+    os.unlink(handle.name)
+    raise
+print("moved")
+PY
+)" || {
+  echo "並び替えに失敗しました" | tee -a "${LOG}"
+  exit 1
+}
+
+case "${RESULT}" in
+  moved)
+    echo "「${NAME}」を動かしました" >>"${LOG}"
+    ;;
+  edge)
+    echo "「${NAME}」はもう端です" >>"${LOG}"
+    ;;
+  broken)
+    echo "登録の読み取りに失敗しました: ${CONFIG}" | tee -a "${LOG}"
+    exit 1
+    ;;
+  *)
+    echo "「${NAME}」は登録されていません" | tee -a "${LOG}"
+    exit 1
+    ;;
+esac
+
+"${SCRIPT_DIR}/mulmo-project-status" >/dev/null 2>&1 || true

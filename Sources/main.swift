@@ -579,6 +579,36 @@ final class ControlModel: ObservableObject {
             label: "「\(name)」を止めています")
     }
 
+    /// フォルダを選んで登録する（Issue #152）。
+    ///
+    /// LSUIElement なので、選択パネルを出す前にアプリを前に出さないと、他の
+    /// ウインドウの後ろに開いて、押せないまま固まったように見える。
+    /// メニューバーの小窓はそのとき閉じるが、選んでいる間は用が無いのでよい。
+    func addProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "登録"
+        panel.message = "スマホから使いたいフォルダを選んでください"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        run("\(tool("mulmo-project-add")) \(shellQuoted(url.path))",
+            label: "「\(url.lastPathComponent)」を登録しています")
+    }
+
+    /// 登録をはずす。動いていればスクリプトが先に止める。一覧から消してから
+    /// 止めると、止める口が無いセッションが残る。
+    func removeProject(_ name: String) {
+        run("\(tool("mulmo-project-remove")) \(shellQuoted(name))",
+            label: "「\(name)」をはずしています")
+    }
+
+    /// 並び順を入れ替える。動いているセッションには触らない。
+    func moveProject(_ name: String, up: Bool) {
+        run("\(tool("mulmo-project-move")) \(shellQuoted(name)) \(up ? "up" : "down")")
+    }
+
     /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
     /// 要る（idToken が作れない）ので、そちらは画面への案内に留める。
     func reconnectRemoteHost() {
@@ -1853,45 +1883,119 @@ struct EnvironmentView: View {
 
 /// 登録したプロジェクトごとの、リモートセッションの一覧（Issue #152）。
 ///
-/// この段では**読むだけ**。起動 / 停止は次で足す。先に「いま何が動いて
-/// いるか」だけを正しく出せることを確かめる。
+/// 普段の行は、スマホ連携の行と同じく押す所がひとつだけ（繋ぐ / 止める）。
+/// 並べ替えと「はずす」は押し間違えると動いているセッションが落ちるので、
+/// 「編集」を押している間だけ出す。
 struct ProjectsPanel: View {
     @ObservedObject var model: ControlModel
+    @State private var editing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("プロジェクト")
-                .font(AppFont.section)
-                .foregroundStyle(Palette.primaryText)
+            header
 
             if model.projects.projects.isEmpty {
                 SetupRow(
                     title: "登録がありません",
                     detail: model.projects.state == "no-cli"
                         ? "claude が見つかりません"
-                        : "ディレクトリを登録すると、スマホから使えるセッションを立てられます",
+                        : "フォルダを登録すると、スマホから使えるセッションを立てられます",
                     ok: false
                 )
             } else {
                 VStack(spacing: 7) {
-                    ForEach(model.projects.projects, id: \.path) { project in
-                        SetupRow(
-                            title: project.name,
-                            detail: projectSessionDetail(project),
-                            ok: projectSessionOK(project),
-                            buttonTitle: projectButtonTitle(project),
-                            action: {
-                                if project.isRunning {
-                                    model.stopProject(project.name)
-                                } else {
-                                    model.startProject(project.name)
+                    ForEach(Array(model.projects.projects.enumerated()), id: \.element.path) { index, project in
+                        if editing {
+                            ProjectEditRow(
+                                project: project,
+                                isFirst: index == 0,
+                                isLast: index == model.projects.projects.count - 1,
+                                model: model
+                            )
+                        } else {
+                            SetupRow(
+                                title: project.name,
+                                detail: projectSessionDetail(project),
+                                ok: projectSessionOK(project),
+                                buttonTitle: projectButtonTitle(project),
+                                action: {
+                                    if project.isRunning {
+                                        model.stopProject(project.name)
+                                    } else {
+                                        model.startProject(project.name)
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("プロジェクト")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            if !model.projects.projects.isEmpty {
+                Button(editing ? "完了" : "編集") { editing.toggle() }
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.accentText)
+            }
+            Button("追加", action: model.addProject)
+                .buttonStyle(.plain)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.accentText)
+        }
+    }
+}
+
+/// 「編集」の間だけ出る行。並べ替えと、登録をはずす（Issue #152）。
+///
+/// 動いているセッションを「はずす」と、そのセッションは止まる。どれが動いて
+/// いるかは普段と同じ文言（「スマホから使えます」）で出したままにする。
+struct ProjectEditRow: View {
+    let project: ProjectSession
+    let isFirst: Bool
+    let isLast: Bool
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(projectSessionOK(project) ? Palette.ok : Palette.warn)
+                .frame(width: 7, height: 7)
+            Text(project.name)
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            Text(projectSessionDetail(project))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            moveButton(systemImage: "chevron.up", disabled: isFirst, up: true)
+            moveButton(systemImage: "chevron.down", disabled: isLast, up: false)
+            Button("はずす") { model.removeProject(project.name) }
+                .buttonStyle(.plain)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.warn)
+        }
+    }
+
+    private func moveButton(systemImage: String, disabled: Bool, up: Bool) -> some View {
+        Button {
+            model.moveProject(project.name, up: up)
+        } label: {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(.plain)
+        .font(AppFont.small)
+        .foregroundStyle(disabled ? Palette.secondaryText.opacity(0.4) : Palette.accentText)
+        .disabled(disabled)
     }
 }
 
