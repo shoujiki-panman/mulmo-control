@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -u
+
+# そのモードで MulmoClaude が待つポート（Issue #168）。
+#
+# 通常モードでは Vite が立たないので 5173 は開かない。ここを見落とすと
+# 「起動したのに動作していないと出る」「開くボタンが白い画面を出す」に
+# なる（Issue #91 / #93 で踏んだのと同じ形）。
+#
+# 対応表を持つのはこのスクリプトと Sources/main.swift の
+# MulmoClaudeMode だけ。2つあるのは Swift から毎回シェルを起こしたくない
+# ためで、食い違わないことは check.sh が突き合わせて見ている。
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
+
+case "${MODE}" in
+  app) printf '3001\n' ;;
+  *) printf '5173\n3001\n' ;;
+esac

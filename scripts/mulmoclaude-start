@@ -27,7 +27,8 @@ fi
 # 何が起きたか分からないまま終わらせないよう、理由を残す。
 OTHERS="$("${SCRIPT_DIR}/mulmoclaude-pids" --others | /usr/bin/xargs 2>/dev/null || true)"
 if [ -n "${OTHERS}" ]; then
-  echo "MulmoClaude: 5173 か 3001 を別のものが使っています（pid ${OTHERS}）。そちらを止めてから起動してください" | /usr/bin/tee -a "${ERR_LOG}"
+  PORTS="$("${SCRIPT_DIR}/mulmoclaude-ports" | /usr/bin/xargs | /usr/bin/sed 's/ / か /g')"
+  echo "MulmoClaude: ${PORTS} を別のものが使っています（pid ${OTHERS}）。そちらを止めてから起動してください" | /usr/bin/tee -a "${ERR_LOG}"
   exit 1
 fi
 
@@ -55,7 +56,44 @@ fi
 if [ -n "${PORT:-}" ]; then
   echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] 引き継いだ PORT=${PORT} を外して起動します" >>"${OUT_LOG}"
 fi
-nohup /usr/bin/env -u PORT "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
+MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
+echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] mode=${MODE}" >>"${OUT_LOG}"
+
+if [ "${MODE}" = "app" ]; then
+  # 通常モード（Issue #168）。ビルド済みの画面を production で配る。Vite は
+  # 立たないので、ファイルが変わっても画面は作り直されない。
+  #
+  # 起動のたびに作り直す。更新（mulmoclaude-update-latest）は git pull と
+  # yarn install で終わっているので、ここで作らないと「更新しました」と言い
+  # ながら画面だけ古いまま、になる（Issue #102 と同じ形）。画面のビルドは
+  # 実測 2 秒なので、毎回でも起動を待たせない。
+  #
+  # 依存パッケージと生成コードは yarn dev が自前で見ている（predev の
+  # plugins:codegen と dev-build-if-needed.mjs）。通常モードはそこを通らない
+  # ので、同じ2つをここで通す。片方でも欠けると、起動はするが画面が古い版の
+  # ままになる。
+  NODE="$(command -v node || true)"
+  if [ -z "${NODE}" ]; then
+    echo "MulmoClaude: node が見つからないので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
+    exit 1
+  fi
+  if ! /usr/bin/env -u PORT "${YARN}" plugins:codegen >>"${OUT_LOG}" 2>>"${ERR_LOG}"; then
+    echo "MulmoClaude: プラグインの生成に失敗したので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
+    exit 1
+  fi
+  if ! /usr/bin/env -u PORT "${NODE}" scripts/dev-build-if-needed.mjs >>"${OUT_LOG}" 2>>"${ERR_LOG}"; then
+    echo "MulmoClaude: 依存パッケージのビルドに失敗したので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
+    exit 1
+  fi
+  if ! /usr/bin/env -u PORT "${YARN}" build:client >>"${OUT_LOG}" 2>>"${ERR_LOG}"; then
+    echo "MulmoClaude: 画面のビルドに失敗したので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
+    exit 1
+  fi
+  nohup /usr/bin/env -u PORT NODE_ENV=production MULMOCLAUDE_CLIENT_DIR="${APP_DIR}/dist/client" \
+    "${YARN}" server >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
+else
+  nohup /usr/bin/env -u PORT "${YARN}" dev >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
+fi
 
 sleep 2
 # ブラウザを開くかどうかはアプリ側が決める（`開く` だけが開く）。

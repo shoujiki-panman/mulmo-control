@@ -17,8 +17,9 @@ set -u
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ポートの既定はここだけが持つ。散らばると、片方だけ直して食い違う。
-MC_PORTS=(5173 3001)
+# ポートはモードで変わる（Issue #168）。通常モードでは Vite が立たないので
+# 5173 は開かない。対応表は mulmoclaude-ports だけが持つ。
+MC_PORTS=($("${SCRIPT_DIR}/mulmoclaude-ports"))
 
 APP_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
 APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"

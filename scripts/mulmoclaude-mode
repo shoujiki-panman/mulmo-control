@@ -1,0 +1,31 @@
+#!/bin/zsh
+set -u
+
+# MulmoClaude をどちらのモードで起こすか（Issue #168）。
+#
+#   app  通常モード。ビルド済みの画面を production で配る。ファイル監視なし
+#   dev  開発モード。`yarn dev`。保存のたびに画面が作り直される
+#
+# 既定は dev。いま使っている人の挙動を変えないため。
+#
+# 置き場所が app-info.env でないのは、install.sh があのファイルを更新のたびに
+# 丸ごと書き直すため（install.sh:132）。そこに置くと、更新のたびにモードが
+# 既定へ戻る。Sources/main.swift の初回通知が UserDefaults を選んだのと同じ
+# 理由で、install.sh が触らない場所に置く。
+#
+# 値は「その2語かどうか」だけを見る。読んだ文字列をそのまま使う経路が
+# 起動コマンドの組み立てにあるので、知らない文字は既定に倒す（Issue #67）。
+
+FILE="${MULMO_MODE_FILE:-${HOME}/Library/Application Support/Mulmo Control/mulmoclaude-mode}"
+
+MODE=""
+if [ -f "${FILE}" ]; then
+  MODE="$(/usr/bin/head -1 "${FILE}" 2>/dev/null | /usr/bin/tr -d '[:space:]')"
+fi
+
+case "${MODE}" in
+  app|dev) ;;
+  *) MODE="dev" ;;
+esac
+
+printf '%s\n' "${MODE}"

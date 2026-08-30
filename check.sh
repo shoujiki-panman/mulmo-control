@@ -349,6 +349,71 @@ if [ -n "${PORT_KILL}" ]; then
 fi
 ok "他人のプロセスを巻き添えにしない"
 
+# ── MulmoClaude のモード（Issue #168）────────────────────────────
+# 通常モードは production serve なので Vite が立たず、5173 は開かない。
+# 待つポートと開く URL がモードで変わるため、ここを間違えると「起動したのに
+# 停止中と出る」「開くボタンが白い画面を出す」になる（#91 / #93 と同じ形）。
+#
+# 対応表は2箇所にある。`scripts/mulmoclaude-ports` と Sources/main.swift の
+# `MulmoClaudeMode`。Swift 側が同じファイルを直接読むのは、メニューを開く
+# たびにシェルを起こさないため（Issue #38）。重複を許した以上、食い違いは
+# 機械が見る。
+MODE_PROBE="$(mktemp -d)"
+
+mode_ports() {
+  printf '%s\n' "$1" > "${MODE_PROBE}/mode"
+  MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-ports" | tr '\n' ',' | sed 's/,$//'
+}
+mode_url_port() {
+  printf '%s\n' "$1" > "${MODE_PROBE}/mode"
+  MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-url" | sed 's|.*:||'
+}
+
+PORTS_LINE="$(grep 'var ports: \[Int\]' "${ROOT}/Sources/main.swift" | head -1)"
+PROBE_LINE="$(grep 'var probePort: Int' "${ROOT}/Sources/main.swift" | head -1)"
+SWIFT_APP_PORTS="$(printf '%s' "${PORTS_LINE}" | sed -n 's/.*? \[\([0-9, ]*\)\].*/\1/p' | tr -d ' ')"
+SWIFT_DEV_PORTS="$(printf '%s' "${PORTS_LINE}" | sed -n 's/.*\] : \[\([0-9, ]*\)\].*/\1/p' | tr -d ' ')"
+SWIFT_APP_PROBE="$(printf '%s' "${PROBE_LINE}" | sed -n 's/.*? \([0-9]*\) :.*/\1/p')"
+SWIFT_DEV_PROBE="$(printf '%s' "${PROBE_LINE}" | sed -n 's/.*: \([0-9]*\) }.*/\1/p')"
+
+for entry in "app:${SWIFT_APP_PORTS}:${SWIFT_APP_PROBE}" "dev:${SWIFT_DEV_PORTS}:${SWIFT_DEV_PROBE}"; do
+  mode="${entry%%:*}"
+  rest="${entry#*:}"
+  want_ports="${rest%%:*}"
+  want_probe="${rest##*:}"
+  [ -n "${want_ports}" ] && [ -n "${want_probe}" ] || fail "Sources/main.swift の ${mode} のポート表を読めませんでした（書式が変わった？ Issue #168）"
+  got_ports="$(mode_ports "${mode}")"
+  [ "${got_ports}" = "${want_ports}" ] || fail "${mode} モードのポートが食い違っています: mulmoclaude-ports=${got_ports} / Sources/main.swift=${want_ports}（Issue #168）"
+  got_probe="$(mode_url_port "${mode}")"
+  [ "${got_probe}" = "${want_probe}" ] || fail "${mode} モードで開くポートが食い違っています: mulmoclaude-url=${got_probe} / Sources/main.swift=${want_probe}（Issue #168）"
+done
+
+# 通常モードで 5173 を待ってはいけない。上の突き合わせは「2箇所が揃っている」
+# ことしか見ないので、両方に 5173 を書いた場合は通ってしまう。
+case ",$(mode_ports app)," in
+  *,5173,*) fail "通常モードが 5173 を待っています。production serve では Vite は立ちません（Issue #168）" ;;
+esac
+
+# 設定が無い / 壊れているときは開発モード。既定を通常モードに倒すと、
+# いま使っている人の開くアドレスが黙って変わる。
+printf 'app; rm -rf /\n' > "${MODE_PROBE}/mode"
+[ "$(MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-mode")" = "dev" ] \
+  || fail "知らない値を既定へ倒していません（Issue #168 / #67）"
+[ "$(MULMO_MODE_FILE="${MODE_PROBE}/none" "${ROOT}/scripts/mulmoclaude-mode")" = "dev" ] \
+  || fail "設定が無いときの既定が開発モードではありません（Issue #168）"
+
+# 通常モードの起動が production serve になっていること。どちらか一方でも
+# 欠けると、express は画面を配らないので、起動はするのに真っ白になる。
+grep -q 'NODE_ENV=production' "${ROOT}/scripts/mulmoclaude-start" \
+  || fail "通常モードの起動に NODE_ENV=production がありません（Issue #168）"
+grep -q 'MULMOCLAUDE_CLIENT_DIR=' "${ROOT}/scripts/mulmoclaude-start" \
+  || fail "通常モードの起動に MULMOCLAUDE_CLIENT_DIR がありません（Issue #168）"
+grep -q '"\${YARN}" dev' "${ROOT}/scripts/mulmoclaude-start" \
+  || fail "開発モードの起動（yarn dev）が消えています（Issue #168）"
+
+rm -rf "${MODE_PROBE}"
+ok "MulmoClaude のモードとポートが揃っている"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた

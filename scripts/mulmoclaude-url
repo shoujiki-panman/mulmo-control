@@ -1,0 +1,13 @@
+#!/bin/zsh
+set -u
+
+# そのモードで MulmoClaude を開く URL（Issue #168）。
+# 対応表の置き場所は mulmoclaude-ports と同じ考え方。
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
+
+case "${MODE}" in
+  app) printf 'http://localhost:3001\n' ;;
+  *) printf 'http://localhost:5173\n' ;;
+esac

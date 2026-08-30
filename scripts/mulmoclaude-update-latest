@@ -145,5 +145,10 @@ else
   say_reason "yarn が見つからないので依存の更新を飛ばしました。MulmoClaude が開かないときは yarn を入れてください"
 fi
 
+# 画面のビルドはここでは呼ばない。通常モード（Issue #168）では
+# mulmoclaude-start が起動のたびに作り直すので、ここに足すと同じビルドを
+# 2回走らせることになる。開発モードでは Vite がその場で作るので要らない。
+# つまり「更新したのに画面が古い」（Issue #102 の形）はどちらのモードでも
+# 起きない。足す前に mulmoclaude-start を読むこと。
 "${START}" >>"${LOG}" 2>&1 || true
 echo "MulmoClaude: updated" | tee -a "${LOG}"
