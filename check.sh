@@ -866,6 +866,31 @@ if [ -n "${DETAIL_LONG}" ]; then
 fi
 ok "行に出す説明は、入る長さで書く"
 
+# 132 枠が埋まっているときに、繋ぎに行かない。
+#
+# リモートはマシン名ごとに1つ。ChatGPT アプリが枠を取っている間にこちらから
+# 繋ぐと 409 で弾かれ、**12秒おきに再接続を試み続ける**（実測で1時間に79回）。
+# 押せば直ると思わせたまま、裏で無駄を回すことになる。先に見て、引き返す。
+grep -q 'another_app_serving' "${CODEX_REMOTE}" \
+  || fail "先に繋いでいるアプリを見ていません。409 を回し続けます（Issue #164 / 132）"
+# 確かめる箇所は2つある（状態を見るときと、繋ぐとき）。**繋ぐ側**が消えたのを
+# 見つけたいので、`do_start` の中にあることまで見る。ファイルのどこかに1つ
+# あればよい書き方だと、状態側が残っているだけで通る（116 で同じ穴を踏んだ）。
+CODEX_START_LINE="$(grep -n '^do_start()' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
+START_CALL="$(grep -n 'codex remote-control start' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
+GUARD_LINE="$(grep -n '^  if another_app_serving; then' "${CODEX_REMOTE}" | cut -d: -f1 \
+  | awk -v lo="${CODEX_START_LINE:-0}" -v hi="${START_CALL:-0}" '$1 > lo && $1 < hi { print $1; exit }')"
+if [ -z "${GUARD_LINE}" ] || [ -z "${START_CALL}" ]; then
+  fail "枠を確かめる前に繋ぎに行っています。409 を回し続けます（Issue #164 / 132）"
+fi
+# 弾かれたまま置くのも同じこと。**弾かれた枝の中で**畳んでいることを見る。
+# ファイルのどこかにあればよい書き方だと、`do_stop` の1行で通ってしまう
+# （実際に通った。116 と同じ穴を3度目）。
+FAIL_BRANCH="$(awk '/errored\*\|\*Error/ { inside = 1 } inside { print } inside && /;;/ { exit }' "${CODEX_REMOTE}")"
+printf '%s\n' "${FAIL_BRANCH}" | grep -q 'codex remote-control stop' \
+  || fail "弾かれた枝でデーモンを畳んでいません。409 を回し続けます（Issue #164 / 132）"
+ok "枠が埋まっているときは繋ぎに行かない"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。

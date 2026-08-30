@@ -70,10 +70,11 @@ private struct AgentCase {
 /// 状態 × 入口の有無。表を手で並べず、軸から組み立てる。1行消すと落ちる。
 private func agentCases() -> [AgentCase] {
     var built: [AgentCase] = []
-    for state in ["online", "offline", "untrusted", "error", "no-cli", "no-dir"] {
+    for state in ["online", "taken", "offline", "untrusted", "error", "no-cli", "no-dir"] {
         for hasURL in [true, false] {
             let button: String?
-            if state == "no-cli" || state == "no-dir" {
+            // taken = 別のアプリが枠を取っている。押しても弾かれるだけなので出さない
+            if state == "no-cli" || state == "no-dir" || state == "taken" {
                 button = nil
             } else if state == "online" {
                 // 入口を示せないなら押す先が無い（#152 で実際に無かった）
@@ -83,7 +84,7 @@ private func agentCases() -> [AgentCase] {
             }
             built.append(AgentCase(
                 state: state, hasURL: hasURL, expectedButton: button,
-                expectedOK: state == "online",
+                expectedOK: state == "online" || state == "taken",
                 expectedCanStop: state == "online" || state == "error"
             ))
         }
@@ -132,8 +133,8 @@ struct StatusDisplayTest {
         }
         // ③ エージェントのスマホ連携（Issue #160）
         let agents = agentCases()
-        if agents.count != 12 {
-            FileHandle.standardError.write(Data("エージェント連携の組み合わせが12通りありません\n".utf8))
+        if agents.count != 14 {
+            FileHandle.standardError.write(Data("エージェント連携の組み合わせが14通りありません\n".utf8))
             failures += 1
         }
         for item in agents {
