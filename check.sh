@@ -790,7 +790,11 @@ ok "セッションの画面出力は保存しない"
 # ファイルに残る。書く口が1つだけで、そこに渡るのが一致した文字列だけである
 # ことを見る。
 SINK_WRITES="$(grep -nE '^[[:space:]]*[^#[:space:]].*\.write\(' "${URL_SINK}" || true)"
-if [ "$(printf '%s\n' "${SINK_WRITES}" | grep -c 'handle.write(url')" != "1" ]; then
+# 数えるのは「書く行の総数」。`url` を書く行があるかだけ見ると、隣にもう1行
+# 足された分を見逃す（実際に見逃した）。
+WRITE_COUNT="$(printf '%s\n' "${SINK_WRITES}" | grep -c '\.write(' || true)"
+URL_WRITES="$(printf '%s\n' "${SINK_WRITES}" | grep -c 'handle.write(url' || true)"
+if [ "${WRITE_COUNT}" != "1" ] || [ "${URL_WRITES}" != "1" ]; then
   printf '%s\n' "${SINK_WRITES}"
   fail "URL 以外を書く口があります。会話が平文で残ります（Issue #160 / 128）"
 fi
