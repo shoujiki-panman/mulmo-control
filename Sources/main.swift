@@ -129,6 +129,64 @@ private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
 private let updateReasonsPath = "\(logDir)/mulmo-update-reasons.txt"
 private let lastUpdateSummaryPath = "\(logDir)/mulmo-control-last-update-summary.txt"
+/// MulmoClaude をどちらのモードで起こすか（Issue #168）。
+///
+/// `app` は production serve。ビルド済みの画面を配るだけなので Vite は立たず、
+/// ファイルが変わっても画面は作り直されない。`dev` は `yarn dev` で、保存の
+/// たびに開いている全タブがリロードされる。MulmoClaude は使うだけで自分の
+/// フォルダにファイルを書くアプリなので、開発モードで日常使いすると入力中の
+/// 文字と貼った添付が飛ぶ（本家 receptron/mulmoclaude#2919 は「dev server の
+/// 定義どおりの動作」として NOT_PLANNED）。どちらで起こすかを選べるように
+/// するのがここ。
+///
+/// 既定は `dev`。いま使っている人の挙動を変えないため。
+///
+/// 置き場所は app-info.env ではない。install.sh はあのファイルを更新のたびに
+/// 丸ごと書き直すので（install.sh:132）、置くと更新のたびにモードが戻る。
+/// 初回通知の印を UserDefaults に置いたのと同じ理由。
+///
+/// ポートと URL の対応表を持つのはここと `scripts/mulmoclaude-ports` /
+/// `scripts/mulmoclaude-url` の2箇所。Swift 側が同じファイルを直接読むのは、
+/// メニューを開くたびの refresh でシェルを起こしたくないため（Issue #38 で
+/// 一度払った代償）。食い違わないことは check.sh が突き合わせている。
+enum MulmoClaudeMode: String {
+    case app
+    case dev
+
+    static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/mulmoclaude-mode"
+
+    static func current() -> MulmoClaudeMode {
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return .dev }
+        let word = text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return MulmoClaudeMode(rawValue: word) ?? .dev
+    }
+
+    /// 通常モードでは Vite が立たないので 5173 は開かない。
+    var ports: [Int] { self == .app ? [3001] : [5173, 3001] }
+
+    /// 身元を確かめに行く先（Issue #93）。画面を配っているほうを見る。
+    var probePort: Int { self == .app ? 3001 : 5173 }
+
+    var url: String { "http://localhost:\(probePort)" }
+
+    var label: String { self == .app ? "通常モード" : "開発モード" }
+
+    var detail: String {
+        self == .app
+            ? "画面は作り済みのものを配ります。作業中に勝手にリロードされません"
+            : "保存のたびに画面が作り直されます。MulmoClaude 自体を開発する人向け"
+    }
+}
+
+/// 書くのは1語だけ。読む側（`scripts/mulmoclaude-mode`）が知らない語を既定へ
+/// 倒すので、壊れた値が起動コマンドまで届くことはない。
+func writeMulmoClaudeMode(_ mode: MulmoClaudeMode) {
+    let path = MulmoClaudeMode.filePath
+    let dir = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try? "\(mode.rawValue)\n".write(toFile: path, atomically: true, encoding: .utf8)
+}
+
 // install.sh が書き出す app-info.env から MulmoClaude の場所を読む
 private func configuredMulmoClaudeDir() -> String {
     let fallback = "\(homeDir)/mulmoclaude"
@@ -325,6 +383,8 @@ final class ControlModel: ObservableObject {
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
     @Published var lastUpdateReport = readLastUpdateReport()
+    /// MulmoClaude をどちらのモードで起こすか（Issue #168）。
+    @Published var mcMode = MulmoClaudeMode.current()
 
     private var timer: Timer?
     private var notifiedUpdateKey = UserDefaults.standard.string(forKey: "mulmo-control.notified-update-key")
@@ -468,7 +528,7 @@ final class ControlModel: ObservableObject {
     /// 確かめ終わるまでは前回分かった値を返す。起動直後に一瞬「停止中」と出るが、
     /// 他人のものを「動作中」と言うよりはよい。
     private func mulmoClaudeIsRunning() -> Bool {
-        guard portIsOpen(5173) || portIsOpen(3001) else {
+        guard mcMode.ports.contains(where: portIsOpen) else {
             mcIdentity = false
             return false
         }
@@ -479,8 +539,9 @@ final class ControlModel: ObservableObject {
     private func confirmMulmoClaudeIdentity() {
         guard !mcIdentityChecking else { return }
         mcIdentityChecking = true
+        let port = mcMode.probePort
         Task.detached { [weak self] in
-            let confirmed = servesMulmoClaude(port: 5173)
+            let confirmed = servesMulmoClaude(port: port)
             await MainActor.run {
                 guard let self else { return }
                 self.mcIdentityChecking = false
@@ -494,6 +555,9 @@ final class ControlModel: ObservableObject {
         // ポート確認とファイル読みだけ。メニューバーのアイコンはこれで足りるので、
         // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(mtPort)
+        // 起動より先に読む。ポートも URL もここから決まるので、古いモードの
+        // まま判定すると「起動したのに停止中と出る」になる。
+        mcMode = MulmoClaudeMode.current()
         mcRunning = mulmoClaudeIsRunning()
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         // 「入っている」の意味は、スクリプト側と揃える（Issue #107）。
@@ -552,9 +616,9 @@ final class ControlModel: ObservableObject {
             return
         }
         if mcRunning {
-            openURL("http://localhost:5173")
+            openURL(mcMode.url)
         } else {
-            runThenOpen(tool("mulmoclaude-start"), url: "http://localhost:5173")
+            runThenOpen(tool("mulmoclaude-start"), url: mcMode.url)
         }
     }
     func startMT() { run(tool("mulmoterminal-start"), label: "MulmoTerminalを起動中") }
@@ -720,6 +784,22 @@ final class ControlModel: ObservableObject {
         )
         run(updateCommand(commands.joined(separator: "\n")), label: "まとめて更新中")
     }
+    /// モードを切り替える（Issue #168）。
+    ///
+    /// 動いている最中に切り替えたら起こし直す。待つポートが変わるので、
+    /// 古いモードのまま動かし続けると画面には新しいモードが出ているのに
+    /// 「停止中」と表示され、`開く` も居ない側を開く。
+    func setMCMode(_ mode: MulmoClaudeMode) {
+        guard mode != mcMode else { return }
+        writeMulmoClaudeMode(mode)
+        mcMode = mode
+        if mcRunning {
+            restartMC()
+        } else {
+            actionText = "\(mode.label)に切り替えました"
+        }
+    }
+
     func startMC() { run(tool("mulmoclaude-start"), label: "MulmoClaudeを起動中") }
     func stopMC() { run(tool("mulmoclaude-stop"), label: "MulmoClaudeを停止中") }
     func restartMC() { run(tool("mulmoclaude-restart"), label: "MulmoClaudeを再起動中") }
@@ -1717,6 +1797,7 @@ struct OperateView: View {
             ) {
                 if model.mcInstalled {
                     LogDisclosure(action: model.openMCLogs)
+                    ModeDisclosure(model: model)
                 } else {
                     Button("入手", action: model.openMCRepo)
                 }
@@ -1853,6 +1934,62 @@ struct LogDisclosure: View {
             }
             .padding(14)
             .frame(width: 190)
+        }
+    }
+}
+
+/// MulmoClaude をどちらのモードで起こすかの切り替え（Issue #168）。
+///
+/// ログと同じ「小さい行 + ポップオーバー」の形にしてある。常時見えるのは
+/// いまのモード名だけで、押すと違いの説明が出る。切り替えは滅多にしないが、
+/// **いまどちらで動いているかは常に見えている必要がある** — 画面が勝手に
+/// リロードされる／されないの差がここで決まるため。
+struct ModeDisclosure: View {
+    @ObservedObject var model: ControlModel
+    @State private var showsDetail = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(model.mcMode.label)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold, design: .default))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showsDetail.toggle()
+        }
+        .popover(isPresented: $showsDetail, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("起動のしかた")
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                ForEach([MulmoClaudeMode.app, MulmoClaudeMode.dev], id: \.self) { mode in
+                    Button {
+                        model.setMCMode(mode)
+                        showsDetail = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 5) {
+                                Image(systemName: mode == model.mcMode ? "largecircle.fill.circle" : "circle")
+                                Text(mode.label)
+                                    .font(AppFont.action)
+                            }
+                            .foregroundStyle(Palette.primaryText)
+                            Text(mode.detail)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text("切り替えると、動いている MulmoClaude は起こし直します。開くアドレスも変わります。")
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(width: 260)
         }
     }
 }

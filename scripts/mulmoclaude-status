@@ -1,13 +1,27 @@
 #!/bin/zsh
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
+
 echo "MulmoClaude"
 echo
+echo "Mode:"
+if [ "${MODE}" = "app" ]; then
+  echo "app（通常モード・リロードなし）"
+else
+  echo "dev（開発モード・保存のたびに画面が作り直される）"
+fi
+echo
 echo "Ports:"
-/usr/sbin/lsof -nP -iTCP:5173 -iTCP:3001 -sTCP:LISTEN 2>/dev/null || echo "not running"
+LSOF_ARGS=()
+for port in $("${SCRIPT_DIR}/mulmoclaude-ports"); do
+  LSOF_ARGS+=(-iTCP:"${port}")
+done
+/usr/sbin/lsof -nP "${LSOF_ARGS[@]}" -sTCP:LISTEN 2>/dev/null || echo "not running"
 echo
 echo "Open:"
-echo "http://127.0.0.1:5173"
+"${SCRIPT_DIR}/mulmoclaude-url"
 echo
 echo "Logs:"
 echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude.log"
