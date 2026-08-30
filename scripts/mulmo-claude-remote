@@ -95,7 +95,7 @@ with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
 
 do_status() {
   if [ -z "$(command -v claude || true)" ]; then
-    write_status "no-cli" "claude が見つかりません"
+    write_status "no-cli" "見つかりません"
     return 0
   fi
   if [ ! -d "${DIR}" ]; then
@@ -108,7 +108,7 @@ do_status() {
   fi
   /bin/rm -f "${URL_FILE}"
   if [ "$(trusted)" != "yes" ]; then
-    write_status "untrusted" "まだ繋いでいません・初回は確認が要ります"
+    write_status "untrusted" "初回は確認が要ります"
     return 0
   fi
   write_status "offline" "まだ繋いでいません"

@@ -837,6 +837,35 @@ if [ -n "${CODE_LEAK}" ]; then
 fi
 ok "ペアリングコードはログに残さない"
 
+# 131 行に出す説明を、入る長さで書く。
+#
+# 行は狭い。押す所が2つある行は特に狭く、長い文は真ん中が「…」に潰れる。
+# 潰れると、その行にしか書いていないことが読めなくなる
+# （`接続がエラーで…で確認が要ります` を実際に出した。#156 と同じ形）。
+#
+# 長さは目分量ではなく数えて止める。ここを通る文はすべてスクリプトが書く。
+DETAIL_LONG="$(AGENT_SCRIPTS="${CLAUDE_REMOTE} ${CODEX_REMOTE}" /usr/bin/python3 -c '
+import os, re, sys
+limit = 12
+bad = []
+for path in os.environ["AGENT_SCRIPTS"].split():
+    for line in open(path, encoding="utf-8"):
+        if line.lstrip().startswith("#"):
+            continue
+        for text in re.findall(r"write_status\s+\"[^\"]*\"\s+\"([^\"$]*)\"", line):
+            if len(text) > limit:
+                bad.append("%s: %s（%d文字）" % (os.path.basename(path), text, len(text)))
+        for text in re.findall(r"printf .%s..n. \"([^\"$]*)\" > \"\$\{ERR_FILE\}\"", line):
+            if len(text) > limit:
+                bad.append("%s: %s（%d文字）" % (os.path.basename(path), text, len(text)))
+print("\n".join(bad))
+')"
+if [ -n "${DETAIL_LONG}" ]; then
+  printf '%s\n' "${DETAIL_LONG}"
+  fail "行に出す説明が長すぎます。真ん中が潰れて読めなくなります（Issue #162 / 131）"
+fi
+ok "行に出す説明は、入る長さで書く"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
