@@ -1778,43 +1778,59 @@ struct UpdateToolbar: View {
         return Palette.ok
     }
 
+    // 文字は上、ボタンは下の行（Issue #180）。
+    //
+    // 以前は横一列に詰めていた。ボタンが増えるたびに文字の幅が削られ、#176 で
+    // `リリースノート` を足した時点で「更新が出たら通知します」が
+    // 「更新が出たら通知し…」になった。`アプリ更新` が出る日はもう1つ増えるので、
+    // **更新の中身を読ませたいときにいちばん削られる**。逆になっていた。
+    //
+    // サービスのパネル（ServicePanel）は元からこの組み方で、帯だけが違っていた。
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statusTitle)
-                    .font(AppFont.rowTitle)
-                    .foregroundStyle(Palette.primaryText)
-                Text(statusDetail)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
-            }
-            Spacer()
-            ReleaseNotesButton(model: model)
-            Button("確認", action: model.checkAllUpdates)
-                .buttonStyle(.plain)
-                .font(AppFont.action)
-                .foregroundStyle(isUnknown ? .white : Palette.secondaryText)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .background(isUnknown ? Palette.accent : Palette.controlFill, in: Capsule())
-            if hasSelfUpdate || !updateTargets.isEmpty {
-                Button(hasSelfUpdate ? "アプリ更新" : "一括更新") {
-                    if hasSelfUpdate {
-                        model.updateSelfApp()
-                    } else {
-                        model.updateAllInstalled()
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                    .padding(.top, 5)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statusTitle)
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                    // 切り詰めない。入り切らないときに捨てられるのは、
+                    // 「何が更新されるか」の一覧そのものになる。
+                    Text(statusDetail)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Button("確認", action: model.checkAllUpdates)
                     .buttonStyle(.plain)
                     .font(AppFont.action)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(isUnknown ? .white : Palette.secondaryText)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 6)
-                    .background(Palette.accent, in: Capsule())
+                    .background(isUnknown ? Palette.accent : Palette.controlFill, in: Capsule())
+                ReleaseNotesButton(model: model)
+                if hasSelfUpdate || !updateTargets.isEmpty {
+                    Button(hasSelfUpdate ? "アプリ更新" : "一括更新") {
+                        if hasSelfUpdate {
+                            model.updateSelfApp()
+                        } else {
+                            model.updateAllInstalled()
+                        }
+                    }
+                        .buttonStyle(.plain)
+                        .font(AppFont.action)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(Palette.accent, in: Capsule())
+                }
+                Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 12)

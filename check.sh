@@ -501,6 +501,16 @@ sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" | grep -
   && fail "リリースノートの本文を素通しで描いています（Issue #178）"
 ok "何のリリースノートか分かる"
 
+# ── 更新の帯の説明を切り詰めない（Issue #180）──────────────────
+# 切り詰めは「入り切らないときに情報を捨てる」ので、捨てられるのは**何が
+# 更新されるかの一覧**になる。更新があるときこそ読ませたい行なので逆。
+# #176 でボタンを1つ足した時点で「更新が出たら通知します」が切れた。
+sed -n '/^struct UpdateToolbar/,/^struct /p' "${ROOT}/Sources/main.swift" | grep -q 'lineLimit(1)' \
+  && fail "更新の帯の説明を1行に切り詰めています（Issue #180）"
+sed -n '/^struct UpdateToolbar/,/^struct /p' "${ROOT}/Sources/main.swift" | grep -q 'Text(statusDetail)' \
+  || fail "更新の帯から説明が消えています（Issue #180）"
+ok "更新の帯の説明が切れない"
+
 # ── 止めたら止まること（Issue #172）──────────────────────────────
 # ポートを持っているプロセスだけ落としても、MulmoClaude は止まらない。親の
 # `dev-server.mjs` は**落ちた子を起こし直すのが仕事**なので、すぐ戻ってくる。
