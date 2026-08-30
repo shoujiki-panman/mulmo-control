@@ -43,53 +43,42 @@ struct RemoteHostStatus: Decodable {
     var canConnectFromControl: Bool { hasStash == true }
 }
 
-/// 登録したプロジェクトと、そこに立てたリモートセッション（Issue #152）。
+/// エージェントのスマホ連携（Claude Code / Codex）の状態（Issue #160）。
 ///
-/// スマホから使うので、**セッション名がそのまま向こうで探す手がかり**になる。
-///
-/// 「繋がっている」と言ってよいのは Mulmo Control が立てたものが生きている
-/// ときだけ。同じフォルダで人が手で開いたセッションを数えると、止めたのに
-/// 「動作中」と出る（実測でそうなった）。
-struct ProjectSession: Decodable {
-    let name: String
-    let path: String
-    /// 登録したディレクトリが実在するか。消したあとも登録は残る。
-    let exists: Bool
-    /// claude 側がこのディレクトリの信頼確認を通しているか。通っていないと
-    /// 初回にターミナルが開いて人が答えることになるので、押す前に伝える。
-    let trusted: Bool
-    let autoStart: Bool
-    /// running / stopped
-    let status: String
+/// 2つは形が違う。Claude Code は **セッション1つ＝フォルダ1つ**で、立てると
+/// 入口の URL が出る。Codex は **Mac に1つのデーモン**で、URL は無く、代わりに
+/// ペアリングコードで端末を繋ぐ。違うのはそこだけなので、状態は1つの形で持つ。
+struct AgentRemote: Decodable {
+    /// online / offline / untrusted / error / no-cli / no-dir
+    let state: String
+    /// 画面に出す説明。作るのはスクリプト側（スマホ連携の2行と同じやり方）。
+    let detail: String
+    /// Claude Code 側だけ。`https://claude.ai/code/session_…`
+    let url: String?
+    /// Codex 側だけ。短命なペアリングコード。
+    let pairCode: String?
 
-    var isRunning: Bool { status == "running" }
+    /// Optional にしてあるのは、片方にしか無い項目だから。非 Optional にすると
+    /// 項目が1つ足りないだけで復号ごと失敗し、画面が「未確認」に落ちる。
+    var openURL: String { url ?? "" }
+    var code: String { pairCode ?? "" }
 }
 
-/// プロジェクトの行に出す説明。
+/// 行に出すボタンの文字。
 ///
-/// 「停止中」と「フォルダが無い」を混ぜないこと。押せば直るのは前者だけで、
-/// 後者は登録し直すしかない（#23 で「切れた」と「繋いでいない」を混ぜて
-/// 時間を使ったのと同じ形）。
-///
-/// 動いているときは「スマホから使えます」。**環境タブのスマホ連携の行と同じ
-/// 言葉にする**（Issue #158）。以前はセッション名を出していたが、その名前は
-/// 常にタイトルと同じ文字列で、「mulmoclaude / mulmoclaude」と2回書いている
-/// だけだった。同じ状態には同じ言葉、はこのファイルの決めごとでもある。
-func projectSessionDetail(_ project: ProjectSession) -> String {
-    if !project.exists { return "フォルダが見つかりません" }
-    if !project.isRunning {
-        return project.trusted ? "停止中" : "停止中・初回は確認が要ります"
-    }
-    return "スマホから使えます"
+/// 繋がっているときに出すのは「開く」。**入口を示せないなら押す先が無いので
+/// 何も出さない。** #152 では「スマホから使えます」と言うだけで開く先を教えて
+/// おらず、繋がったのに使えなかった。
+func agentRemoteButtonTitle(_ status: AgentRemote) -> String? {
+    if status.state == "no-cli" || status.state == "no-dir" { return nil }
+    if status.state == "online" { return status.openURL.isEmpty ? nil : "開く" }
+    return "繋ぐ"
 }
 
-/// 行に出すボタンの文字。フォルダが無いときは押す先が無いので出さない。
-func projectButtonTitle(_ project: ProjectSession) -> String? {
-    if !project.exists { return nil }
-    return project.isRunning ? "止める" : "繋ぐ"
+/// 止める口を出してよいか。動いているものにしか出さない。
+func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
+    status.state == "online" || status.state == "error"
 }
 
-/// 行の左の印を緑にしてよいか。動いていて、かつ実在するときだけ。
-func projectSessionOK(_ project: ProjectSession) -> Bool {
-    project.exists && project.isRunning
-}
+/// 行の左の印を緑にしてよいか。エラーは緑にしない（動いてはいるが使えない）。
+func agentRemoteOK(_ status: AgentRemote) -> Bool { status.state == "online" }

@@ -1,0 +1,225 @@
+#!/bin/zsh
+set -u
+
+# 「スマホ連携（Claude Code）」を繋ぐ / 止める / 見る（Issue #160）。
+#
+#   使い方: mulmo-claude-remote start|stop|status
+#
+# Claude Code のリモートは **セッション1つ＝フォルダ1つ**で、Codex のような
+# デーモン1つの形が無い（実測 2.1.251）。だから既定のフォルダを1つ決めて、
+# そこで1セッションだけ立てる。使うフォルダは設定で変えられる。
+#
+# 実測で分かっていること:
+#
+#   - `claude --remote-control` は **TTY が要る**。無いと --print に落ちる。
+#     script(1) で PTY を与え、nohup で切り離せば端末なしで生き残る
+#   - 立ち上がると「Continue here, on your phone, or at
+#     https://claude.ai/code/session_…」が出る。**そこが入口**
+#   - 初回はフォルダの信頼確認が出て止まる。**そこは人が踏む**
+#
+# **セッションの画面出力は保存しない。** 会話がそのまま平文で残るため。
+# 画面は FIFO に流し、mulmo-remote-url-sink が URL の1行だけ拾って捨てる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/agent-remote.log"
+OUT="${LOG_DIR}/claude-remote.json"
+STATE="${LOG_DIR}/claude-remote-session.json"
+URL_FILE="${LOG_DIR}/claude-remote.url"
+FIFO="${LOG_DIR}/claude-remote.pipe"
+SETTLE=8
+
+mkdir -p "${LOG_DIR}"
+
+# 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
+DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_CLAUDE_REMOTE_DIR)"
+if [ -z "${DIR}" ]; then
+  DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
+fi
+DIR="${DIR:-${HOME}/mulmoclaude}"
+
+live_pid() {
+  STATE="${STATE}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["STATE"], encoding="utf-8") as handle:
+        pid = (json.load(handle) or {}).get("pid")
+except (OSError, ValueError):
+    raise SystemExit
+if isinstance(pid, int):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        raise SystemExit
+    print(pid)
+'
+}
+
+trusted() {
+  DIR="${DIR}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.path.expanduser("~/.claude.json"), encoding="utf-8") as handle:
+        projects = (json.load(handle) or {}).get("projects") or {}
+except (OSError, ValueError):
+    projects = {}
+target = os.path.realpath(os.path.expanduser(os.environ["DIR"]))
+for path, item in projects.items():
+    if isinstance(item, dict) and item.get("hasTrustDialogAccepted") \
+            and os.path.realpath(os.path.expanduser(path)) == target:
+        print("yes")
+        break
+'
+}
+
+write_status() {
+  STATE_NAME="$1" DETAIL="$2" DIR="${DIR}" URL_FILE="${URL_FILE}" OUT="${OUT}" \
+    /usr/bin/python3 -c '
+import json, os, datetime
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+try:
+    with open(os.environ["URL_FILE"], encoding="utf-8") as handle:
+        url = handle.read().strip()
+except OSError:
+    url = ""
+# 入口の形をしていないものは出さない（画面の切れ端が混じるのを防ぐ）
+if not url.startswith("https://claude.ai/code/session_"):
+    url = ""
+with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
+    json.dump({"checkedAt": now, "state": os.environ["STATE_NAME"],
+               "detail": os.environ["DETAIL"], "dir": os.environ["DIR"], "url": url},
+              handle, ensure_ascii=False, indent=2)
+'
+}
+
+do_status() {
+  if [ -z "$(command -v claude || true)" ]; then
+    write_status "no-cli" "claude が見つかりません"
+    return 0
+  fi
+  if [ ! -d "${DIR}" ]; then
+    write_status "no-dir" "フォルダが見つかりません"
+    return 0
+  fi
+  if [ -n "$(live_pid)" ]; then
+    write_status "online" "スマホから使えます"
+    return 0
+  fi
+  /bin/rm -f "${URL_FILE}"
+  if [ "$(trusted)" != "yes" ]; then
+    write_status "untrusted" "まだ繋いでいません・初回は確認が要ります"
+    return 0
+  fi
+  write_status "offline" "まだ繋いでいません"
+}
+
+do_stop() {
+  PID="$(live_pid)"
+  if [ -z "${PID}" ]; then
+    /bin/rm -f "${STATE}" "${URL_FILE}"
+    echo "スマホ連携（Claude Code）は動いていません" | tee -a "${LOG}"
+    do_status
+    return 0
+  fi
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] stop requested (pid ${PID})" >>"${LOG}"
+  /bin/kill "${PID}" 2>/dev/null || true
+  WAITED=0
+  while [ "${WAITED}" -lt 8 ]; do
+    /bin/ps -p "${PID}" >/dev/null 2>&1 || break
+    sleep 1
+    WAITED=$((WAITED + 1))
+  done
+  /bin/ps -p "${PID}" >/dev/null 2>&1 && /bin/kill -9 "${PID}" 2>/dev/null || true
+  /bin/rm -f "${STATE}" "${URL_FILE}" "${FIFO}"
+  echo "スマホ連携（Claude Code）を止めました" | tee -a "${LOG}"
+  do_status
+}
+
+do_start() {
+  if [ -n "$(live_pid)" ]; then
+    echo "スマホ連携（Claude Code）はすでに繋がっています" | tee -a "${LOG}"
+    do_status
+    return 0
+  fi
+  CLAUDE="$(command -v claude || true)"
+  if [ -z "${CLAUDE}" ]; then
+    echo "claude が見つかりません" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+  if [ ! -d "${DIR}" ]; then
+    echo "フォルダが見つかりません: ${DIR}" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+
+  # 信頼確認は人が踏むもの。こちらで ~/.claude.json を書いて飛ばさない
+  # （人間の同意を機械が偽造する形になる）。初回だけターミナルを開く。
+  if [ "$(trusted)" != "yes" ]; then
+    echo "初めてのフォルダです。確認のためターミナルを開きます" | tee -a "${LOG}"
+    /usr/bin/osascript -e 'on run argv
+  tell application "Terminal"
+    activate
+    do script "cd " & quoted form of (item 1 of argv) & " && " & quoted form of (item 2 of argv) & " --remote-control"
+  end tell
+end run' "${DIR}" "${CLAUDE}" >/dev/null 2>&1 || true
+    do_status
+    return 2
+  fi
+
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] start requested (${DIR})" >>"${LOG}"
+  /bin/rm -f "${URL_FILE}" "${FIFO}"
+
+  # 画面は FIFO へ。読むのは sink だけで、URL の1行しか書かない。
+  # ここをファイルにすると会話が平文で残る。
+  /usr/bin/mkfifo -m 600 "${FIFO}" 2>/dev/null || true
+  if [ -p "${FIFO}" ]; then
+    /usr/bin/nohup "${SCRIPT_DIR}/mulmo-remote-url-sink" "${FIFO}" "${URL_FILE}" \
+      >/dev/null 2>&1 </dev/null &
+    TYPESCRIPT="${FIFO}"
+  else
+    # FIFO が作れなければ URL は諦める。画面を保存する道は選ばない。
+    TYPESCRIPT="/dev/null"
+  fi
+
+  # -F は「書くたびに流す」。既定は30秒ごとなので、これが無いと起動画面が
+  # バッファに留まり、URL がいつまでも取れない（実際に取れなかった）。
+  cd "${DIR}" || return 1
+  /usr/bin/nohup /usr/bin/script -q -F "${TYPESCRIPT}" "${CLAUDE}" --remote-control \
+    >/dev/null 2>&1 </dev/null &
+  PID=$!
+
+  # 立ち上がるのを待つ。見られるのは「落ちずに残っているか」と、
+  # sink が URL を拾えたかだけ。
+  WAITED=0
+  while [ "${WAITED}" -lt "${SETTLE}" ]; do
+    /bin/ps -p "${PID}" >/dev/null 2>&1 || break
+    [ -s "${URL_FILE}" ] && break
+    sleep 2
+    WAITED=$((WAITED + 2))
+  done
+
+  if ! /bin/ps -p "${PID}" >/dev/null 2>&1; then
+    echo "スマホ連携（Claude Code）を繋げませんでした" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+
+  PID="${PID}" DIR="${DIR}" STATE="${STATE}" /usr/bin/python3 -c '
+import json, os, datetime
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+with open(os.environ["STATE"], "w", encoding="utf-8") as handle:
+    json.dump({"dir": os.environ["DIR"], "pid": int(os.environ["PID"]), "startedAt": now},
+              handle, ensure_ascii=False, indent=2)
+'
+  echo "スマホ連携（Claude Code）を繋ぎました" | tee -a "${LOG}"
+  do_status
+}
+
+case "${1:-status}" in
+  start)  do_start ;;
+  stop)   do_stop ;;
+  status) do_status ;;
+  *)      echo "使い方: mulmo-claude-remote start|stop|status" >&2; exit 1 ;;
+esac

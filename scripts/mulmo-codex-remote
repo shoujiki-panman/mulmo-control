@@ -1,0 +1,120 @@
+#!/bin/zsh
+set -u
+
+# 「スマホ連携（Codex）」を繋ぐ / 止める / 見る / ペアリングする（Issue #160）。
+#
+#   使い方: mulmo-codex-remote start|stop|status|pair
+#
+# Codex のリモートは **Mac に1つのデーモン**（app-server）で、Claude Code の
+# ような「セッション＝フォルダ」ではない。だからフォルダの指定も信頼確認も
+# 要らず、繋ぐ／止めるだけで済む。
+#
+# **デーモンが動いていることと、リモート接続が生きていることは別**（実測）。
+# 動いているのに接続だけ errored になる状態があり、そのとき「スマホから
+# 使えます」と言うと嘘になる。start が返した文言を控えて、状態に混ぜる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/agent-remote.log"
+OUT="${LOG_DIR}/codex-remote.json"
+ERR_FILE="${LOG_DIR}/codex-remote-error.txt"
+
+mkdir -p "${LOG_DIR}"
+
+daemon_running() {
+  # ソケットが無ければ、繋ぎに行くだけ無駄（エラー文が出るだけ）。
+  [ -S "${HOME}/.codex/app-server-control/app-server-control.sock" ] || return 1
+  codex app-server daemon version 2>/dev/null | grep -q '"status":"running"'
+}
+
+write_status() {
+  STATE_NAME="$1" DETAIL="$2" PAIR="${3:-}" OUT="${OUT}" /usr/bin/python3 -c '
+import json, os, datetime
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
+    json.dump({"checkedAt": now, "state": os.environ["STATE_NAME"],
+               "detail": os.environ["DETAIL"], "pairCode": os.environ["PAIR"]},
+              handle, ensure_ascii=False, indent=2)
+'
+}
+
+do_status() {
+  if [ -z "$(command -v codex || true)" ]; then
+    write_status "no-cli" "codex が見つかりません"
+    return 0
+  fi
+  if ! daemon_running; then
+    # 止まっているなら、前に見たエラーはもう関係ない。
+    /bin/rm -f "${ERR_FILE}"
+    write_status "offline" "まだ繋いでいません"
+    return 0
+  fi
+  if [ -s "${ERR_FILE}" ]; then
+    write_status "error" "$(/bin/cat "${ERR_FILE}")"
+    return 0
+  fi
+  write_status "online" "スマホから使えます"
+}
+
+do_start() {
+  if [ -z "$(command -v codex || true)" ]; then
+    echo "codex が見つかりません" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] codex remote start requested" >>"${LOG}"
+  RESULT="$(codex remote-control start 2>&1 || true)"
+  case "${RESULT}" in
+    *errored*|*Error*)
+      # そのまま画面に出すと英語の一文になる。何が起きたかは日本語で言い、
+      # 原文はログに残す。
+      printf '%s\n' "${RESULT}" >>"${LOG}"
+      printf '%s\n' "接続がエラーです。Codex 側で確認が要ります" > "${ERR_FILE}"
+      echo "スマホ連携（Codex）は繋がりませんでした" | tee -a "${LOG}"
+      do_status
+      return 1
+      ;;
+  esac
+  /bin/rm -f "${ERR_FILE}"
+  echo "スマホ連携（Codex）を繋ぎました" | tee -a "${LOG}"
+  do_status
+}
+
+do_stop() {
+  if [ -z "$(command -v codex || true)" ]; then
+    do_status
+    return 1
+  fi
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] codex remote stop requested" >>"${LOG}"
+  codex remote-control stop >>"${LOG}" 2>&1 || true
+  /bin/rm -f "${ERR_FILE}"
+  echo "スマホ連携（Codex）を止めました" | tee -a "${LOG}"
+  do_status
+}
+
+do_pair() {
+  if ! daemon_running; then
+    echo "先に繋いでください" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+  # **ペアリングコードはログに出さない。** 短命だが、これ1つで端末が繋がる。
+  # 画面に出すためだけに状態へ入れる。
+  CODE="$(codex remote-control pair 2>/dev/null | /usr/bin/tr -d '\n' | \
+    /usr/bin/sed -n 's/.*\([A-Za-z0-9][A-Za-z0-9-]\{5,\}\)$/\1/p')"
+  if [ -z "${CODE}" ]; then
+    echo "ペアリングコードを取れませんでした" | tee -a "${LOG}"
+    do_status
+    return 1
+  fi
+  write_status "online" "スマホでこのコードを入れてください" "${CODE}"
+  echo "ペアリングコードを出しました" >>"${LOG}"
+}
+
+case "${1:-status}" in
+  start)  do_start ;;
+  stop)   do_stop ;;
+  status) do_status ;;
+  pair)   do_pair ;;
+  *)      echo "使い方: mulmo-codex-remote start|stop|status|pair" >&2; exit 1 ;;
+esac

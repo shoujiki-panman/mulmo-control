@@ -29,7 +29,13 @@ for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
   [ -f "$f" ] || continue
   case "$f" in *.mjs|*.md) continue ;; esac
   head -1 "$f" | grep -q '^#!' || continue
-  zsh -n "$f" || fail "構文が壊れています: $(basename "$f")"
+  # shebang で見る道具を選ぶ。zsh で python を読ませると必ず落ちる（実際に落ちた）。
+  if head -1 "$f" | grep -q 'python'; then
+    /usr/bin/python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$f" \
+      || fail "構文が壊れています: $(basename "$f")"
+  else
+    zsh -n "$f" || fail "構文が壊れています: $(basename "$f")"
+  fi
 done
 ok "$(ls "${ROOT}/scripts" | wc -l | tr -d ' ') 本 + ルートの .sh"
 
@@ -59,6 +65,8 @@ for f in "${ROOT}/scripts"/* "${ROOT}"/*.sh; do
   [ -f "$f" ] || continue
   case "$f" in *.mjs|*.md|*/mulmoterminal-agent-env) continue ;; esac
   head -1 "$f" | grep -q '^#!' || continue
+  # python には `set -u` が無い。未定義の名前はそもそも例外になる。
+  head -1 "$f" | grep -q 'python' && continue
   grep -qE '^[[:space:]]*set -(u|eu|ue)' "$f" ||
     fail "set -u がありません: $(basename "$f")"
 done
@@ -727,16 +735,19 @@ grep -q 'defaults read "${APP_PLIST}" CFBundleShortVersionString' "${SELF_UPDATE
   || fail "入っている版を Info.plist から読んでいません（Issue #31 / 041）"
 ok "入っている版は Info.plist から読む"
 
-# ── プロジェクトのセッション ────────────────────────────────────
-# SECURITY.md の L 節（116〜125）。Issue #152。
-step "プロジェクトのセッション"
+# ── エージェントのスマホ連携 ────────────────────────────────────
+# SECURITY.md の L 節（116・120・121・128・129）。Issue #160（もとは #152）。
+step "エージェントのスマホ連携"
 
-PROJECT_STATUS="${ROOT}/scripts/mulmo-project-status"
-[ -x "${PROJECT_STATUS}" ] || fail "scripts/mulmo-project-status がありません（Issue #152）"
+CLAUDE_REMOTE="${ROOT}/scripts/mulmo-claude-remote"
+CODEX_REMOTE="${ROOT}/scripts/mulmo-codex-remote"
+URL_SINK="${ROOT}/scripts/mulmo-remote-url-sink"
+for AGENT_SCRIPT in "${CLAUDE_REMOTE}" "${CODEX_REMOTE}" "${URL_SINK}"; do
+  [ -x "${AGENT_SCRIPT}" ] || fail "$(basename "${AGENT_SCRIPT}") がありません（Issue #160）"
+done
 
-# 116 claude の信頼フラグを、こちらから書かない。
+# 116 claude の信頼フラグ（hasTrustDialogAccepted）を、こちらから書かない。
 #
-# ディレクトリの信頼は ~/.claude.json の hasTrustDialogAccepted に入っている。
 # ここを立てれば初回の確認を飛ばせるが、**人間の同意を機械が偽造する形**に
 # なる。読むのはよい（押す前に「確認が要ります」と伝えるため）。書かない。
 TRUST_WRITE="$(grep -rnE 'claude\.json' "${ROOT}/scripts" "${ROOT}/Sources" 2>/dev/null \
@@ -744,178 +755,87 @@ TRUST_WRITE="$(grep -rnE 'claude\.json' "${ROOT}/scripts" "${ROOT}/Sources" 2>/d
   | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
 if [ -n "${TRUST_WRITE}" ]; then
   printf '%s\n' "${TRUST_WRITE}"
-  fail "claude の信頼フラグを書こうとしています。同意は人が踏むものです（Issue #152 / 116）"
+  fail "claude の信頼フラグを書こうとしています。同意は人が踏むものです（Issue #160 / 116）"
 fi
 # 部分一致だと、末尾に1文字足すだけの改名を見逃す（実際に見逃した）。
-# 使われている形（クォートか括弧で閉じる）まで見る。
-TRUST_READ="$(grep -rnE 'hasTrustDialogAccepted["'"'"']' "${ROOT}/scripts" 2>/dev/null || true)"
-[ -n "${TRUST_READ}" ] || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #152 / 116）"
-ok "claude の信頼フラグは読むだけ"
-
-# 信頼を確かめてから起動する。順番が逆だと、信頼していないフォルダで
-# 切り離したまま確認ダイアログが出て、誰にも見えないまま止まる。こちらは
-# 「繋ぎました」と言ってしまう。行番号で見る（112 と同じ形）。
-TRUST_LINE="$(grep -n '\${TRUSTED}' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
-# コメントを数えない。冒頭の説明文にも nohup の語が出るので、そのままだと
-# 「起動行が信頼確認より前にある」と誤って落ちる（実際に落ちた）。
-LAUNCH_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*nohup' "${ROOT}/scripts/mulmo-project-start" | head -1 | cut -d: -f1)"
-if [ -z "${TRUST_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ "${TRUST_LINE}" -ge "${LAUNCH_LINE}" ]; then
-  fail "信頼を確かめる前にセッションを立てています。見えない確認で止まります（Issue #152 / 116）"
+grep -qE 'hasTrustDialogAccepted["'"'"']' "${CLAUDE_REMOTE}" \
+  || fail "信頼済みかを見ていません。押す前に伝えられません（Issue #160 / 116）"
+# 信頼を確かめてから起動する。順番が逆だと、信頼していないフォルダで切り離した
+# まま確認ダイアログが出て、誰にも見えないまま止まる。コメント行は数えない。
+# 確認は2箇所にある（状態を見るときと、立てるとき）。**立てる側**が消えたのを
+# 見つけたいので、`do_start` の中にあることまで見る。ファイルのどこかに1つ
+# あればよい書き方だと、状態側が残っているだけで通ってしまう（実際に通った）。
+START_LINE="$(grep -n '^do_start()' "${CLAUDE_REMOTE}" | head -1 | cut -d: -f1)"
+LAUNCH_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*nohup /usr/bin/script' "${CLAUDE_REMOTE}" | head -1 | cut -d: -f1)"
+TRUST_LINE="$(grep -n 'trusted)" != "yes"' "${CLAUDE_REMOTE}" | cut -d: -f1 \
+  | awk -v lo="${START_LINE:-0}" -v hi="${LAUNCH_LINE:-0}" '$1 > lo && $1 < hi { print $1; exit }')"
+if [ -z "${START_LINE}" ] || [ -z "${LAUNCH_LINE}" ] || [ -z "${TRUST_LINE}" ]; then
+  fail "信頼を確かめる前にセッションを立てています。見えない確認で止まります（Issue #160 / 116）"
 fi
-ok "信頼を確かめてから立てる"
-
-# 117 プロジェクトの登録を shell として実行しない。
-#
-# projects.json は利用者が触るデータ。source すると、紛れ込んだ $(...) が
-# 読んだ側の権限で走る（#67 と同じ穴）。JSON として読むこと。
-grep -qE 'json\.load' "${PROJECT_STATUS}" \
-  || fail "projects.json を JSON として読んでいません（Issue #152 / #67）"
-BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${PROJECT_STATUS}" || true)"
-if [ -n "${BAD_SOURCE}" ]; then
-  printf '%s\n' "${BAD_SOURCE}"
-  fail "プロジェクトの登録を shell として実行しています（Issue #152 / #67）"
-fi
-ok "プロジェクトの登録は JSON として読む"
-
-PROJECT_START="${ROOT}/scripts/mulmo-project-start"
-PROJECT_STOP="${ROOT}/scripts/mulmo-project-stop"
+ok "claude の信頼フラグは読むだけ・確かめてから立てる"
 
 # 120 セッションの画面出力を保存しない。
 #
 # --remote-control は PTY 越しに TUI をそのまま吐く。ファイルに落とすと
-# **会話が平文でログに残る**。立ったかどうかは控えた pid で分かるので、
-# 画面は捨てる。
-[ -f "${PROJECT_START}" ] || fail "scripts/mulmo-project-start がありません（Issue #152）"
-# 起動行は `\` で折り返しているので、畳んでから見る。畳まないと、次の行に
-# ある `>/dev/null` を見落として「捨てていない」と誤って落ちる。
-START_FOLDED="$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) $0 = $0 nxt; else break } print }' "${PROJECT_START}")"
-printf '%s\n' "${START_FOLDED}" | grep -qE 'script -q /dev/null .*>/dev/null' \
-  || fail "セッションの画面出力を捨てていません。会話が平文でログに残ります（Issue #152 / 120）"
+# **会話が平文でログに残る**。行き先は /dev/null か FIFO のどちらかだけ。
+START_FOLDED="$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) $0 = $0 nxt; else break } print }' "${CLAUDE_REMOTE}")"
+LAUNCH="$(printf '%s\n' "${START_FOLDED}" | grep -E 'nohup /usr/bin/script' || true)"
+[ -n "${LAUNCH}" ] || fail "セッションを立てる行が見つかりません（Issue #160 / 120）"
+printf '%s\n' "${LAUNCH}" | grep -q '\${TYPESCRIPT}' \
+  || fail "画面の行き先を直に書いています。/dev/null か FIFO だけにしてください（Issue #160 / 120）"
+grep -q 'TYPESCRIPT="/dev/null"' "${CLAUDE_REMOTE}" \
+  || fail "FIFO を作れないときの行き先が /dev/null ではありません（Issue #160 / 120）"
+grep -q 'mkfifo' "${CLAUDE_REMOTE}" \
+  || fail "画面を FIFO に流していません。ファイルに落ちると会話が平文で残ります（Issue #160 / 120）"
 ok "セッションの画面出力は保存しない"
+
+# 128 拾うのは入口の URL だけ。
+#
+# FIFO を読む側が「拾ったもの以外」を書けば、120 は素通りしたまま会話が
+# ファイルに残る。書く口が1つだけで、そこに渡るのが一致した文字列だけである
+# ことを見る。
+SINK_WRITES="$(grep -nE '^[[:space:]]*[^#[:space:]].*\.write\(' "${URL_SINK}" || true)"
+# 数えるのは「書く行の総数」。`url` を書く行があるかだけ見ると、隣にもう1行
+# 足された分を見逃す（実際に見逃した）。
+WRITE_COUNT="$(printf '%s\n' "${SINK_WRITES}" | grep -c '\.write(' || true)"
+URL_WRITES="$(printf '%s\n' "${SINK_WRITES}" | grep -c 'handle.write(url' || true)"
+if [ "${WRITE_COUNT}" != "1" ] || [ "${URL_WRITES}" != "1" ]; then
+  printf '%s\n' "${SINK_WRITES}"
+  fail "URL 以外を書く口があります。会話が平文で残ります（Issue #160 / 128）"
+fi
+grep -q 'URL = re.compile' "${URL_SINK}" \
+  || fail "URL の形を決めていません（Issue #160 / 128）"
+grep -q 'buffering=0' "${URL_SINK}" \
+  || fail "FIFO を buffering=0 で開いていません。URL がいつまでも取れません（Issue #160 / 128）"
+ok "拾うのは入口の URL だけ"
 
 # 121 止めるのは自分が立てたものだけ。
 #
 # pkill / killall で名前で薙ぐと、同じフォルダで人が手で開いた作業中の
 # セッションまで消える。控えた pid のものだけ落とす。
-BROAD_KILL="$(grep -nE 'pkill|killall' "${PROJECT_START}" "${PROJECT_STOP}" 2>/dev/null \
+BROAD_KILL="$(grep -nE 'pkill|killall' "${CLAUDE_REMOTE}" "${CODEX_REMOTE}" 2>/dev/null \
   | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
 if [ -n "${BROAD_KILL}" ]; then
   printf '%s\n' "${BROAD_KILL}"
-  fail "名前でまとめて止めています。人が開いたセッションまで消えます（Issue #152 / 121）"
+  fail "名前でまとめて止めています。人が開いたセッションまで消えます（Issue #160 / 121）"
 fi
-grep -q 'kill "${PID}"' "${PROJECT_STOP}" \
-  || fail "控えた pid で止めていません（Issue #152 / 121）"
+grep -q 'kill "${PID}"' "${CLAUDE_REMOTE}" \
+  || fail "控えた pid で止めていません（Issue #160 / 121）"
 ok "止めるのは自分が立てたものだけ"
 
-PROJECT_ADD="${ROOT}/scripts/mulmo-project-add"
-PROJECT_REMOVE="${ROOT}/scripts/mulmo-project-remove"
-PROJECT_MOVE="${ROOT}/scripts/mulmo-project-move"
-for W in "${PROJECT_ADD}" "${PROJECT_REMOVE}" "${PROJECT_MOVE}"; do
-  [ -x "${W}" ] || fail "$(basename "${W}") がありません（Issue #152）"
-  # 117 は読む側だけの話ではない。書く側が source すれば同じ穴が開く。
-  grep -qE 'json\.load' "${W}" \
-    || fail "$(basename "${W}") が projects.json を JSON として読んでいません（Issue #152 / #67）"
-  BAD_SOURCE="$(grep -nE '^[[:space:]]*(\.|source)[[:space:]]' "${W}" || true)"
-  if [ -n "${BAD_SOURCE}" ]; then
-    printf '%s\n' "${BAD_SOURCE}"
-    fail "$(basename "${W}") が登録を shell として実行しています（Issue #152 / #67）"
-  fi
-  # 124 書き換えは一時ファイル経由で入れ替える。開いて書いている途中で落ちると、
-  # 登録が半分だけの JSON になり、次に読んだ側は全部を捨てる。
-  grep -q 'os\.replace' "${W}" \
-    || fail "$(basename "${W}") が登録を直接書いています。途中で落ちると全部消えます（Issue #152 / 124）"
-done
-ok "登録を書き換える側も JSON として読み、入れ替えで書く"
-
-# 123 はずす前に止める。
+# 129 ペアリングコードをログに残さない。
 #
-# 一覧から先に消すと、動いているセッションを止める口がどこにも無くなる。
-# 次にログアウトするまで残り続け、こちらからは見えない。行番号で見る。
-STOP_CALL_LINE="$(grep -nE '^[[:space:]]*[^#[:space:]].*mulmo-project-stop' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
-UNREGISTER_LINE="$(grep -n 'os\.replace' "${PROJECT_REMOVE}" | head -1 | cut -d: -f1)"
-if [ -z "${STOP_CALL_LINE}" ] || [ -z "${UNREGISTER_LINE}" ] || [ "${STOP_CALL_LINE}" -ge "${UNREGISTER_LINE}" ]; then
-  fail "はずす前に止めていません。止める口の無いセッションが残ります（Issue #152 / 123）"
+# 短命だが、これ1つで端末が繋がる。run() はスクリプトの stdout をまるごと
+# ~/Library/Logs 配下へ落とすので、echo すれば残る。画面に出すためだけに
+# 状態へ入れる。
+CODE_LEAK="$(grep -rnE '(^|[;&|(]|[[:space:]])(echo|print|printf|tee|cat)([[:space:]]|$)' "${CODEX_REMOTE}" \
+  | grep -E '\$\{?CODE\}?' \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print }' || true)"
+if [ -n "${CODE_LEAK}" ]; then
+  printf '%s\n' "${CODE_LEAK}"
+  fail "ペアリングコードを出力コマンドに渡しています。ログに残ります（Issue #160 / 129）"
 fi
-ok "はずす前に止める"
-
-# ここから先は実際に走らせる。名前が重ならないことは、grep では確かめられない。
-PRJ="$(mktemp -d "${TMPDIR:-/tmp}/mulmo projects XXXXXX")"
-PRJ_CONFIG="${PRJ}/Library/Application Support/Mulmo Control/projects.json"
-mkdir -p "${PRJ}/github/mulmoclaude" "${PRJ}/work/mulmoclaude"
-prj_names() {
-  CONFIG="${PRJ_CONFIG}" /usr/bin/python3 -c '
-import json, os
-try:
-    with open(os.environ["CONFIG"], encoding="utf-8") as handle:
-        print(" ".join(e["name"] for e in json.load(handle)["projects"]))
-except (OSError, ValueError, KeyError, TypeError):
-    print("")
-'
-}
-
-# 122 名前は重ねない。**名前は控えの鍵**で、pid の控えとセッション名がこれで
-# 決まる。同じ名前を2つ登録すると、片方を止めたときにもう片方も止まる。
-# フォルダ名が同じ2つ（github/mulmoclaude と work/mulmoclaude）は普通にある。
-HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
-HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
-PRJ_NAMES="$(prj_names)"
-case "${PRJ_NAMES}" in
-  *" "*) : ;;
-  *) fail "同じフォルダ名の2つを登録できていません: ${PRJ_NAMES}（Issue #152 / 122）" ;;
-esac
-[ "$(printf '%s\n' "${PRJ_NAMES}" | /usr/bin/tr ' ' '\n' | sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = "2" ] \
-  || fail "登録した名前が重なっています: ${PRJ_NAMES}（Issue #152 / 122）"
-ok "フォルダ名が同じでも、名前は重ならない"
-
-# 同じ場所を二度登録しない。押し間違えるたびに増えると、どれが本物か分からなくなる。
-HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/github/mulmoclaude" >/dev/null 2>&1
-[ "$(prj_names)" = "${PRJ_NAMES}" ] \
-  || fail "同じ場所が二重に登録されました: $(prj_names)（Issue #152）"
-ok "同じ場所は二度登録しない"
-
-# 並び替えは入れ替えるだけ。端で押しても、消えたり増えたりしない。
-PRJ_SECOND="${PRJ_NAMES#* }"
-HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
-[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
-  || fail "並び替えが効いていません: $(prj_names)（Issue #152）"
-HOME="${PRJ}" "${PROJECT_MOVE}" "${PRJ_SECOND}" up >/dev/null 2>&1
-[ "$(prj_names)" = "${PRJ_SECOND} ${PRJ_NAMES%% *}" ] \
-  || fail "端で押したら並びが変わりました: $(prj_names)（Issue #152）"
-ok "並び替えは入れ替えるだけ"
-
-# 125 読めない登録の上に書かない。
-#
-# 手で直している最中かもしれない。読めないからと空から作り直すと、
-# 他のプロジェクトの登録ごと消える。読めないと言って、そのまま残すこと。
-printf 'これは JSON ではない\n' > "${PRJ_CONFIG}"
-PRJ_BEFORE="$(/bin/cat "${PRJ_CONFIG}")"
-set +e
-HOME="${PRJ}" "${PROJECT_ADD}" "${PRJ}/work/mulmoclaude" >/dev/null 2>&1
-PRJ_RC=$?
-set -e
-[ "${PRJ_RC}" -ne 0 ] || fail "読めない登録なのに、成功したと言っています（Issue #152 / 125）"
-[ "$(/bin/cat "${PRJ_CONFIG}")" = "${PRJ_BEFORE}" ] \
-  || fail "読めない登録を上書きしました。他の登録ごと消えます（Issue #152 / 125）"
-ok "読めない登録の上には書かない"
-
-# 127 この欄が何をするものかの説明を、1行に押し込まない。
-#
-# `SetupRow` は「短い状態を1行で言う」ための部品で、`lineLimit(1)` と
-# 真ん中を潰す `truncationMode(.middle)` が入っている。説明文を入れると
-# 「フォルダを登録する…ョンを立てられます」になる（実際になった）。
-# 何をするものかはこの文にしか書いていないので、潰すと機能ごと伝わらない。
-EMPTY_STATE="$(awk '/^struct ProjectsEmptyState: View \{/ { inside = 1 } inside { print } inside && /^\}/ && !/^struct/ { exit }' "${ROOT}/Sources/main.swift")"
-[ -n "${EMPTY_STATE}" ] || fail "ProjectsEmptyState がありません。登録が無いときの説明が消えています（Issue #156 / 127）"
-printf '%s\n' "${EMPTY_STATE}" | grep -q 'fixedSize(horizontal: false, vertical: true)' \
-  || fail "登録が無いときの説明が折り返しません。真ん中が潰れて読めなくなります（Issue #156 / 127）"
-# 空のときの枝で SetupRow に戻していないか。戻すと同じ潰れ方をする。
-EMPTY_BRANCH="$(awk '/if model\.projects\.projects\.isEmpty \{/ { inside = 1 } inside { print } inside && /\} else \{/ { exit }' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${EMPTY_BRANCH}" | grep -q 'SetupRow(' \
-  && fail "登録が無いときに SetupRow を使っています。説明が1行に潰れます（Issue #156 / 127）"
-ok "何をするものかの説明は、潰さず折り返す"
-
-rm -rf "${PRJ}"
-
+ok "ペアリングコードはログに残さない"
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────

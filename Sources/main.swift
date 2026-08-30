@@ -122,7 +122,8 @@ private let remoteHostPath = "\(logDir)/remote-host.json"
 // （Issue #78）。以前は前者しか見ていないのに主語なしで「スマホ連携」と出して
 // いたので、MulmoClaude 側が切れていても「使えます」と表示していた。
 private let mcRemoteHostPath = "\(logDir)/remote-host-mulmoclaude.json"
-private let projectsPath = "\(logDir)/projects-status.json"
+private let claudeRemotePath = "\(logDir)/claude-remote.json"
+private let codexRemotePath = "\(logDir)/codex-remote.json"
 private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
@@ -318,7 +319,8 @@ final class ControlModel: ObservableObject {
     @Published var claudeLogin = readClaudeLoginStatus()
     @Published var remoteHost = readRemoteHostStatus()
     @Published var mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
-    @Published var projects = readProjectsStatus()
+    @Published var claudeRemote = readAgentRemote(claudeRemotePath)
+    @Published var codexRemote = readAgentRemote(codexRemotePath)
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -405,7 +407,8 @@ final class ControlModel: ObservableObject {
         let command = """
         \(tool("mulmo-check-remote-host"))
         \(tool("mulmo-check-claude-login"))
-        \(tool("mulmo-project-status"))
+        \(tool("mulmo-claude-remote")) status
+        \(tool("mulmo-codex-remote")) status
         """
         Task.detached { [weak self] in
             let process = Process()
@@ -419,7 +422,8 @@ final class ControlModel: ObservableObject {
                 self.remoteHost = readRemoteHostStatus()
                 self.mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
                 self.claudeLogin = readClaudeLoginStatus()
-                self.projects = readProjectsStatus()
+                self.claudeRemote = readAgentRemote(claudeRemotePath)
+                self.codexRemote = readAgentRemote(codexRemotePath)
             }
         }
     }
@@ -506,7 +510,8 @@ final class ControlModel: ObservableObject {
         claudeLogin = readClaudeLoginStatus()
         remoteHost = readRemoteHostStatus()
         mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
-        projects = readProjectsStatus()
+        claudeRemote = readAgentRemote(claudeRemotePath)
+        codexRemote = readAgentRemote(codexRemotePath)
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -565,48 +570,35 @@ final class ControlModel: ObservableObject {
         """, label: "更新を確認中")
     }
 
-    /// プロジェクトのリモートセッションを繋ぐ / 止める（Issue #152）。
+    /// エージェントのスマホ連携（Issue #160）。
     ///
-    /// 初回のフォルダは、スクリプトがターミナルを開いて信頼確認を出す。
-    /// そこは人が踏むところなので、こちらでは代われない。
-    func startProject(_ name: String) {
-        run("\(tool("mulmo-project-start")) \(shellQuoted(name))",
-            label: "「\(name)」を繋いでいます")
+    /// Claude Code は初回のフォルダだけ、スクリプトがターミナルを開いて信頼確認を
+    /// 出す。そこは人が踏むところなので、こちらでは代われない。
+    func startClaudeRemote() {
+        run("\(tool("mulmo-claude-remote")) start", label: "スマホ連携（Claude Code）を繋いでいます")
     }
 
-    func stopProject(_ name: String) {
-        run("\(tool("mulmo-project-stop")) \(shellQuoted(name))",
-            label: "「\(name)」を止めています")
+    func stopClaudeRemote() {
+        run("\(tool("mulmo-claude-remote")) stop", label: "スマホ連携（Claude Code）を止めています")
     }
 
-    /// フォルダを選んで登録する（Issue #152）。
-    ///
-    /// LSUIElement なので、選択パネルを出す前にアプリを前に出さないと、他の
-    /// ウインドウの後ろに開いて、押せないまま固まったように見える。
-    /// メニューバーの小窓はそのとき閉じるが、選んでいる間は用が無いのでよい。
-    func addProject() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "登録"
-        panel.message = "スマホから使いたいフォルダを選んでください"
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        run("\(tool("mulmo-project-add")) \(shellQuoted(url.path))",
-            label: "「\(url.lastPathComponent)」を登録しています")
+    /// 立てたセッションの入口を開く。**押す先が無いときはボタン自体を出さない**
+    /// ので、ここに来るのは URL があるときだけ。
+    func openClaudeRemote() {
+        openURL(claudeRemote.openURL)
     }
 
-    /// 登録をはずす。動いていればスクリプトが先に止める。一覧から消してから
-    /// 止めると、止める口が無いセッションが残る。
-    func removeProject(_ name: String) {
-        run("\(tool("mulmo-project-remove")) \(shellQuoted(name))",
-            label: "「\(name)」をはずしています")
+    func startCodexRemote() {
+        run("\(tool("mulmo-codex-remote")) start", label: "スマホ連携（Codex）を繋いでいます")
     }
 
-    /// 並び順を入れ替える。動いているセッションには触らない。
-    func moveProject(_ name: String, up: Bool) {
-        run("\(tool("mulmo-project-move")) \(shellQuoted(name)) \(up ? "up" : "down")")
+    func stopCodexRemote() {
+        run("\(tool("mulmo-codex-remote")) stop", label: "スマホ連携（Codex）を止めています")
+    }
+
+    /// スマホと繋ぐための短命なコードを出す。**ログには残さない。**
+    func pairCodexRemote() {
+        run("\(tool("mulmo-codex-remote")) pair", label: "ペアリングコードを出しています")
     }
 
     /// 切れたスマホ連携を繋ぎ直す。初回接続はブラウザでの Google サインインが
@@ -1725,7 +1717,6 @@ struct OperateView: View {
                     Button("入手", action: model.openMCRepo)
                 }
             }
-            ProjectsPanel(model: model)
             InstalledFamilyPanel(model: model)
         }
     }
@@ -1887,145 +1878,6 @@ struct EnvironmentView: View {
     }
 }
 
-/// 登録したプロジェクトごとの、リモートセッションの一覧（Issue #152）。
-///
-/// 普段の行は、スマホ連携の行と同じく押す所がひとつだけ（繋ぐ / 止める）。
-/// 並べ替えと「はずす」は押し間違えると動いているセッションが落ちるので、
-/// 「編集」を押している間だけ出す。
-struct ProjectsPanel: View {
-    @ObservedObject var model: ControlModel
-    @State private var editing = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-
-            if model.projects.projects.isEmpty {
-                ProjectsEmptyState(state: model.projects.state)
-            } else {
-                VStack(spacing: 7) {
-                    ForEach(Array(model.projects.projects.enumerated()), id: \.element.path) { index, project in
-                        if editing {
-                            ProjectEditRow(
-                                project: project,
-                                isFirst: index == 0,
-                                isLast: index == model.projects.projects.count - 1,
-                                model: model
-                            )
-                        } else {
-                            SetupRow(
-                                title: project.name,
-                                detail: projectSessionDetail(project),
-                                ok: projectSessionOK(project),
-                                buttonTitle: projectButtonTitle(project),
-                                action: {
-                                    if project.isRunning {
-                                        model.stopProject(project.name)
-                                    } else {
-                                        model.startProject(project.name)
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Text("プロジェクト")
-                .font(AppFont.section)
-                .foregroundStyle(Palette.primaryText)
-            Spacer()
-            if !model.projects.projects.isEmpty {
-                Button(editing ? "完了" : "編集") { editing.toggle() }
-                    .buttonStyle(.plain)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.accentText)
-            }
-            Button("追加", action: model.addProject)
-                .buttonStyle(.plain)
-                .font(AppFont.small)
-                .foregroundStyle(Palette.accentText)
-        }
-    }
-}
-
-/// 何も登録していないときに、この欄が何をするものかを説明する（Issue #156）。
-///
-/// ここは `SetupRow` を使わない。あれは「短い状態を1行で言う」ための部品で、
-/// `lineLimit(1)` と真ん中を潰す `truncationMode(.middle)` が入っている。
-/// 状態にはそれでよいが、説明文を入れると
-/// 「フォルダを登録する…ョンを立てられます」になって読めない（実際になった）。
-///
-/// この欄が何をするものかは、この文にしか書いていない。潰すと、何の機能か
-/// 分からないまま終わる。
-struct ProjectsEmptyState: View {
-    let state: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // claude が無いのは状態なので、行のまま出す。押せば直るものでは
-            // ないことを、下の説明と混ぜない。
-            if state == "no-cli" {
-                SetupRow(title: "Claude Code", detail: "見つかりません", ok: false)
-            }
-            Text("フォルダを登録すると、そのフォルダで動くセッションを立てられます。立てたセッションは、外出先のスマホから続きを操作できます。")
-                .font(AppFont.small)
-                .foregroundStyle(Palette.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-/// 「編集」の間だけ出る行。並べ替えと、登録をはずす（Issue #152）。
-///
-/// 動いているセッションを「はずす」と、そのセッションは止まる。どれが動いて
-/// いるかは普段と同じ文言（「スマホから使えます」）で出したままにする。
-struct ProjectEditRow: View {
-    let project: ProjectSession
-    let isFirst: Bool
-    let isLast: Bool
-    @ObservedObject var model: ControlModel
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(projectSessionOK(project) ? Palette.ok : Palette.warn)
-                .frame(width: 7, height: 7)
-            Text(project.name)
-                .font(AppFont.rowTitle)
-                .foregroundStyle(Palette.primaryText)
-            Spacer()
-            Text(projectSessionDetail(project))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .font(AppFont.small)
-                .foregroundStyle(Palette.secondaryText)
-            moveButton(systemImage: "chevron.up", disabled: isFirst, up: true)
-            moveButton(systemImage: "chevron.down", disabled: isLast, up: false)
-            Button("はずす") { model.removeProject(project.name) }
-                .buttonStyle(.plain)
-                .font(AppFont.small)
-                .foregroundStyle(Palette.warn)
-        }
-    }
-
-    private func moveButton(systemImage: String, disabled: Bool, up: Bool) -> some View {
-        Button {
-            model.moveProject(project.name, up: up)
-        } label: {
-            Image(systemName: systemImage)
-        }
-        .buttonStyle(.plain)
-        .font(AppFont.small)
-        .foregroundStyle(disabled ? Palette.secondaryText.opacity(0.4) : Palette.accentText)
-        .disabled(disabled)
-    }
-}
-
 struct SetupPanel: View {
     @ObservedObject var model: ControlModel
 
@@ -2052,24 +1904,6 @@ struct SetupPanel: View {
                         buttonTitle: model.claudeLogin.isExpired ? "ログインし直す" : nil,
                         action: model.openClaudeLogin
                     )
-                    SetupRow(
-                        title: "スマホ連携（MulmoTerminal）",
-                        detail: model.remoteHost.detail,
-                        ok: model.remoteHost.state == "online",
-                        buttonTitle: remoteHostButtonTitle(model.remoteHost),
-                        action: model.remoteHost.isOffline || model.remoteHost.canConnectFromControl
-                            ? model.reconnectRemoteHost
-                            : model.openMT
-                    )
-                    SetupRow(
-                        title: "スマホ連携（MulmoClaude）",
-                        detail: model.mcRemoteHost.detail,
-                        ok: model.mcRemoteHost.state == "online",
-                        buttonTitle: remoteHostButtonTitle(model.mcRemoteHost),
-                        action: model.mcRemoteHost.isOffline || model.mcRemoteHost.canConnectFromControl
-                            ? model.reconnectMCRemoteHost
-                            : model.openMC
-                    )
                 } else {
                     SetupRow(
                         title: "MulmoClaude",
@@ -2086,6 +1920,66 @@ struct SetupPanel: View {
                     buttonTitle: model.launchAtLogin ? "やめる" : "オンにする",
                     action: model.toggleLaunchAtLogin
                 )
+            }
+            Hairline()
+                .padding(.vertical, 2)
+            // スマホ連携は4つある。以前は行の名前を「スマホ連携（MulmoTerminal）」
+            // のように書いていたが、幅に入らず「スマホ連携（Mulmo…」と潰れて、
+            // どれがどれだか読めなかった（Issue #156 と同じ形）。主語は見出しに
+            // 出して、行は名前だけにする。
+            Text("スマホ連携")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            VStack(spacing: 7) {
+                if model.mcInstalled {
+                    SetupRow(
+                        title: "MulmoTerminal",
+                        detail: model.remoteHost.detail,
+                        ok: model.remoteHost.state == "online",
+                        buttonTitle: remoteHostButtonTitle(model.remoteHost),
+                        action: model.remoteHost.isOffline || model.remoteHost.canConnectFromControl
+                            ? model.reconnectRemoteHost
+                            : model.openMT
+                    )
+                    SetupRow(
+                        title: "MulmoClaude",
+                        detail: model.mcRemoteHost.detail,
+                        ok: model.mcRemoteHost.state == "online",
+                        buttonTitle: remoteHostButtonTitle(model.mcRemoteHost),
+                        action: model.mcRemoteHost.isOffline || model.mcRemoteHost.canConnectFromControl
+                            ? model.reconnectMCRemoteHost
+                            : model.openMC
+                    )
+                }
+                SetupRow(
+                    title: "Claude Code",
+                    detail: model.claudeRemote.detail,
+                    ok: agentRemoteOK(model.claudeRemote),
+                    buttonTitle: agentRemoteButtonTitle(model.claudeRemote),
+                    action: agentRemoteOK(model.claudeRemote)
+                        ? model.openClaudeRemote
+                        : model.startClaudeRemote,
+                    extraTitle: agentRemoteCanStop(model.claudeRemote) ? "止める" : nil,
+                    extraAction: model.stopClaudeRemote
+                )
+                SetupRow(
+                    title: "Codex",
+                    detail: model.codexRemote.detail,
+                    ok: agentRemoteOK(model.codexRemote),
+                    buttonTitle: agentRemoteButtonTitle(model.codexRemote) ?? (agentRemoteOK(model.codexRemote) ? "コード" : nil),
+                    action: agentRemoteOK(model.codexRemote)
+                        ? model.pairCodexRemote
+                        : model.startCodexRemote,
+                    extraTitle: agentRemoteCanStop(model.codexRemote) ? "止める" : nil,
+                    extraAction: model.stopCodexRemote
+                )
+                if !model.codexRemote.code.isEmpty {
+                    Text("スマホに入れるコード: \(model.codexRemote.code)")
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.accentText)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Hairline()
                 .padding(.vertical, 2)
@@ -2267,6 +2161,10 @@ struct SetupRow: View {
     let ok: Bool
     var buttonTitle: String?
     var action: (() -> Void)?
+    /// 押す所が2つ要る行のため（Issue #160）。エージェントの連携は「開く」と
+    /// 「止める」が同時に要る。渡さなければ今まで通り1つだけ出る。
+    var extraTitle: String?
+    var extraAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2284,6 +2182,12 @@ struct SetupRow: View {
                 .foregroundStyle(Palette.secondaryText)
             if let buttonTitle, let action {
                 Button(buttonTitle, action: action)
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.accentText)
+            }
+            if let extraTitle, let extraAction {
+                Button(extraTitle, action: extraAction)
                     .buttonStyle(.plain)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.accentText)
@@ -2655,17 +2559,13 @@ func readRemoteHostStatus(_ path: String = remoteHostPath) -> RemoteHostStatus {
 }
 
 /// 登録したプロジェクトの一覧と、その稼働状態（Issue #152）。
-struct ProjectsStatus: Decodable {
-    let checkedAt: String
-    let state: String   // ok / empty / no-cli
-    let detail: String
-    let projects: [ProjectSession]
-}
-
-func readProjectsStatus() -> ProjectsStatus {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: projectsPath)),
-          let status = try? JSONDecoder().decode(ProjectsStatus.self, from: data) else {
-        return ProjectsStatus(checkedAt: "", state: "unknown", detail: "未確認", projects: [])
+/// エージェントのスマホ連携の状態を読む（Issue #160）。
+///
+/// 書き置きが無い・壊れているときは「未確認」に落とす。作り話をしない。
+func readAgentRemote(_ path: String) -> AgentRemote {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let status = try? JSONDecoder().decode(AgentRemote.self, from: data) else {
+        return AgentRemote(state: "unknown", detail: "未確認", url: nil, pairCode: nil)
     }
     return status
 }
