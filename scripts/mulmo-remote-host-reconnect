@@ -4,6 +4,17 @@ set -u
 # 切れたスマホ連携を繋ぎ直す。
 # 初回接続はブラウザでの Google サインイン（idToken）が要るのでここでは代われない。
 # 一度繋がっていれば session が発行されているので、それを送れば戻せる。
+#
+# blob の出どころは2つ（Issue #154。MulmoClaude 側の #145 と同じ形）。
+#
+#   1. 動いている MulmoTerminal の `/api/remote-host/status`
+#      → プロセスが生きている（＝接続だけ切れている）ときはこれで足りる
+#   2. Mulmo Control が Keychain に預かった控え
+#      → 接続が切れると 1 は消える。blob はホスト側ではメモリにしか無く、
+#        ブラウザの localStorage にしか残らないため。画面を開いていない間は
+#        繋ぎ直す主体がいないので、控えが要る
+#
+# 2 があるときは、止まっていれば起こしてから繋ぐ。ブラウザは開かない。
 
 PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
@@ -15,10 +26,40 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/mulmoterminal-agent-env"
 BASE="http://${MULMO_AGENT_HOST}:${MULMO_AGENT_PORT}"
 
+# 起動を待つ上限。冷えていると十数秒かかる。
+STARTUP_WAIT_SECONDS=60
+
 mkdir -p "${LOG_DIR}"
 echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] reconnect requested" >>"${LOG}"
 
+# 預かった鍵。中身は一切ログに出さない（Firebase の refreshToken を含む）。
+stashed_session() {
+  /usr/bin/security find-generic-password -w \
+    -s "${MULMO_MT_SESSION_SERVICE}" -a "${MULMO_MT_SESSION_ACCOUNT}" 2>/dev/null || true
+}
+
+# 期限切れの控えを持ち続けると、画面は「繋げる」と言い続けて毎回失敗する。
+forget_stash() {
+  /usr/bin/security delete-generic-password \
+    -s "${MULMO_MT_SESSION_SERVICE}" -a "${MULMO_MT_SESSION_ACCOUNT}" >/dev/null 2>&1 || true
+}
+
 STATUS="$(/usr/bin/curl -s -m 6 "${BASE}/api/remote-host/status" 2>/dev/null || true)"
+
+# MulmoTerminal が止まっているなら、控えがある場合に限って起こす（Issue #154）。
+# 控えが無ければ起こしても Google サインインが要るので、画面へ案内する。
+if [ -z "${STATUS}" ] && [ -n "$(stashed_session)" ]; then
+  echo "MulmoTerminal を起動しています…" | tee -a "${LOG}"
+  "${SCRIPT_DIR}/mulmoterminal-start" >>"${LOG}" 2>&1 || true
+  WAITED=0
+  while [ "${WAITED}" -lt "${STARTUP_WAIT_SECONDS}" ]; do
+    STATUS="$(/usr/bin/curl -s -m 3 "${BASE}/api/remote-host/status" 2>/dev/null || true)"
+    [ -n "${STATUS}" ] && break
+    sleep 2
+    WAITED=$((WAITED + 2))
+  done
+fi
+
 if [ -z "${STATUS}" ]; then
   echo "MulmoTerminal が動いていません。先に起動してください。" | tee -a "${LOG}"
   exit 1
@@ -48,6 +89,9 @@ except ValueError:
     print('')
 ")"
 
+# 生きているプロセスが持っていなければ、預かった控えを使う（Issue #154）。
+[ -z "${SESSION}" ] && SESSION="$(stashed_session)"
+
 if [ -z "${SESSION}" ]; then
   echo "繋ぎ直す手がかりがありません。MulmoTerminal の画面から一度接続してください。" | tee -a "${LOG}"
   exit 2
@@ -61,9 +105,17 @@ print(json.dumps({'session': os.environ['SESSION']}))
 ")" \
   "${BASE}/api/remote-host/reconnect" 2>/dev/null || echo 000)"
 
+unset SESSION
+
 case "${CODE}" in
   200) echo "スマホ連携を繋ぎ直しました" | tee -a "${LOG}" ;;
-  401) echo "接続の有効期限が切れています。MulmoTerminal の画面から繋ぎ直してください。" | tee -a "${LOG}"; exit 2 ;;
+  401)
+    # 401 は「この blob では利用者を復元できない」の意味。控えを持ち続けても
+    # 毎回同じ失敗をするだけなので捨てる。画面は「設定を開く」に戻る。
+    forget_stash
+    echo "接続の有効期限が切れています。MulmoTerminal の画面から繋ぎ直してください。" | tee -a "${LOG}"
+    exit 2
+    ;;
   *)   echo "繋ぎ直せませんでした（HTTP ${CODE}）。しばらく待って、もう一度お試しください。" | tee -a "${LOG}"; exit 1 ;;
 esac
 

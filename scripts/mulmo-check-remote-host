@@ -17,13 +17,22 @@ BASE="http://${MULMO_AGENT_HOST}:${MULMO_AGENT_PORT}"
 
 mkdir -p "${LOG_DIR}"
 
+# 預かった鍵があるかどうか（Issue #154）。中身は読まない。あるかどうかだけ。
+# `-w` を付けないので、この呼び出しは blob そのものを標準出力に出さない。
+MT_STASHED=false
+if /usr/bin/security find-generic-password \
+  -s "${MULMO_MT_SESSION_SERVICE}" -a "${MULMO_MT_SESSION_ACCOUNT}" >/dev/null 2>&1; then
+  MT_STASHED=true
+fi
+
 write() {
   cat > "${OUT}" <<JSON
 {
   "checkedAt": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
   "state": "$1",
   "hasSession": $2,
-  "detail": "$3"
+  "detail": "$3",
+  "hasStash": ${MT_STASHED}
 }
 JSON
 }
@@ -35,7 +44,31 @@ if [ -z "${RAW}" ]; then
   exit 0
 fi
 
-RAW="${RAW}" OUT="${OUT}" /usr/bin/python3 <<'PY'
+# 繋がっているうちに鍵を預かる（Issue #154。MulmoClaude 側の #145 と同じ形）。
+#
+# 接続が切れると、この blob はホスト側から消える。ブラウザの localStorage には
+# 残っているが、MulmoTerminal の画面を開いていない間は繋ぎ直す主体がいない。
+# ここで控えておけば、切れていても Mulmo Control 側から繋げる。
+#
+# **この値を echo / printf / tee に渡さないこと。** run() はスクリプトの
+# stdout/stderr を丸ごと ~/Library/Logs 配下のファイルへ落とす。中身は
+# Firebase の refreshToken を含む。
+MT_SESSION="$(RAW="${RAW}" /usr/bin/python3 -c '
+import json, os
+try:
+    print(json.loads(os.environ["RAW"]).get("session") or "")
+except ValueError:
+    print("")
+')"
+if [ -n "${MT_SESSION}" ]; then
+  /usr/bin/security add-generic-password -U \
+    -s "${MULMO_MT_SESSION_SERVICE}" -a "${MULMO_MT_SESSION_ACCOUNT}" \
+    -w "${MT_SESSION}" >/dev/null 2>&1 || true
+  MT_STASHED=true
+fi
+unset MT_SESSION
+
+RAW="${RAW}" OUT="${OUT}" STASHED="${MT_STASHED}" /usr/bin/python3 <<'PY'
 import json, os, datetime
 
 raw = os.environ["RAW"]
@@ -63,7 +96,8 @@ else:
         detail = "まだ繋いでいません"
 
 with open(out, "w", encoding="utf-8") as f:
-    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail},
+    json.dump({"checkedAt": now, "state": state, "hasSession": has_session, "detail": detail,
+               "hasStash": os.environ.get("STASHED") == "true"},
               f, ensure_ascii=False, indent=2)
 PY
 

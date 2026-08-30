@@ -546,7 +546,7 @@ MT_RECONNECT="${ROOT}/scripts/mulmo-remote-host-reconnect"
 #
 # 対象の変数は、blob そのもの（SESSION / MC_SESSION）、blob を含む API の応答
 # （STATUS / RAW / MC_RAW）、Bearer トークン（TOKEN / MC_TOKEN）。
-SECRET_VARS='SESSION|MC_SESSION|STATUS|RAW|MC_RAW|TOKEN|MC_TOKEN'
+SECRET_VARS='SESSION|MC_SESSION|MT_SESSION|STATUS|RAW|MC_RAW|TOKEN|MC_TOKEN'
 LEAK="$(grep -rnE '(^|[;&|(]|[[:space:]])(echo|print|printf|tee|cat)([[:space:]]|$)' \
   "${MC_RECONNECT}" "${MC_CHECK}" "${MT_RECONNECT}" 2>/dev/null \
   | grep -E "\\\$\\{?(${SECRET_VARS})\\}?" \
@@ -562,7 +562,7 @@ ok "預かった鍵をログに出していない"
 # 書く側・読む側・消す側が別のファイルにある。綴りが食い違うと「預けたのに
 # 読めない」形になり、画面は永遠に `設定を開く` のままになる。#129 は入れる
 # 場所と読む場所が食い違って実際に起きた。
-BARE_SERVICE="$(grep -rn 'mulmo-control-remote-host-mulmoclaude' \
+BARE_SERVICE="$(grep -rn 'mulmo-control-remote-host-' \
   "${ROOT}/scripts" "${ROOT}/uninstall.sh" "${ROOT}/install.sh" 2>/dev/null \
   | grep -v 'scripts/mulmoterminal-agent-env:' || true)"
 if [ -n "${BARE_SERVICE}" ]; then
@@ -582,11 +582,30 @@ ok "鍵の置き場所は共有定義だけが持つ"
 # 401 は「この blob では利用者を復元できない」の意味。持ち続けると画面は
 # 「繋げる」と言い続けて毎回失敗する。アンインストールで残ると、アプリを
 # 消したあとの Mac に refreshToken が残る。
-grep -q 'delete-generic-password' "${MC_RECONNECT}" \
-  || fail "期限切れ（401）の鍵を捨てていません（Issue #145）"
-grep -q 'delete-generic-password' "${ROOT}/uninstall.sh" \
-  || fail "アンインストールで鍵を消していません。refreshToken が残ります（Issue #145）"
-ok "期限切れとアンインストールで鍵を捨てる"
+for RECONNECT in "${MC_RECONNECT}" "${MT_RECONNECT}"; do
+  grep -q 'delete-generic-password' "${RECONNECT}" \
+    || fail "$(basename "${RECONNECT}") が期限切れ（401）の鍵を捨てていません（Issue #145 / #154）"
+done
+# 預かる先は2つある。片方だけ消すと、アプリを消した Mac にもう片方が残る。
+for SERVICE_VAR in MULMO_MC_SESSION_SERVICE MULMO_MT_SESSION_SERVICE; do
+  grep -q "delete-generic-password" "${ROOT}/uninstall.sh" \
+    && grep -q "\${${SERVICE_VAR}}" "${ROOT}/uninstall.sh" \
+    || fail "アンインストールで ${SERVICE_VAR} の鍵を消していません。refreshToken が残ります（Issue #145 / #154）"
+done
+ok "期限切れとアンインストールで鍵を捨てる（両方）"
+
+# 126 預かる先の名前が2つで分かれている。
+#
+# 同じ service 名にすると、あとから預けたほうが先の控えを上書きする。
+# 画面は両方「繋ぐ」と言い続けるのに、押すと相手の blob を送って 401 になる。
+# 気づける形の壊れ方ではない（どちらの行も同じ言葉で失敗する）。
+AGENT_ENV="${ROOT}/scripts/mulmoterminal-agent-env"
+MC_SERVICE_NAME="$(grep -o 'mulmo-control-remote-host-[a-z]*' "${AGENT_ENV}" | sort -u | head -1)"
+SERVICE_COUNT="$(grep -o 'mulmo-control-remote-host-[a-z]*' "${AGENT_ENV}" | sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+if [ "${SERVICE_COUNT}" -lt 2 ]; then
+  fail "預かる先の名前が分かれていません（${MC_SERVICE_NAME}）。後から預けたほうが先を潰します（Issue #154 / 126）"
+fi
+ok "預かる先の名前は2つで分かれている"
 
 # 112 繋がっているときに reconnect を叩かない。
 #
