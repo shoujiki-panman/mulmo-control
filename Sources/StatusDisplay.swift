@@ -42,3 +42,51 @@ struct RemoteHostStatus: Decodable {
     /// MulmoClaude が止まっていても、預かった鍵で繋げる状態か。
     var canConnectFromControl: Bool { hasStash == true }
 }
+
+/// 登録したプロジェクトと、そこに立てたリモートセッション（Issue #152）。
+///
+/// スマホから使うので、**セッション名がそのまま向こうで探す手がかり**になる。
+///
+/// 「繋がっている」と言ってよいのは Mulmo Control が立てたものが生きている
+/// ときだけ。同じフォルダで人が手で開いたセッションを数えると、止めたのに
+/// 「動作中」と出る（実測でそうなった）。
+struct ProjectSession: Decodable {
+    let name: String
+    let path: String
+    /// 登録したディレクトリが実在するか。消したあとも登録は残る。
+    let exists: Bool
+    /// claude 側がこのディレクトリの信頼確認を通しているか。通っていないと
+    /// 初回にターミナルが開いて人が答えることになるので、押す前に伝える。
+    let trusted: Bool
+    let autoStart: Bool
+    /// 立てたセッションの名前。止まっているときは空。
+    let sessionName: String
+    /// running / stopped
+    let status: String
+
+    var isRunning: Bool { status == "running" }
+}
+
+/// プロジェクトの行に出す説明。
+///
+/// 「停止中」と「フォルダが無い」を混ぜないこと。押せば直るのは前者だけで、
+/// 後者は登録し直すしかない（#23 で「切れた」と「繋いでいない」を混ぜて
+/// 時間を使ったのと同じ形）。
+func projectSessionDetail(_ project: ProjectSession) -> String {
+    if !project.exists { return "フォルダが見つかりません" }
+    if !project.isRunning {
+        return project.trusted ? "停止中" : "停止中・初回は確認が要ります"
+    }
+    return project.sessionName.isEmpty ? "スマホから使えます" : project.sessionName
+}
+
+/// 行に出すボタンの文字。フォルダが無いときは押す先が無いので出さない。
+func projectButtonTitle(_ project: ProjectSession) -> String? {
+    if !project.exists { return nil }
+    return project.isRunning ? "止める" : "繋ぐ"
+}
+
+/// 行の左の印を緑にしてよいか。動いていて、かつ実在するときだけ。
+func projectSessionOK(_ project: ProjectSession) -> Bool {
+    project.exists && project.isRunning
+}

@@ -1,0 +1,123 @@
+#!/bin/zsh
+set -u
+
+# プロジェクトを登録する（Issue #152）。
+#
+#   使い方: mulmo-project-add <フォルダのパス>
+#
+# 名前はフォルダ名から作る。同じ名前が既に居たら、親フォルダの名前を前に
+# 付ける（`github/mulmoclaude` と `work/mulmoclaude` は両方置きたくなる）。
+# それでも衝突したら連番。**名前は控えの鍵**で、pid の控えとセッション名が
+# これで決まるので、ここで重ならないようにしておかないと、片方を止めたら
+# もう片方も止まる。
+#
+# projects.json は利用者が触るデータなので、shell として実行しない（Issue #67）。
+# JSON として読み、書くときは同じフォルダの一時ファイル経由で入れ替える
+# （途中で落ちても、壊れた登録が残らない）。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_SUPPORT="${HOME}/Library/Application Support/Mulmo Control"
+CONFIG="${APP_SUPPORT}/projects.json"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/projects.log"
+
+TARGET="${1:-}"
+mkdir -p "${LOG_DIR}" "${APP_SUPPORT}"
+
+if [ -z "${TARGET}" ]; then
+  echo "フォルダを渡してください" | tee -a "${LOG}"
+  exit 1
+fi
+if [ ! -d "${TARGET}" ]; then
+  echo "フォルダが見つかりません: ${TARGET}" | tee -a "${LOG}"
+  exit 1
+fi
+
+RESULT="$(TARGET="${TARGET}" CONFIG="${CONFIG}" HOME="${HOME}" /usr/bin/python3 <<'PY'
+import json, os, sys, tempfile
+
+config_path = os.environ["CONFIG"]
+target = os.path.realpath(os.path.expanduser(os.environ["TARGET"]))
+
+# 読めない登録の上に書かない。手で直している最中かもしれず、上書きすると
+# 他のプロジェクトごと消える。読めないと言って、そのまま残す。
+if os.path.exists(config_path):
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        config = None
+    if not isinstance(config, dict) or not isinstance(config.get("projects"), list):
+        print("broken")
+        print("")
+        sys.exit(0)
+else:
+    config = {"projects": []}
+entries = [e for e in config["projects"] if isinstance(e, dict) and e.get("name") and e.get("path")]
+
+for entry in entries:
+    if os.path.realpath(os.path.expanduser(entry["path"])) == target:
+        print("already")
+        print(entry["name"])
+        sys.exit(0)
+
+taken = {str(e["name"]) for e in entries}
+base = os.path.basename(target)
+parent = os.path.basename(os.path.dirname(target))
+candidates = [base]
+if parent:
+    candidates.append(parent + "-" + base)
+candidates += ["%s-%d" % (base, n) for n in range(2, 100)]
+name = next((c for c in candidates if c and c not in taken), None)
+if not name:
+    print("noname")
+    print("")
+    sys.exit(0)
+
+# ~ で持つ。他の Mac に設定を持って行っても、そのまま読める。
+home = os.environ["HOME"]
+stored = "~" + target[len(home):] if target == home or target.startswith(home + os.sep) else target
+
+entries.append({"name": name, "path": stored, "autoStart": False})
+config["projects"] = entries
+
+directory = os.path.dirname(config_path)
+handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=directory, delete=False)
+try:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+    handle.close()
+    os.replace(handle.name, config_path)
+except BaseException:
+    os.unlink(handle.name)
+    raise
+print("added")
+print(name)
+PY
+)" || {
+  echo "登録に失敗しました" | tee -a "${LOG}"
+  exit 1
+}
+
+STATE="$(printf '%s\n' "${RESULT}" | /usr/bin/sed -n 1p)"
+NAME="$(printf '%s\n' "${RESULT}" | /usr/bin/sed -n 2p)"
+
+case "${STATE}" in
+  added)
+    echo "「${NAME}」を登録しました" | tee -a "${LOG}"
+    ;;
+  already)
+    echo "「${NAME}」として、すでに登録されています" | tee -a "${LOG}"
+    ;;
+  broken)
+    echo "登録の読み取りに失敗しました: ${CONFIG}" | tee -a "${LOG}"
+    exit 1
+    ;;
+  *)
+    echo "名前を決められませんでした: ${TARGET}" | tee -a "${LOG}"
+    exit 1
+    ;;
+esac
+
+"${SCRIPT_DIR}/mulmo-project-status" >/dev/null 2>&1 || true
