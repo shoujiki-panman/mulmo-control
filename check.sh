@@ -873,9 +873,14 @@ ok "行に出す説明は、入る長さで書く"
 # 押せば直ると思わせたまま、裏で無駄を回すことになる。先に見て、引き返す。
 grep -q 'another_app_serving' "${CODEX_REMOTE}" \
   || fail "先に繋いでいるアプリを見ていません。409 を回し続けます（Issue #164 / 132）"
-GUARD_LINE="$(grep -n '^  if another_app_serving; then' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
+# 確かめる箇所は2つある（状態を見るときと、繋ぐとき）。**繋ぐ側**が消えたのを
+# 見つけたいので、`do_start` の中にあることまで見る。ファイルのどこかに1つ
+# あればよい書き方だと、状態側が残っているだけで通る（116 で同じ穴を踏んだ）。
+CODEX_START_LINE="$(grep -n '^do_start()' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
 START_CALL="$(grep -n 'codex remote-control start' "${CODEX_REMOTE}" | head -1 | cut -d: -f1)"
-if [ -z "${GUARD_LINE}" ] || [ -z "${START_CALL}" ] || [ "${GUARD_LINE}" -ge "${START_CALL}" ]; then
+GUARD_LINE="$(grep -n '^  if another_app_serving; then' "${CODEX_REMOTE}" | cut -d: -f1 \
+  | awk -v lo="${CODEX_START_LINE:-0}" -v hi="${START_CALL:-0}" '$1 > lo && $1 < hi { print $1; exit }')"
+if [ -z "${GUARD_LINE}" ] || [ -z "${START_CALL}" ]; then
   fail "枠を確かめる前に繋ぎに行っています。409 を回し続けます（Issue #164 / 132）"
 fi
 # 弾かれたまま置くのも同じこと。畳む口があることを見る。
