@@ -59,32 +59,33 @@ private let stashes: [Bool?] = [true, false, nil]
 
 /// プロジェクトの行（Issue #152）。判断に効く入力は3つ:
 /// 実在するか / 動いているか / 信頼済みか。2×2×2 = 8通りを全部並べる。
-private struct ProjectCase {
-    let exists: Bool
-    let running: Bool
-    let trusted: Bool
-    let expectedDetail: String
+private struct AgentCase {
+    let state: String
+    let hasURL: Bool
     let expectedButton: String?
+    let expectedOK: Bool
+    let expectedCanStop: Bool
 }
 
-private func projectCases() -> [ProjectCase] {
-    var built: [ProjectCase] = []
-    for exists in [true, false] {
-        for running in [true, false] {
-            for trusted in [true, false] {
-                let detail: String
-                if !exists {
-                    detail = "フォルダが見つかりません"
-                } else if !running {
-                    detail = trusted ? "停止中" : "停止中・初回は確認が要ります"
-                } else {
-                    // 環境タブのスマホ連携の行と同じ言葉（Issue #158）
-                    detail = "スマホから使えます"
-                }
-                let button: String? = exists ? (running ? "止める" : "繋ぐ") : nil
-                built.append(ProjectCase(exists: exists, running: running, trusted: trusted,
-                                         expectedDetail: detail, expectedButton: button))
+/// 状態 × 入口の有無。表を手で並べず、軸から組み立てる。1行消すと落ちる。
+private func agentCases() -> [AgentCase] {
+    var built: [AgentCase] = []
+    for state in ["online", "offline", "untrusted", "error", "no-cli", "no-dir"] {
+        for hasURL in [true, false] {
+            let button: String?
+            if state == "no-cli" || state == "no-dir" {
+                button = nil
+            } else if state == "online" {
+                // 入口を示せないなら押す先が無い（#152 で実際に無かった）
+                button = hasURL ? "開く" : nil
+            } else {
+                button = "繋ぐ"
             }
+            built.append(AgentCase(
+                state: state, hasURL: hasURL, expectedButton: button,
+                expectedOK: state == "online",
+                expectedCanStop: state == "online" || state == "error"
+            ))
         }
     }
     return built
@@ -129,34 +130,33 @@ struct StatusDisplayTest {
                 ))
             }
         }
-        // ③ プロジェクトの行（Issue #152）
-        let projects = projectCases()
-        if projects.count != 8 {
-            FileHandle.standardError.write(Data("プロジェクトの組み合わせが8通りありません\n".utf8))
+        // ③ エージェントのスマホ連携（Issue #160）
+        let agents = agentCases()
+        if agents.count != 12 {
+            FileHandle.standardError.write(Data("エージェント連携の組み合わせが12通りありません\n".utf8))
             failures += 1
         }
-        for item in projects {
-            let project = ProjectSession(
-                name: "p", path: "~/p", exists: item.exists, trusted: item.trusted,
-                autoStart: false, status: item.running ? "running" : "stopped"
+        for item in agents {
+            let status = AgentRemote(
+                state: item.state, detail: "",
+                url: item.hasURL ? "https://claude.ai/code/session_01ABC" : "",
+                pairCode: nil
             )
-            let detail = projectSessionDetail(project)
-            if detail != item.expectedDetail {
-                failures += 1
-                FileHandle.standardError.write(Data(
-                    "  実在=\(item.exists) 動作=\(item.running) 信頼=\(item.trusted): 期待 \(item.expectedDetail) / 実際 \(detail)\n".utf8))
-            }
-            let button = projectButtonTitle(project)
+            let button = agentRemoteButtonTitle(status)
             if button != item.expectedButton {
                 failures += 1
                 FileHandle.standardError.write(Data(
-                    "  実在=\(item.exists) 動作=\(item.running): ボタンの期待 \(show(item.expectedButton)) / 実際 \(show(button))\n".utf8))
+                    "  state=\(item.state) url=\(item.hasURL): ボタンの期待 \(show(item.expectedButton)) / 実際 \(show(button))\n".utf8))
             }
-            let expectOK = item.exists && item.running
-            if projectSessionOK(project) != expectOK {
+            if agentRemoteOK(status) != item.expectedOK {
                 failures += 1
                 FileHandle.standardError.write(Data(
-                    "  実在=\(item.exists) 動作=\(item.running): 印の期待 \(expectOK) / 実際 \(projectSessionOK(project))\n".utf8))
+                    "  state=\(item.state): 印の期待 \(item.expectedOK) / 実際 \(agentRemoteOK(status))\n".utf8))
+            }
+            if agentRemoteCanStop(status) != item.expectedCanStop {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  state=\(item.state): 止める口の期待 \(item.expectedCanStop) / 実際 \(agentRemoteCanStop(status))\n".utf8))
             }
         }
 
@@ -164,6 +164,6 @@ struct StatusDisplayTest {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + プロジェクト \(projects.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通りすべて一致")
     }
 }

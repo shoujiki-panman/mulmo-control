@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+"""リモートセッションの画面から、入口の URL だけを拾う（Issue #160）。
+
+    使い方: mulmo-remote-url-sink <FIFO> <控えるファイル>
+
+`claude --remote-control` は立ち上がるとこう言う:
+
+    /remote-control is active · Continue here, on your phone,
+      or at https://claude.ai/code/session_01S3aAaSLtL8yofhMcavqbYM
+
+**この1行が入口**で、無いと繋がっても開く先が分からない（#152 で実際に
+そうなった）。一方で画面の中身は会話そのものなので、**ファイルに落とすと
+平文で残る**。だから読み捨てにして、URL に一致した部分だけを書く。
+
+ここが書くのは `https://claude.ai/code/session_...` に一致した文字列だけ。
+それ以外は一切書かない。FIFO は最後まで読み続ける（読み手が消えると
+script(1) が SIGPIPE で落ち、セッションごと死ぬ）。
+"""
+import os
+import re
+import sys
+
+URL = re.compile(rb"https://claude\.ai/code/session_[A-Za-z0-9_-]+")
+# 端末出力は途中で切れる。境目をまたぐ URL を落とさないよう少しだけ持ち越す。
+CARRY = 256
+
+
+def write(path, url):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(url + "\n")
+    os.replace(tmp, path)
+
+
+def main():
+    if len(sys.argv) != 3:
+        return 1
+    fifo, out = sys.argv[1], sys.argv[2]
+    tail = b""
+    found = False
+    # buffering=0 で開くこと。既定の BufferedReader だと read(n) が n バイト
+    # 貯まるまで返らず、2KB ほどの起動画面では**永久に待つ**（実際に待った）。
+    with open(fifo, "rb", buffering=0) as handle:
+        while True:
+            chunk = handle.read(4096)
+            if not chunk:
+                break
+            if found:
+                continue
+            match = URL.search(tail + chunk)
+            if match:
+                write(out, match.group(0).decode("ascii"))
+                found = True
+                tail = b""
+                continue
+            tail = (tail + chunk)[-CARRY:]
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
