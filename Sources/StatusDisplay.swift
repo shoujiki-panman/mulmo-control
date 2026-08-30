@@ -80,6 +80,20 @@ func agentRemoteButtonTitle(_ status: AgentRemote) -> String? {
     return "繋ぐ"
 }
 
+/// Codex の行に出すボタンの文字（Issue #166）。
+///
+/// Codex に入口の URL は無い。代わりに、繋いだあとはペアリングコードを出す口が
+/// 要る。**枠が埋まっているとき（taken）は出さない。** コードを出すのは
+/// こちらのデーモンで、そのとき動いているのは別のアプリだから、押しても
+/// 「先に繋いでください」になる（実際になった）。
+///
+/// ここに置いてあるのは、**画面側で分岐を足すと対応表を通らないから**。
+/// 一度そうして、押すと必ず失敗するボタンを出した。
+func codexButtonTitle(_ status: AgentRemote) -> String? {
+    if status.state == "online" { return "コード" }
+    return agentRemoteButtonTitle(status)
+}
+
 /// 止める口を出してよいか。動いているものにしか出さない。
 func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
     status.state == "online" || status.state == "error"

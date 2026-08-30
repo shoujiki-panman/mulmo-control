@@ -891,6 +891,19 @@ printf '%s\n' "${FAIL_BRANCH}" | grep -q 'codex remote-control stop' \
   || fail "弾かれた枝でデーモンを畳んでいません。409 を回し続けます（Issue #164 / 132）"
 ok "枠が埋まっているときは繋ぎに行かない"
 
+# 133 行のボタンを、画面側で足さない。
+#
+# 状態と表示の対応は StatusDisplay.swift が1か所で持ち、14通りの表と突き合わせて
+# いる。画面側で `?? ...` と継ぎ足すと、その分岐は表を通らない。実際に
+# `agentRemoteButtonTitle(...) ?? (ok ? "コード" : nil)` と足して、**押すと必ず
+# 失敗するボタン**を出した（#166）。継ぎ足しを禁じる。
+PATCHED_BUTTON="$(grep -n 'buttonTitle:.*??' "${ROOT}/Sources/main.swift" || true)"
+if [ -n "${PATCHED_BUTTON}" ]; then
+  printf '%s\n' "${PATCHED_BUTTON}"
+  fail "行のボタンを画面側で継ぎ足しています。対応表を通りません（Issue #166 / 133）"
+fi
+ok "行のボタンは対応表が決める"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。

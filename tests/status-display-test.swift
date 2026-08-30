@@ -63,6 +63,7 @@ private struct AgentCase {
     let state: String
     let hasURL: Bool
     let expectedButton: String?
+    let expectedCodexButton: String?
     let expectedOK: Bool
     let expectedCanStop: Bool
 }
@@ -82,8 +83,11 @@ private func agentCases() -> [AgentCase] {
             } else {
                 button = "繋ぐ"
             }
+            // Codex に入口の URL は無い。繋がっているときだけコードの口を出す
+            let codexButton: String? = state == "online" ? "コード" : button
             built.append(AgentCase(
                 state: state, hasURL: hasURL, expectedButton: button,
+                expectedCodexButton: codexButton,
                 expectedOK: state == "online" || state == "taken",
                 expectedCanStop: state == "online" || state == "error"
             ))
@@ -148,6 +152,12 @@ struct StatusDisplayTest {
                 failures += 1
                 FileHandle.standardError.write(Data(
                     "  state=\(item.state) url=\(item.hasURL): ボタンの期待 \(show(item.expectedButton)) / 実際 \(show(button))\n".utf8))
+            }
+            let codexButton = codexButtonTitle(status)
+            if codexButton != item.expectedCodexButton {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  state=\(item.state): Codex のボタンの期待 \(show(item.expectedCodexButton)) / 実際 \(show(codexButton))\n".utf8))
             }
             if agentRemoteOK(status) != item.expectedOK {
                 failures += 1
