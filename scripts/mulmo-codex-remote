@@ -40,7 +40,7 @@ with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
 
 do_status() {
   if [ -z "$(command -v codex || true)" ]; then
-    write_status "no-cli" "codex が見つかりません"
+    write_status "no-cli" "見つかりません"
     return 0
   fi
   if ! daemon_running; then
@@ -69,7 +69,7 @@ do_start() {
       # そのまま画面に出すと英語の一文になる。何が起きたかは日本語で言い、
       # 原文はログに残す。
       printf '%s\n' "${RESULT}" >>"${LOG}"
-      printf '%s\n' "接続がエラーです。Codex 側で確認が要ります" > "${ERR_FILE}"
+      printf '%s\n' "接続がエラーです" > "${ERR_FILE}"
       echo "スマホ連携（Codex）は繋がりませんでした" | tee -a "${LOG}"
       do_status
       return 1
@@ -107,7 +107,7 @@ do_pair() {
     do_status
     return 1
   fi
-  write_status "online" "スマホでこのコードを入れてください" "${CODE}"
+  write_status "online" "コードが出ました" "${CODE}"
   echo "ペアリングコードを出しました" >>"${LOG}"
 }
 

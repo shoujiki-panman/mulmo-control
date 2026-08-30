@@ -1300,8 +1300,12 @@ struct ControlView: View {
             header
             if let actionText = model.actionText {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(0.62)
+                    // 終わって失敗した後も回していたので、まだ動いているように
+                    // 見えていた（Issue #162）。回すのは動いている間だけ。
+                    if !actionText.contains("失敗") {
+                        ProgressView()
+                            .scaleEffect(0.62)
+                    }
                     Text(actionText)
                         .font(AppFont.body)
                         .foregroundStyle(Palette.secondaryText)
