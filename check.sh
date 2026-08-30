@@ -898,6 +898,22 @@ set -e
   || fail "読めない登録を上書きしました。他の登録ごと消えます（Issue #152 / 125）"
 ok "読めない登録の上には書かない"
 
+# 127 この欄が何をするものかの説明を、1行に押し込まない。
+#
+# `SetupRow` は「短い状態を1行で言う」ための部品で、`lineLimit(1)` と
+# 真ん中を潰す `truncationMode(.middle)` が入っている。説明文を入れると
+# 「フォルダを登録する…ョンを立てられます」になる（実際になった）。
+# 何をするものかはこの文にしか書いていないので、潰すと機能ごと伝わらない。
+EMPTY_STATE="$(awk '/^struct ProjectsEmptyState: View \{/ { inside = 1 } inside { print } inside && /^\}/ && !/^struct/ { exit }' "${ROOT}/Sources/main.swift")"
+[ -n "${EMPTY_STATE}" ] || fail "ProjectsEmptyState がありません。登録が無いときの説明が消えています（Issue #156 / 127）"
+printf '%s\n' "${EMPTY_STATE}" | grep -q 'fixedSize(horizontal: false, vertical: true)' \
+  || fail "登録が無いときの説明が折り返しません。真ん中が潰れて読めなくなります（Issue #156 / 127）"
+# 空のときの枝で SetupRow に戻していないか。戻すと同じ潰れ方をする。
+EMPTY_BRANCH="$(awk '/if model\.projects\.projects\.isEmpty \{/ { inside = 1 } inside { print } inside && /\} else \{/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${EMPTY_BRANCH}" | grep -q 'SetupRow(' \
+  && fail "登録が無いときに SetupRow を使っています。説明が1行に潰れます（Issue #156 / 127）"
+ok "何をするものかの説明は、潰さず折り返す"
+
 rm -rf "${PRJ}"
 
 
