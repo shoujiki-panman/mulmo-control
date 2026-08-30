@@ -1970,8 +1970,8 @@ struct SetupPanel: View {
                     title: "Codex",
                     detail: model.codexRemote.detail,
                     ok: agentRemoteOK(model.codexRemote),
-                    buttonTitle: agentRemoteButtonTitle(model.codexRemote) ?? (agentRemoteOK(model.codexRemote) ? "コード" : nil),
-                    action: agentRemoteOK(model.codexRemote)
+                    buttonTitle: codexButtonTitle(model.codexRemote),
+                    action: model.codexRemote.state == "online"
                         ? model.pairCodexRemote
                         : model.startCodexRemote,
                     extraTitle: agentRemoteCanStop(model.codexRemote) ? "止める" : nil,
