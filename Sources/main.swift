@@ -1589,6 +1589,88 @@ struct TopTabs: View {
 /// 上限に当たった、のいずれでも「読めません」と言いながら GitHub へ飛ぶボタン
 /// は出す。取得を前提に画面を組むと、繋がらない日にいちばん困る人が行き先を
 /// 失う。
+/// リリースノートの本文を組み直す（Issue #178）。
+///
+/// 素通しで `Text` に渡すと `##` と `**` とバッククォートがそのまま出る。行も
+/// 元のノートが80桁で折ってあるぶんと画面幅の折り返しが二重にかかって、文の
+/// 途中で切れて見える。
+///
+/// **Markdown を全部解釈しようとしない。** 実際にノートで使っているのは見出し・
+/// 箇条書き・強調・インラインコードの4つだけで、使っていない記法のために
+/// 壊れやすい実装を持つ理由が無い。
+struct ReleaseNotesBody: View {
+    let text: String
+
+    /// 段落単位に畳む。空行が区切り、段落の中の改行は空白にする（元のノートは
+    /// 80桁で折ってあるので、畳まないと画面幅と二重に折り返される）。
+    private var blocks: [(id: Int, kind: Kind, text: String)] {
+        enum State { case none }
+        var result: [(id: Int, kind: Kind, text: String)] = []
+        var paragraph: [String] = []
+        func flush() {
+            guard !paragraph.isEmpty else { return }
+            result.append((result.count, .paragraph, paragraph.joined(separator: " ")))
+            paragraph = []
+        }
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                flush()
+                continue
+            }
+            if let heading = line.range(of: "^#{1,6}[ \t]+", options: .regularExpression) {
+                flush()
+                result.append((result.count, .heading, String(line[heading.upperBound...])))
+                continue
+            }
+            if let bullet = line.range(of: "^[-*][ \t]+", options: .regularExpression) {
+                flush()
+                result.append((result.count, .bullet, String(line[bullet.upperBound...])))
+                continue
+            }
+            paragraph.append(line)
+        }
+        flush()
+        return result
+    }
+
+    enum Kind { case heading, bullet, paragraph }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(blocks, id: \.id) { block in
+                switch block.kind {
+                case .heading:
+                    Text(inline(block.text))
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                        .padding(.top, block.id == 0 ? 0 : 4)
+                case .bullet:
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("・").foregroundStyle(Palette.secondaryText)
+                        Text(inline(block.text))
+                    }
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.primaryText)
+                case .paragraph:
+                    Text(inline(block.text))
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.primaryText)
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 強調とインラインコードだけ。解釈できない書き方が来たら、記号を落として
+    /// 素の文字にする — 記号が出るよりは読める。
+    private func inline(_ source: String) -> AttributedString {
+        if let parsed = try? AttributedString(markdown: source) { return parsed }
+        return AttributedString(source.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: ""))
+    }
+}
+
 struct ReleaseNotesButton: View {
     @ObservedObject var model: ControlModel
     @State private var showsDetail = false
@@ -1606,8 +1688,11 @@ struct ReleaseNotesButton: View {
         .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 if let notes = model.releaseNotes {
+                    // 版番号だけでは、何の版か分からない（Issue #178）。同じ画面に
+                    // MulmoCast / MulmoCast Vision / MulmoBridge CLI の版が並んで
+                    // いるので、アプリ名まで書いて初めて特定できる。
                     HStack(spacing: 6) {
-                        Text(notes.tag)
+                        Text("Mulmo Control \(notes.tag)")
                             .font(AppFont.section)
                             .foregroundStyle(Palette.primaryText)
                         Text(notes.date)
@@ -1615,11 +1700,7 @@ struct ReleaseNotesButton: View {
                             .foregroundStyle(Palette.secondaryText)
                     }
                     ScrollView {
-                        Text(notes.body)
-                            .font(AppFont.small)
-                            .foregroundStyle(Palette.primaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ReleaseNotesBody(text: notes.body)
                             .textSelection(.enabled)
                     }
                     .frame(maxHeight: 280)

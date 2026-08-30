@@ -487,6 +487,20 @@ grep -q 'ReleaseNotesButton(model: model)' "${ROOT}/Sources/main.swift" \
   || fail "リリースノートを開く口が更新の帯にありません（Issue #176）"
 ok "リリースノートが読める（取れない日も飛べる）"
 
+# ── 何のリリースノートか分かること（Issue #178）─────────────────
+# 版番号だけでは特定できない。同じ画面に MulmoCast / MulmoCast Vision /
+# MulmoBridge CLI の版が並んでいる。
+sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" \
+  | grep -q 'Text("Mulmo Control \\(notes.tag)")' \
+  || fail "リリースノートの見出しにアプリ名がありません（Issue #178）"
+
+# 本文を素通しで描かない。`##` や `**` がそのまま出る。
+sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" | grep -q 'ReleaseNotesBody(text: notes.body)' \
+  || fail "リリースノートの本文が組み直しを通っていません（Issue #178）"
+sed -n '/struct ReleaseNotesButton/,/^}/p' "${ROOT}/Sources/main.swift" | grep -q 'Text(notes.body)' \
+  && fail "リリースノートの本文を素通しで描いています（Issue #178）"
+ok "何のリリースノートか分かる"
+
 # ── 止めたら止まること（Issue #172）──────────────────────────────
 # ポートを持っているプロセスだけ落としても、MulmoClaude は止まらない。親の
 # `dev-server.mjs` は**落ちた子を起こし直すのが仕事**なので、すぐ戻ってくる。
