@@ -15,8 +15,9 @@
 func remoteHostButtonTitle(_ status: RemoteHostStatus) -> String? {
     if status.state == "online" { return nil }
     if status.isOffline { return "繋ぎ直す" }
-    // 鍵を預かっていれば、MulmoClaude が止まっていても繋げる（Issue #145）。
-    // 「繋ぎ直す」と分けているのは、押したときに起動まで走るのがこちらだけだから。
+    // 鍵を預かっていれば、本体が止まっていても繋げる（Issue #145 / #154）。
+    // 「繋ぎ直す」と分けているのは、押したときに起動まで走るのがこちらだから。
+    // 2行とも同じ形になったので、ここも2行で共通のまま。
     if status.canConnectFromControl { return "繋ぐ" }
     return "設定を開く"
 }
@@ -28,12 +29,12 @@ struct RemoteHostStatus: Decodable {
     let state: String   // online / offline / never / unknown
     let hasSession: Bool
     let detail: String
-    /// Mulmo Control が Keychain に鍵を預かっているか（Issue #145）。
+    /// Mulmo Control が Keychain に鍵を預かっているか（Issue #145 / #154）。
     ///
-    /// Optional なのは、MulmoTerminal 側の書き置きにこの項目が無いから。
-    /// 非 Optional にすると、項目が1つ足りないだけで復号ごと失敗し、画面が
-    /// 「未確認」に落ちる（SelfUpdateStatus で一度踏んだ形）。古い版が書いた
-    /// MulmoClaude 側の書き置きにも無いので、更新直後も同じことが起きる。
+    /// Optional のままにしてある。2行とも書くようになったが、**更新した直後は
+    /// 古い版が書いた書き置きが残っている**。非 Optional にすると、項目が1つ
+    /// 足りないだけで復号ごと失敗し、画面が「未確認」に落ちる
+    /// （SelfUpdateStatus で一度踏んだ形）。
     let hasStash: Bool?
 
     var isOffline: Bool { state == "offline" }

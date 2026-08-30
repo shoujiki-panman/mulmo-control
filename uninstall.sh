@@ -15,12 +15,15 @@ rm -f "${HOME}/Library/LaunchAgents/${LABEL}.plist"
 rm -f "${HOME}/.mulmoterminal/keepalive-enabled"
 rm -rf "/Applications/Mulmo Control.app"
 
-# 預かった「スマホ連携（MulmoClaude）の鍵」を Keychain から消す（Issue #145）。
+# 預かった「スマホ連携の鍵」を Keychain から消す（Issue #145 / #154）。
 # Firebase の refreshToken を含むので、アプリを消したあとに残しておかない。
+# MulmoClaude 側と MulmoTerminal 側で別々に預かっているので、両方消す。
 # 綴りは共有定義（scripts/mulmoterminal-agent-env）が持っている。
 /usr/bin/security delete-generic-password \
   -s "${MULMO_MC_SESSION_SERVICE}" -a "${MULMO_MC_SESSION_ACCOUNT}" >/dev/null 2>&1 || true
+/usr/bin/security delete-generic-password \
+  -s "${MULMO_MT_SESSION_SERVICE}" -a "${MULMO_MT_SESSION_ACCOUNT}" >/dev/null 2>&1 || true
 
 echo "Removed Mulmo Control app and LaunchAgent."
-echo "Removed the stored remote-host key for MulmoClaude from the keychain."
+echo "Removed the stored remote-host keys (MulmoTerminal / MulmoClaude) from the keychain."
 echo "Logs and MulmoTerminal data were kept under ~/.mulmoterminal."

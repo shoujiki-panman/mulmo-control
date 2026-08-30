@@ -38,3 +38,15 @@ MULMO_AGENT_LOG_DIR="${HOME}/.mulmoterminal/logs"
 # 読めない」形になる。#129 で実際に踏んだ壊れ方なので、ここ1箇所が持つ。
 MULMO_MC_SESSION_SERVICE="${MULMO_MC_SESSION_SERVICE:-mulmo-control-remote-host-mulmoclaude}"
 MULMO_MC_SESSION_ACCOUNT="${MULMO_MC_SESSION_ACCOUNT:-session}"
+
+# ターミナル側の鍵の置き場所（Issue #154）。
+#
+# 同じ形で控えが要る理由も同じ。MulmoTerminal の接続が切れると session blob は
+# ホスト側から消え、ブラウザの画面を開いていない間は繋ぎ直す主体がいない。
+# #145 のときにこちら側を入れ忘れたため、同じ「まだ繋いでいません」に対して
+# 片方だけが「繋ぐ」を出し、もう片方は設定画面へ送っていた。
+#
+# **サービス名を MulmoClaude 側と分けること。** 同じ名前にすると、あとから
+# 預けたほうが先の控えを上書きし、両方が相手の blob で 401 になる。
+MULMO_MT_SESSION_SERVICE="${MULMO_MT_SESSION_SERVICE:-mulmo-control-remote-host-mulmoterminal}"
+MULMO_MT_SESSION_ACCOUNT="${MULMO_MT_SESSION_ACCOUNT:-session}"
