@@ -31,6 +31,11 @@ if [ ! -d "${MULMOCLAUDE_DIR}" ]; then
   echo "MulmoTerminal だけなら、このままで使えます。" >&2
   echo "MulmoClaude も使う場合は、次で入れてから ./install.sh をやり直してください:" >&2
   echo "  git clone https://github.com/receptron/mulmoclaude.git ~/mulmoclaude" >&2
+  # clone を案内する理由を書いておく（Issue #174）。MulmoClaude の README では
+  # clone は「開発者向け」の節にあるので、黙って案内すると開発者の使い方に
+  # 見える。ここで要るのは更新（git pull）のためで、動かすのは通常モード。
+  echo "  （clone が要るのは更新（git pull）のためです。起動は通常モードなので、" >&2
+  echo "    画面が作業中に勝手に更新されることはありません）" >&2
   echo "既に別の場所にある場合は、その場所を渡してください:" >&2
   echo "  MULMOCLAUDE_DIR=/path/to/mulmoclaude ./install.sh" >&2
 fi
