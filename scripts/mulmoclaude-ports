@@ -11,6 +11,14 @@ set -u
 # MulmoClaudeMode だけ。2つあるのは Swift から毎回シェルを起こしたくない
 # ためで、食い違わないことは check.sh が突き合わせて見ている。
 
+# 検査だけが使う抜け道（Issue #172）。check.sh は、起こし直す親を持つ偽の木を
+# 立てて **本物の `mulmoclaude-stop` を当てる**。そのために、見るポートを差し
+# 替えられる必要がある。実行時にこれを設定するものは無い。
+if [ -n "${MULMO_TEST_PORTS:-}" ]; then
+  printf '%s\n' ${=MULMO_TEST_PORTS}
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
 

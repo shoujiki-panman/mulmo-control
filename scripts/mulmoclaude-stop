@@ -24,12 +24,23 @@ if [ -z "${pids}" ]; then
   exit 0
 fi
 
-/bin/kill -TERM ${=pids} 2>/dev/null || true
+# ポートを持っているプロセスだけを落としても止まらない（Issue #172）。
+# その親は MulmoClaude 側の supervisor（`scripts/dev-server.mjs`）で、落ちた
+# 子を起こし直すのが仕事なので、すぐ戻ってくる。実測では `yarn server` が
+# 3本、29分にわたって生き残っていた。起動の木を丸ごと落とす。
+#
+# 開発モードではたまたま止まっていた。`yarn dev` は concurrently -k で両側を
+# 束ねているので、vite を落とすと反対側ごと畳まれる。通常モード（#168）の
+# `yarn server` にはそれが無い。
+tree="$("${SCRIPT_DIR}/mulmoclaude-pids" --tree ${=pids} | /usr/bin/xargs 2>/dev/null || true)"
+
+/bin/kill -TERM ${=tree} 2>/dev/null || true
 sleep 2
 
 remaining="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
 if [ -n "${remaining}" ]; then
-  /bin/kill -KILL ${=remaining} 2>/dev/null || true
+  remaining_tree="$("${SCRIPT_DIR}/mulmoclaude-pids" --tree ${=remaining} | /usr/bin/xargs 2>/dev/null || true)"
+  /bin/kill -KILL ${=remaining_tree} 2>/dev/null || true
 fi
 
 echo "MulmoClaude: stopped"

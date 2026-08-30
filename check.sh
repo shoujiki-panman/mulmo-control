@@ -433,6 +433,126 @@ grep -q 'trailingControl:.*ModeButton' "${SWIFT_SRC}" \
   || fail "ボタンの列にモードを描く口が足りません。動作中と停止中の両方に要ります（Issue #170）"
 ok "モードが押さずに分かる"
 
+# ── 止めたら止まること（Issue #172）──────────────────────────────
+# ポートを持っているプロセスだけ落としても、MulmoClaude は止まらない。親の
+# `dev-server.mjs` は**落ちた子を起こし直すのが仕事**なので、すぐ戻ってくる。
+# 実測では「停止」を押したあとも `yarn server` が3本、29分生き残っていた。
+#
+# 綴りで見ても意味がない。「親をたどっている」ことを grep で確かめても、
+# たどり方が間違っていれば通る。**同じ形（起こし直す親 + ポートを持つ子）を
+# 作って、実際に止まるかを見る。** MulmoClaude は要らない。
+STOP_PROBE="$(mktemp -d)"
+STOP_APP="${STOP_PROBE}/app"
+mkdir -p "${STOP_APP}" "${STOP_PROBE}/cfg"
+printf "MULMO_CONTROL_MULMOCLAUDE_DIR='%s'\n" "${STOP_APP}" > "${STOP_PROBE}/cfg/app-info.env"
+
+# 空いているポートを1つ選ぶ。実物（5173 / 3001）には触らない。
+STOP_PORT=""
+for candidate in $(seq 45900 45950); do
+  if [ -z "$(/usr/sbin/lsof -tiTCP:"${candidate}" -sTCP:LISTEN 2>/dev/null)" ]; then
+    STOP_PORT="${candidate}"
+    break
+  fi
+done
+[ -n "${STOP_PORT}" ] || fail "検査用の空きポートが見つかりませんでした（Issue #172）"
+
+cat > "${STOP_APP}/child.js" <<'PROBE_CHILD'
+const net = require("net");
+net.createServer().listen(Number(process.argv[2]), "127.0.0.1");
+setInterval(() => {}, 1000);
+PROBE_CHILD
+
+cat > "${STOP_APP}/supervisor.js" <<'PROBE_SUP'
+// 落ちた子を起こし直す。dev-server.mjs と同じ役目。
+const { spawn } = require("child_process");
+const port = process.argv[2];
+const start = () => {
+  const child = spawn(process.execPath, [__dirname + "/child.js", port], { stdio: "ignore" });
+  child.on("exit", () => setTimeout(start, 200));
+};
+start();
+setInterval(() => {}, 1000);
+PROBE_SUP
+
+# `exec` を使わない。sh を残して 3段（sh → supervisor → child）にする。
+( cd "${STOP_APP}" && /bin/sh -c "node supervisor.js ${STOP_PORT}" >/dev/null 2>&1 & )
+
+STOP_LISTENER=""
+for _ in $(seq 1 40); do
+  sleep 0.25
+  STOP_LISTENER="$(/usr/sbin/lsof -tiTCP:"${STOP_PORT}" -sTCP:LISTEN 2>/dev/null | head -1)"
+  if [ -n "${STOP_LISTENER}" ]; then break; fi
+done
+
+# 起こし直す親そのもの。止まったかどうかは、こいつが死んだかで見る。ポートだけ
+# を見ると、起こし直しの合間（200ms）に「空いている」と読めてしまい、直す前の
+# 停止でも通ってしまう（実際に一度そう読み違えた）。
+STOP_SUP="$(/bin/ps -Ao pid=,command= | /usr/bin/awk -v p="supervisor.js ${STOP_PORT}" 'index($0, p) { print $1; exit }')"
+
+stop_probe_cleanup() {
+  for victim in "$@"; do
+    if [ -n "${victim}" ]; then /bin/kill -KILL "${victim}" 2>/dev/null || true; fi
+  done
+  rm -rf "${STOP_PROBE}"
+}
+
+[ -n "${STOP_LISTENER}" ] || { rm -rf "${STOP_PROBE}"; fail "検査用のプロセスが立ちませんでした（Issue #172）"; }
+
+STOP_TREE="$(MULMO_CONFIG_FILE="${STOP_PROBE}/cfg/app-info.env" "${ROOT}/scripts/mulmoclaude-pids" --tree "${STOP_LISTENER}" | /usr/bin/xargs)"
+
+if [ -z "${STOP_TREE}" ]; then
+  stop_probe_cleanup "${STOP_LISTENER}"
+  fail "起動の木を返していません（Issue #172）"
+fi
+
+# 登りすぎない。この検査を走らせている shell（cwd はリポジトリ）まで登ったら、
+# 人が作業している端末を落とすことになる。
+case " ${STOP_TREE} " in
+  *" $$ "*|*" ${PPID} "*)
+    stop_probe_cleanup ${=STOP_TREE}
+    fail "起動の連なりを越えて登っています。作業中の端末を落とします（Issue #172）"
+    ;;
+esac
+
+# 子だけ落としても戻ってくること。戻ってこないなら、この検査自体が「起こし
+# 直す親」を再現できていない（検査が効いていない）。
+/bin/kill -TERM "${STOP_LISTENER}" 2>/dev/null || true
+STOP_BACK=""
+for _ in $(seq 1 16); do
+  sleep 0.25
+  STOP_BACK="$(/usr/sbin/lsof -tiTCP:"${STOP_PORT}" -sTCP:LISTEN 2>/dev/null | head -1)"
+  if [ -n "${STOP_BACK}" ]; then break; fi
+done
+if [ -z "${STOP_BACK}" ]; then
+  stop_probe_cleanup ${=STOP_TREE}
+  fail "検査が「起こし直す親」を再現できていません（Issue #172）"
+fi
+
+# ここからが本題。**配っている `mulmoclaude-stop` そのもの**を当てる。
+# 検査用のロジックを書き写すと、書き写したほうだけが正しいまま通ってしまう。
+MULMO_CONFIG_FILE="${STOP_PROBE}/cfg/app-info.env" MULMO_TEST_PORTS="${STOP_PORT}" \
+  "${ROOT}/scripts/mulmoclaude-stop" >/dev/null 2>&1 || true
+
+# 起こし直す親が生きているなら、その瞬間ポートが空いて見えても止まっていない。
+if [ -z "${STOP_SUP}" ]; then
+  stop_probe_cleanup ${=STOP_TREE} "${STOP_BACK}"
+  fail "検査が「起こし直す親」を見つけられていません（Issue #172）"
+fi
+if /bin/kill -0 "${STOP_SUP}" 2>/dev/null; then
+  stop_probe_cleanup ${=STOP_TREE} "${STOP_BACK}" "${STOP_SUP}"
+  fail "起こし直す親が生き残っています。止めても、すぐ戻ってきます（Issue #172）"
+fi
+
+sleep 1
+STOP_LEFT="$(/usr/sbin/lsof -tiTCP:"${STOP_PORT}" -sTCP:LISTEN 2>/dev/null | head -1)"
+if [ -n "${STOP_LEFT}" ]; then
+  stop_probe_cleanup ${=STOP_TREE} "${STOP_BACK}" "${STOP_LEFT}"
+  fail "止めたのに、まだポートを持っています。停止が効きません（Issue #172）"
+fi
+
+stop_probe_cleanup ${=STOP_TREE} "${STOP_BACK}"
+ok "止めたら止まる（起こし直す親ごと）"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた

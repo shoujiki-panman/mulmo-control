@@ -3,8 +3,11 @@ set -u
 
 # MulmoClaude のポートを持っているプロセスを、自分のものか他人のものかに分ける。
 #
-#   mulmoclaude-pids          設定の MulmoClaude から起きているものだけ
-#   mulmoclaude-pids --others 同じポートを持っている、それ以外のもの
+#   mulmoclaude-pids            設定の MulmoClaude から起きているものだけ
+#   mulmoclaude-pids --others   同じポートを持っている、それ以外のもの
+#   mulmoclaude-pids --tree <pid>...
+#                               渡された pid が属する「起動の木」を丸ごと返す
+#                               （一番上 + その下ぜんぶ。Issue #172）
 #
 # 以前は 5173 と 3001 を持っているものを、確かめずに全部 MulmoClaude とみなして
 # いた（Issue #91）。5173 は Vite の既定ポートなので、他のプロジェクトを開いて
@@ -23,6 +26,11 @@ MC_PORTS=($("${SCRIPT_DIR}/mulmoclaude-ports"))
 
 APP_DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_MULMOCLAUDE_DIR)"
 APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"
+# 実体のパスに直してから比べる。lsof が返す cwd は symlink を解いた形なので、
+# 設定側を解かないと一生一致しない（macOS の `/var` → `/private/var` がその形。
+# MulmoClaude の置き場所が symlink 越しでも同じことが起きる）。一致しないと
+# 「動いていない」と言い続け、停止も切り替えも届かなくなる。
+APP_DIR="$(cd "${APP_DIR}" 2>/dev/null && pwd -P || printf '%s' "${APP_DIR}")"
 
 WANT_OTHERS=0
 [ "${1:-}" = "--others" ] && WANT_OTHERS=1
@@ -37,6 +45,72 @@ listeners() {
 cwd_of() {
   /usr/sbin/lsof -a -p "$1" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' | head -1
 }
+
+# 起動の連なりの一番上（Issue #172）。
+#
+# ポートを持っているプロセスを落とすだけでは止まらない。その親は
+# MulmoClaude 側の supervisor（`scripts/dev-server.mjs`）で、**落ちた子を
+# 起こし直すのが仕事**だから。`yarn server` ごと落とす必要がある。
+#
+# 開発モードでは、たまたま止まっていた。`yarn dev` は concurrently -k で
+# 両側を束ねているので、vite を落とすと反対側ごと畳まれる。通常モード
+# （#168）にはそれが無い。
+#
+# のぼる条件を2つ重ねる。**片方だけでは危ない。**
+#
+#  1. 親が APP_DIR の下にいること
+#  2. 親が起動の連なりであること（node / yarn / npm / sh -c / cross-env /
+#     concurrently）
+#
+# 2 が無いと、MulmoTerminal のセルから `yarn dev` した場合に、そのセルの
+# シェル（cwd は同じ APP_DIR）まで登って、**人が作業している端末を落とす**。
+# 対話シェルは `-zsh` なので、この条件で止まる。
+launch_chain() {
+  case "$1" in
+    *node*|*yarn*|*npm*|"/bin/sh -c "*|*cross-env*|*concurrently*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+root_of() {
+  local root="$1" parent cmd cwd
+  while :; do
+    parent="$(/bin/ps -o ppid= -p "${root}" 2>/dev/null | /usr/bin/tr -d ' ')"
+    [ -n "${parent}" ] || break
+    [ "${parent}" != "1" ] || break
+    [ "${parent}" != "0" ] || break
+    cmd="$(/bin/ps -o command= -p "${parent}" 2>/dev/null)"
+    [ -n "${cmd}" ] || break
+    launch_chain "${cmd}" || break
+    cwd="$(cwd_of "${parent}")"
+    case "${cwd}" in
+      "${APP_DIR}"|"${APP_DIR}"/*) root="${parent}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s\n' "${root}"
+}
+
+# 一番上を落とすだけでは足りない。`yarn server` を落としても、その下の
+# supervisor は生き残って（親を失っただけ）起こし直しを続ける。実測で確認済み。
+# 木ごと渡して、呼ぶ側が全部に signal を送る。
+#
+# 順番は上から。supervisor が先に死ねば、そのあと子が落ちても起こし直されない。
+descendants() {
+  local pid="$1" child
+  printf '%s\n' "${pid}"
+  for child in $(/bin/ps -Ao pid=,ppid= | /usr/bin/awk -v p="${pid}" '$2 == p { print $1 }'); do
+    descendants "${child}"
+  done
+}
+
+if [ "${1:-}" = "--tree" ]; then
+  shift
+  for pid in "$@"; do
+    descendants "$(root_of "${pid}")"
+  done | /usr/bin/awk '!seen[$0]++'
+  exit 0
+fi
 
 for pid in $(listeners); do
   cwd="$(cwd_of "${pid}")"
