@@ -414,6 +414,25 @@ grep -q '"\${YARN}" dev' "${ROOT}/scripts/mulmoclaude-start" \
 rm -rf "${MODE_PROBE}"
 ok "MulmoClaude のモードとポートが揃っている"
 
+# ── モードが押さずに分かること（Issue #170）─────────────────────
+# #168 で切り替えを足したが、ログと同じ小さいテキストの行に置いたので、
+# **入れた本人以外は見つけられなかった。** 状態の表示も兼ねていたため、
+# 押せる物に読めない。106（停止中でも起動する手段が画面から見える）と同じで、
+# 「実装がある」と「画面から届く」は別物なので、画面の作りを見る。
+SWIFT_SRC="${ROOT}/Sources/main.swift"
+
+grep -q 'subtitle: mulmoClaudeSubtitle(model)' "${SWIFT_SRC}" \
+  || fail "MulmoClaude の1行目がモードを通っていません（Issue #170）"
+sed -n '/func mulmoClaudeSubtitle(/,/^}/p' "${SWIFT_SRC}" | grep -q 'mcMode' \
+  || fail "MulmoClaude の1行目にモードが出ていません。押さずに見える場所はここだけです（Issue #170）"
+
+# 切り替えはボタンの列に置く。テキストの行（ログの並び）へ戻したら落とす。
+grep -q 'trailingControl:.*ModeButton' "${SWIFT_SRC}" \
+  || fail "モードの切り替えがボタンの列にありません（Issue #170）"
+[ "$(grep -c 'trailingControl()' "${SWIFT_SRC}")" -ge 2 ] \
+  || fail "ボタンの列にモードを描く口が足りません。動作中と停止中の両方に要ります（Issue #170）"
+ok "モードが押さずに分かる"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
