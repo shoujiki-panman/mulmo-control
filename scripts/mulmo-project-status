@@ -105,7 +105,6 @@ for entry in entries:
         "exists": os.path.isdir(path),
         "trusted": path in trusted_paths,
         "autoStart": bool(entry.get("autoStart")),
-        "sessionName": name if own else "",
         "status": "running" if own else "stopped",
     })
 

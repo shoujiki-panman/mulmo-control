@@ -78,7 +78,8 @@ private func projectCases() -> [ProjectCase] {
                 } else if !running {
                     detail = trusted ? "停止中" : "停止中・初回は確認が要ります"
                 } else {
-                    detail = "s1"
+                    // 環境タブのスマホ連携の行と同じ言葉（Issue #158）
+                    detail = "スマホから使えます"
                 }
                 let button: String? = exists ? (running ? "止める" : "繋ぐ") : nil
                 built.append(ProjectCase(exists: exists, running: running, trusted: trusted,
@@ -137,8 +138,7 @@ struct StatusDisplayTest {
         for item in projects {
             let project = ProjectSession(
                 name: "p", path: "~/p", exists: item.exists, trusted: item.trusted,
-                autoStart: false, sessionName: item.running ? "s1" : "",
-                status: item.running ? "running" : "stopped"
+                autoStart: false, status: item.running ? "running" : "stopped"
             )
             let detail = projectSessionDetail(project)
             if detail != item.expectedDetail {
