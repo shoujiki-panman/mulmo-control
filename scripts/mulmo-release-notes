@@ -1,0 +1,62 @@
+#!/bin/zsh
+set -u
+
+# 直近のリリースの内容を控えておく（Issue #176）。
+#
+# 更新を勧めておいて中身を見せないのは筋が悪い。v1.0.61 では MulmoClaude の
+# 起動モードの既定を変えた（開くアドレスが 5173 → 3001）。理由と戻し方は
+# リリースノートに書いてあるが、アプリからは辿り着けなかった。
+#
+# 取りに行くのは公開リポジトリのリリースなので、トークンは要らない。上限
+# （認証なしで 60回/時）は、自己更新の確認と同じ6時間おきでは当たらない。
+#
+# **取れなくても 0 で終わる。** ネットが無い・GitHub が落ちている・上限に
+# 当たった、のいずれでも、呼んだ側が「読めません」と言えればよい。ここで
+# 失敗を返すと、更新の確認そのものが落ちたように見える。
+#
+# **控えを壊さない。** 取れなかったときに空で上書きすると、昨日まで読めていた
+# ものまで消える。書くのは、取れたときだけ。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+OUT="${LOG_DIR}/mulmo-control-release-notes.md"
+
+mkdir -p "${LOG_DIR}"
+
+# 既定は公式のリポジトリ。設定に別の repo があればそちらを見る（自分の fork を
+# 追いかけている人がいる）。検査は届かない URL を渡して、失敗の側を確かめる。
+REPO_URL="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_REPO_URL 2>/dev/null || true)"
+REPO_URL="${REPO_URL:-https://github.com/shoujiki-panman/mulmo-control.git}"
+SLUG="$(printf '%s' "${REPO_URL}" | /usr/bin/sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
+API="${MULMO_RELEASE_NOTES_API:-https://api.github.com/repos/${SLUG}/releases/latest}"
+
+BODY="$(/usr/bin/curl -fsSL --connect-timeout 10 --max-time 20 \
+  -H "Accept: application/vnd.github+json" \
+  -H "User-Agent: Mulmo Control" \
+  "${API}" 2>/dev/null || true)"
+
+if [ -z "${BODY}" ]; then
+  exit 0
+fi
+
+NODE="$(command -v node || true)"
+if [ -z "${NODE}" ]; then
+  exit 0
+fi
+
+# 1行目にタグ、2行目に公開日、そのあとが本文。読む側は最初の2行で見出しを作る。
+BODY="${BODY}" OUT="${OUT}" "${NODE}" <<'NODE' || exit 0
+const fs = require("fs");
+let release;
+try {
+  release = JSON.parse(process.env.BODY);
+} catch {
+  process.exit(0);
+}
+const tag = typeof release.tag_name === "string" ? release.tag_name : "";
+const published = typeof release.published_at === "string" ? release.published_at.slice(0, 10) : "";
+const body = typeof release.body === "string" ? release.body.trim() : "";
+if (!tag || !body) process.exit(0);
+fs.writeFileSync(process.env.OUT, `${tag}\n${published}\n${body}\n`);
+NODE
