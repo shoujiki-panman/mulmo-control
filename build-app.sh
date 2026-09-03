@@ -23,6 +23,7 @@ for ARCH in arm64 x86_64; do
     -framework UserNotifications \
     -module-cache-path "${BUILD_DIR}/module-cache-${ARCH}" \
     "${ROOT}/Sources/StatusDisplay.swift" \
+    "${ROOT}/Sources/GuideServer.swift" \
     "${ROOT}/Sources/main.swift" \
     -o "${BUILD_DIR}/MulmoControl-${ARCH}"
 done

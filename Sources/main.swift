@@ -1416,6 +1416,9 @@ final class ControlModel: ObservableObject {
 struct MulmoControlApp: App {
     @StateObject private var model = ControlModel()
 
+    /// ホバーガイドの応答口（Issue #185）。ポートが塞がっていれば黙って諦める。
+    init() { GuideServer.shared.start() }
+
     var body: some Scene {
         MenuBarExtra {
             ControlView(model: model)
@@ -2045,6 +2048,7 @@ struct OperateView: View {
                     Button("入手", action: model.openMCRepo)
                 }
             }
+            GuideToggleRow()
             InstalledFamilyPanel(model: model)
         }
     }
