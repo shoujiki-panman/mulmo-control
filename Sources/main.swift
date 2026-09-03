@@ -46,13 +46,6 @@ private func bin(_ name: String) -> String { "\"\(localBin)/\(name)\"" }
 private func shellQuoted(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
-private func appleScriptStringLiteral(_ value: String) -> String {
-    let escaped = value
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\"", with: "\\\"")
-        .replacingOccurrences(of: "\n", with: "\\n")
-    return "\"\(escaped)\""
-}
 /// ログと状態ファイルの置き場所（Issue #4）。
 ///
 /// 以前は ~/Documents/Codex/SwiftBarLogs だった。SwiftBar は Mulmo Control とは
@@ -724,28 +717,36 @@ final class ControlModel: ObservableObject {
         run(tool("mulmoclaude-remote-host-reconnect"), label: "スマホ連携（MulmoClaude）を繋いでいます")
     }
 
-    /// ログインし直す入口まで連れて行く。/login の入力とブラウザでの
-    /// サインインは本人がやる（OAuth なのでアプリが代われない）。
+    /// ログインし直す入口まで連れて行く。ブラウザでのサインインは本人がやる
+    /// （OAuth なのでアプリが代われない）。
+    ///
+    /// 以前は AppleScript でターミナルを操作していたが、オートメーションの許可が
+    /// 無い環境では**必ず**失敗する（実測 2026-09-03: 押してもデスクトップに戻るだけ）。
+    /// ターミナルが標準で開いて実行してくれる .command ファイルなら許可が要らない。
+    /// `claude /login` まで書いておくので、本人が打つのはブラウザのサインインだけ。
     func openClaudeLogin() {
-        let command = "cd \(shellQuoted(mulmoClaudeDir)) && claude"
+        let command = "cd \(shellQuoted(mulmoClaudeDir)) && claude /login"
         let script = """
-        tell application "Terminal"
-            activate
-            do script \(appleScriptStringLiteral(command))
-        end tell
+        #!/bin/zsh
+        PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+        \(command)
         """
-        var error: NSDictionary?
-        NSAppleScript(source: script)?.executeAndReturnError(&error)
-        if error != nil {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mulmo-claude-login.command")
+        do {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        } catch {
             showMessage(
                 title: "ターミナルを開けませんでした",
-                text: "ターミナルで次を実行してください:\n\(command)\nそのあと /login と入力します。"
+                text: "ターミナルで次を実行してください:\n\(command)"
             )
             return
         }
+        NSWorkspace.shared.open(url)
         showMessage(
             title: "ターミナルを開きました",
-            text: "信頼を聞かれたら承認し、/login と入力してください。ブラウザでサインインすると復旧します。"
+            text: "ブラウザが開いたらサインインしてください。開かなければ、そのターミナルで /login と入力します。"
         )
     }
     func updateSelfApp() {
