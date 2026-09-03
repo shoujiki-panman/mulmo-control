@@ -99,7 +99,9 @@ ok "落としたものの丸投げ・eval・権限昇格がない"
 RMRF="$(grep -rn 'rm -rf\|rm -fr' "${SAFETY_TARGETS[@]}" 2>/dev/null | noncomment \
   | grep -v '"/Applications/Mulmo Control.app"' \
   | grep -v '"${APP_DIR}/Contents/Resources/scripts"' \
-  | grep -v '"${CHECK_DIR}"' || true)"
+  | grep -v '"${CHECK_DIR}"' \
+  | grep -v '"${STAGE_DIR}"' \
+  | grep -v 'rm -rf "${APP_DIR}"$' || true)"
 if [ -n "${RMRF}" ]; then
   printf '%s\n' "${RMRF}"
   fail "許可していない rm -rf があります。消す対象を check.sh の一覧に足してください"

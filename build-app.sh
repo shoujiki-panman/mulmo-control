@@ -64,11 +64,30 @@ if [ -z "${SIGN_IDENTITY}" ]; then
     | grep 'Developer ID Application' | head -1 | awk '{print $2}')"
 fi
 
-if [ -n "${SIGN_IDENTITY}" ]; then
-  codesign --force --deep --options runtime --timestamp \
-    --sign "${SIGN_IDENTITY}" "${APP_DIR}"
-else
-  codesign --force --deep --sign - "${APP_DIR}"
-fi
+# 署名は同期の外でやる（実測 2026-09-03）。
+#
+# このリポジトリが iCloud Drive 配下にあると、署名の最中に fileprovider が
+# `com.apple.fileprovider.fpfs` を付け直し、codesign --verify が
+# 「resource fork, Finder information, or similar detritus not allowed」で落ちる。
+# 掃除→署名→検証を5回繰り返しても付け直しの方が速く、勝てなかった。
+# だから**同期対象外の /tmp に写してから**署名し、署名済みを build/ へ戻す。
+# 戻したあとの verify は check.sh がやる（戻し先でまた属性が付くのは
+# 署名データ自体を壊さないので、配布物 zip は ditto --norsrc で作れば問題ない）。
+STAGE_DIR="$(mktemp -d /tmp/mulmo-control-sign.XXXXXX)"
+trap 'rm -rf "${STAGE_DIR}"' EXIT
+STAGE_APP="${STAGE_DIR}/${APP_NAME}"
+ditto --norsrc --noextattr "${APP_DIR}" "${STAGE_APP}"
+sign_at() {
+  if [ -n "${SIGN_IDENTITY}" ]; then
+    codesign --force --deep --options runtime --timestamp \
+      --sign "${SIGN_IDENTITY}" "$1"
+  else
+    codesign --force --deep --sign - "$1"
+  fi
+}
+sign_at "${STAGE_APP}"
+codesign --verify --deep --strict "${STAGE_APP}"
+rm -rf "${APP_DIR}"
+ditto --norsrc --noextattr "${STAGE_APP}" "${APP_DIR}"
 
 echo "${APP_DIR}"
