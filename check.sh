@@ -101,6 +101,7 @@ RMRF="$(grep -rn 'rm -rf\|rm -fr' "${SAFETY_TARGETS[@]}" 2>/dev/null | noncommen
   | grep -v '"${APP_DIR}/Contents/Resources/scripts"' \
   | grep -v '"${CHECK_DIR}"' \
   | grep -v '"${STAGE_DIR}"' \
+  | grep -v '"${VERIFY_DIR}"' \
   | grep -v 'rm -rf "${APP_DIR}"$' || true)"
 if [ -n "${RMRF}" ]; then
   printf '%s\n' "${RMRF}"
@@ -1675,7 +1676,18 @@ BUNDLED_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr
   || fail "同梱スクリプトが ${BUNDLED_COUNT} 本です（scripts/ には ${SOURCE_COUNT} 本）"
 ok "同梱スクリプト ${BUNDLED_COUNT} 本"
 
-codesign --verify --deep --strict "${APP}" 2>/dev/null || fail "署名が通りません"
+# 署名の検証は同期の外でやる（実測 2026-09-03）。
+# リポジトリが iCloud Drive 配下だと、fileprovider が拡張属性を随時付け直すので、
+# その場での verify は detritus エラーで落ちる。配布物は ditto --norsrc --noextattr
+# の zip なので、実際に配る形（属性なしの写し）で検証するのが正しい。
+VERIFY_DIR="$(/usr/bin/mktemp -d /tmp/mulmo-control-verify.XXXXXX)"
+ditto --norsrc --noextattr "${APP}" "${VERIFY_DIR}/app.app"
+if codesign --verify --deep --strict "${VERIFY_DIR}/app.app" 2>/dev/null; then
+  rm -rf "${VERIFY_DIR}"
+else
+  rm -rf "${VERIFY_DIR}"
+  fail "署名が通りません"
+fi
 # どちらで署名されているかを出す（Issue #54）。adhoc でも配れるが、その場合は
 # ブラウザで落とした人にだけ警告が出る。見えないまま配らないための表示。
 #
