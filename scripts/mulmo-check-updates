@@ -63,6 +63,32 @@ function npmLatest(name) {
   return sh(npm, ["view", name, "version"], { timeout: 8000 }) || "unknown";
 }
 
+// MulmoClaude の「最新」は npm ではなく git の origin 側から読む（Issue #184）。
+//
+// MulmoClaude は git clone で入っていて、更新も mulmoclaude-update-latest の
+// git pull で落ちてくる。npm と比べると、作者が npm へ publish してから
+// GitHub へ push するまでの間ずっと「更新あり」が点き、押すと「すでに最新
+// でした」が返る。押しても消えないので、利用者からは壊れているようにしか
+// 見えない。比べる相手は、実際に落としてくるもの（Issue #31 と同じ形）。
+//
+// fetch に失敗しても手元にある origin の写しで読む。それも無ければ npm に
+// 頼る（git で入っていない人は、そもそも比べる origin が無いため）。
+function gitLatest(name) {
+  if (!fs.existsSync(`${mulmoClaudeDir}/.git`)) return npmLatest(name);
+  sh("git", ["-C", mulmoClaudeDir, "fetch", "--quiet", "origin"], { timeout: 20000 });
+  const branch = sh("git", ["-C", mulmoClaudeDir, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+    .replace(/^origin\//, "") || "main";
+  for (const p of ["package.json", "packages/mulmoclaude/package.json"]) {
+    const raw = sh("git", ["-C", mulmoClaudeDir, "show", `origin/${branch}:${p}`]);
+    if (!raw) continue;
+    try {
+      const data = JSON.parse(raw);
+      if (data?.name === name) return data.version || "unknown";
+    } catch {}
+  }
+  return "unknown";
+}
+
 function status(current, latest) {
   if (!current || current === "unknown") return "missing";
   if (!latest || latest === "unknown") return "unknown";
@@ -131,7 +157,7 @@ const items = [
     id: "mulmoclaude",
     name: "MulmoClaude",
     current: pkgVersion("mulmoclaude"),
-    latest: npmLatest("mulmoclaude")
+    latest: gitLatest("mulmoclaude")
   },
   {
     id: "mulmocast",
