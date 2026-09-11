@@ -2546,18 +2546,31 @@ struct ModeButton: View {
 struct TelegramToggleRow: View {
     @ObservedObject var model: ControlModel
 
-    /// 押す前に、押したら何が起きるかが読めること（Issue #192）。
+    /// **何ができるようになるか**を書く（Issue #194）。
     ///
-    /// 最初は「オフ（`yarn telegram` は自分で立てます）」と書いていた。**バック
-    /// クォートはそのまま文字として出る**うえ、コマンド名を知らない人には何の
-    /// 話か分からない。オフのときは**オンにすると何が変わるか**を書く。
+    /// 二度書き直している。最初は「オフ（`yarn telegram` は自分で立てます）」で、
+    /// バッククォートがそのまま記号として出るうえ、コマンド名を知らない人には
+    /// 何の話か分からなかった。次に「オンにすると、MulmoClaude と一緒に起動・
+    /// 停止します」に直したが、**それは「いつ動くか」であって「何ができるか」
+    /// ではない。** 初めて見る人は、この行が何の機能か分からないまま。
+    ///
+    /// 隣の画面ガイドの行が「カーソルを合わせると日本語の説明が出ます」と
+    /// **手に入るもの**を書いているので、そちらに揃える。
+    /// **タイトルに書いてあることを、説明で繰り返さない**（Issue #194）。
+    ///
+    /// 「スマホの Telegram から MulmoClaude を使えます」と書いたら2行になった。
+    /// `Telegram` は見出しに、`MulmoClaude` はこのパネル全体に既に書いてある。
+    /// 説明が持つべきなのは**残りの1つ（スマホから使える）**だけ。
+    ///
+    /// 使える横幅は約 246pt（本文 10.5pt）。日本語1文字がほぼ 10.5pt なので、
+    /// **20文字を超えると折り返す。**
     private var detail: String {
         guard model.mcTelegram else {
-            return "オンにすると、MulmoClaude と一緒に起動・停止します"
+            return "オンにすると、スマホから使えます"
         }
         return model.mcRunning
-            ? "MulmoClaude と一緒に動いています"
-            : "MulmoClaude を起動すると、一緒に立ち上がります"
+            ? "スマホから使えます"
+            : "MulmoClaude を起動すると使えます"
     }
 
     var body: some View {
@@ -2572,10 +2585,10 @@ struct TelegramToggleRow: View {
                 Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
-                    // 1行に切り詰めない。捨てられるのは「押したら何が起きるか」
-                    // なので、切るくらいなら2行にする（#180 と同じ判断）。
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // 1行。折り返すと隣の行と高さが揃わず、並びが崩れて見える。
+                    // **収まる長さで書くほうが先**で、切り詰めに頼らない
+                    // （上の3つはどれも約 246pt に収まる）。
+                    .lineLimit(1)
             }
             Spacer()
             Button(model.mcTelegram ? "やめる" : "オン") {
