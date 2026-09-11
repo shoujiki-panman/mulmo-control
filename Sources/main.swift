@@ -2546,18 +2546,23 @@ struct ModeButton: View {
 struct TelegramToggleRow: View {
     @ObservedObject var model: ControlModel
 
-    /// 押す前に、押したら何が起きるかが読めること（Issue #192）。
+    /// **何ができるようになるか**を書く（Issue #194）。
     ///
-    /// 最初は「オフ（`yarn telegram` は自分で立てます）」と書いていた。**バック
-    /// クォートはそのまま文字として出る**うえ、コマンド名を知らない人には何の
-    /// 話か分からない。オフのときは**オンにすると何が変わるか**を書く。
+    /// 二度書き直している。最初は「オフ（`yarn telegram` は自分で立てます）」で、
+    /// バッククォートがそのまま記号として出るうえ、コマンド名を知らない人には
+    /// 何の話か分からなかった。次に「オンにすると、MulmoClaude と一緒に起動・
+    /// 停止します」に直したが、**それは「いつ動くか」であって「何ができるか」
+    /// ではない。** 初めて見る人は、この行が何の機能か分からないまま。
+    ///
+    /// 隣の画面ガイドの行が「カーソルを合わせると日本語の説明が出ます」と
+    /// **手に入るもの**を書いているので、そちらに揃える。
     private var detail: String {
         guard model.mcTelegram else {
-            return "オンにすると、MulmoClaude と一緒に起動・停止します"
+            return "オンにすると、スマホの Telegram から MulmoClaude を使えます"
         }
         return model.mcRunning
-            ? "MulmoClaude と一緒に動いています"
-            : "MulmoClaude を起動すると、一緒に立ち上がります"
+            ? "スマホの Telegram から使えます"
+            : "MulmoClaude を起動すると、スマホから使えます"
     }
 
     var body: some View {
