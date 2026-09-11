@@ -2556,13 +2556,21 @@ struct TelegramToggleRow: View {
     ///
     /// 隣の画面ガイドの行が「カーソルを合わせると日本語の説明が出ます」と
     /// **手に入るもの**を書いているので、そちらに揃える。
+    /// **タイトルに書いてあることを、説明で繰り返さない**（Issue #194）。
+    ///
+    /// 「スマホの Telegram から MulmoClaude を使えます」と書いたら2行になった。
+    /// `Telegram` は見出しに、`MulmoClaude` はこのパネル全体に既に書いてある。
+    /// 説明が持つべきなのは**残りの1つ（スマホから使える）**だけ。
+    ///
+    /// 使える横幅は約 246pt（本文 10.5pt）。日本語1文字がほぼ 10.5pt なので、
+    /// **20文字を超えると折り返す。**
     private var detail: String {
         guard model.mcTelegram else {
-            return "オンにすると、スマホの Telegram から MulmoClaude を使えます"
+            return "オンにすると、スマホから使えます"
         }
         return model.mcRunning
-            ? "スマホの Telegram から使えます"
-            : "MulmoClaude を起動すると、スマホから使えます"
+            ? "スマホから使えます"
+            : "MulmoClaude を起動すると使えます"
     }
 
     var body: some View {
@@ -2577,10 +2585,10 @@ struct TelegramToggleRow: View {
                 Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
-                    // 1行に切り詰めない。捨てられるのは「押したら何が起きるか」
-                    // なので、切るくらいなら2行にする（#180 と同じ判断）。
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // 1行。折り返すと隣の行と高さが揃わず、並びが崩れて見える。
+                    // **収まる長さで書くほうが先**で、切り詰めに頼らない
+                    // （上の3つはどれも約 246pt に収まる）。
+                    .lineLimit(1)
             }
             Spacer()
             Button(model.mcTelegram ? "やめる" : "オン") {
