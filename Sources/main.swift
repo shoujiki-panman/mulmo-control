@@ -1683,53 +1683,10 @@ struct MulmoControlApp: App {
     }
 }
 
-/// 中身が画面に収まらなくなったら、そこだけスクロールさせる（Issue #192）。
-///
-/// 行が1つ増えるたびに全体が伸びる作りだった。#187 で Telegram の行を足したら
-/// 画面からはみ出し、**一番下の `終了` が押せなくなった。** 足すたびに余白を
-/// 縮める直し方では、次に足した人がまた踏む。収まらないぶんだけスクロールさせる。
-///
-/// ScrollView は与えられた高さを全部使う（縦に貪欲）。そのまま上限を渡すと、
-/// 中身が短いタブでも上限いっぱいの高さになってしまう。**中身の高さを測って
-/// `min(中身, 上限)` を渡す。**
-private struct ContentHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-struct ScrollIfTall<Content: View>: View {
-    let maxHeight: CGFloat
-    @ViewBuilder var content: Content
-    @State private var measured: CGFloat = 0
-
-    var body: some View {
-        ScrollView(.vertical) {
-            content
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
-                    }
-                )
-        }
-        .frame(height: min(measured > 0 ? measured : maxHeight, maxHeight))
-        .scrollIndicators(.automatic)
-        .onPreferenceChange(ContentHeightKey.self) { measured = $0 }
-    }
-}
-
 struct ControlView: View {
     @ObservedObject var model: ControlModel
     @State private var screen: ControlScreen = .operate
 
-    /// 本文に渡してよい高さ（Issue #192）。
-    ///
-    /// 決め打ちの数にしない。**13インチのノートと外付けの大きい画面では、
-    /// 収まる量が倍ちがう。** 使える高さから、ヘッダ・タブ・更新の帯・`終了` の
-    /// ぶんを引いて残りを渡す。
-    static var contentMaxHeight: CGFloat {
-        let visible = NSScreen.main?.visibleFrame.height ?? 800
-        return max(300, visible - 300)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -1768,20 +1725,16 @@ struct ControlView: View {
             TopTabs(selection: $screen)
             UpdateToolbar(model: model)
             Hairline()
-            // ヘッダ・タブ・`終了` は動かさない。**どれだけ行が増えても
-            // 終了できること**が、ここで守りたいこと（Issue #192）。
-            ScrollIfTall(maxHeight: Self.contentMaxHeight) {
-                switch screen {
-                case .operate:
-                    OperateView(model: model)
-                case .family:
-                    FamilyView(model: model) { package in
-                        model.installFamily(package)
-                        screen = .operate
-                    }
-                case .environment:
-                    EnvironmentView(model: model)
+            switch screen {
+            case .operate:
+                OperateView(model: model)
+            case .family:
+                FamilyView(model: model) { package in
+                    model.installFamily(package)
+                    screen = .operate
                 }
+            case .environment:
+                EnvironmentView(model: model)
             }
             Hairline()
             HStack {
@@ -2306,7 +2259,7 @@ struct OperateView: View {
     @ObservedObject var model: ControlModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 12) {
             ServicePanel(
                 title: "MulmoTerminal",
                 subtitle: model.mtInstalled ? (model.mtRunning ? "動作中・ブラウザで使えます" : "停止中") : "未インストール",
@@ -2343,11 +2296,55 @@ struct OperateView: View {
                     Button("入手", action: model.openMCRepo)
                 }
             }
-            GuideToggleRow()
-            if model.mcInstalled {
-                TelegramToggleRow(model: model)
+            // 押すだけ・見るだけの物は、器を1枚にまとめる（Issue #192）。
+            // 1枚ずつ台紙を立てると、余白と間隔だけで 120pt を超えていた。
+            SettingsGroup {
+                SettingsRow(showsSeparator: false) { GuideToggleRow() }
+                if model.mcInstalled {
+                    SettingsRow { TelegramToggleRow(model: model) }
+                }
+                InstalledFamilyPanel(model: model)
             }
-            InstalledFamilyPanel(model: model)
+        }
+    }
+}
+
+/// 薄い行をまとめて1つの塊にする入れ物（Issue #192）。
+///
+/// これまでは、トグル1つ・追加ツール1覧に**それぞれカードを1枚**立てていた。
+/// カードは1枚ごとに上下の余白 28pt と、次との間隔 15pt を食う。3枚あれば
+/// それだけで 120pt を超える。#187 で行を1つ足したとき画面からはみ出したのは、
+/// **増えた行そのものより、増えたカードの器のほう**が効いていた。
+///
+/// 押すだけの物・見るだけの物に、1枚ずつ台紙は要らない。器は1枚にして、
+/// 中を細い線で区切る（CodexBar のメニュー部分と同じ形）。
+struct SettingsGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 2)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// 塊の中の1行。上下の余白はここだけが持つ。
+struct SettingsRow<Content: View>: View {
+    var showsSeparator = true
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showsSeparator {
+                Rectangle()
+                    .fill(Palette.hairline)
+                    .frame(height: 1)
+            }
+            content
+                .padding(.vertical, 9)
         }
     }
 }
@@ -2361,26 +2358,19 @@ struct InstalledFamilyPanel: View {
 
     var body: some View {
         if !installedPackages.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Color.clear
-                        .frame(width: 10, height: 10)
-                    Text("追加ツール")
-                        .font(AppFont.section)
-                        .foregroundStyle(Palette.primaryText)
-                    Spacer()
-                }
-                VStack(spacing: 9) {
-                    ForEach(installedPackages) { package in
-                        FamilyToolRow(
-                            package: package,
-                            update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
-                        )
-                    }
+            // 見出しは細い文字の1行だけ。台紙は持たない（Issue #192）。
+            Text("追加ツール")
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+                .padding(.top, 2)
+            ForEach(installedPackages) { package in
+                SettingsRow(showsSeparator: package.id != installedPackages.first?.id) {
+                    FamilyToolRow(
+                        package: package,
+                        update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
+                    )
                 }
             }
-            .padding(14)
-            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 }
@@ -2588,9 +2578,6 @@ struct TelegramToggleRow: View {
             .background(model.mcTelegram ? Palette.secondaryText : Palette.accent, in: Capsule())
             .disabled(model.mcBusyLabel != nil)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

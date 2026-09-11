@@ -65,7 +65,8 @@ final class GuideServer {
     }
 }
 
-/// 運用タブに置くトグル行。見た目は ClaudeLoginCard と同じパネル型に揃える。
+/// 運用タブに置くトグル行。台紙は持たない — `SettingsGroup` の中に
+/// 並ぶので、器は親が1枚だけ持つ（Issue #192）。
 struct GuideToggleRow: View {
     @AppStorage(GuideServer.defaultsKey) private var on: Bool = true
 
@@ -92,8 +93,5 @@ struct GuideToggleRow: View {
                 .padding(.vertical, 6)
                 .background(on ? Palette.secondaryText : Palette.accent, in: Capsule())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
