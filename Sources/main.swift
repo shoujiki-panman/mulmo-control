@@ -490,14 +490,20 @@ private let familyPackages = [
 ]
 
 enum AppFont {
-    static let appTitle = Font.system(size: 19, weight: .semibold, design: .default)
-    static let tab = Font.system(size: 13, weight: .semibold, design: .default)
-    static let section = Font.system(size: 15, weight: .semibold, design: .default)
-    static let cardTitle = Font.system(size: 17, weight: .semibold, design: .default)
+    // メニューバーのパネルは、読むものではなく**押すもの**（Issue #192）。
+    // 見出しを本文の1.5倍にする必要はない。大きいほど1行あたりの高さが増え、
+    // 行が増えたときに真っ先に効いてくる。
+    //
+    // 数を下げるときは、**下げすぎて読めなくならないか**を実機で見ること。
+    // 作者の画面で読めても、外付けの大きいディスプレイでは小さすぎることがある。
+    static let appTitle = Font.system(size: 16, weight: .semibold, design: .default)
+    static let tab = Font.system(size: 12.5, weight: .semibold, design: .default)
+    static let section = Font.system(size: 13.5, weight: .semibold, design: .default)
+    static let cardTitle = Font.system(size: 14.5, weight: .semibold, design: .default)
     static let rowTitle = Font.system(size: 12.5, weight: .semibold, design: .default)
-    static let body = Font.system(size: 12, weight: .medium, design: .default)
-    static let small = Font.system(size: 11, weight: .medium, design: .default)
-    static let action = Font.system(size: 12, weight: .semibold, design: .default)
+    static let body = Font.system(size: 11.5, weight: .medium, design: .default)
+    static let small = Font.system(size: 10.5, weight: .medium, design: .default)
+    static let action = Font.system(size: 11.5, weight: .semibold, design: .default)
 }
 
 @MainActor
@@ -1687,8 +1693,9 @@ struct ControlView: View {
     @ObservedObject var model: ControlModel
     @State private var screen: ControlScreen = .operate
 
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 11) {
             header
             if let actionText = model.actionText {
                 HStack(spacing: 8) {
@@ -1743,8 +1750,8 @@ struct ControlView: View {
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
@@ -1754,9 +1761,9 @@ struct ControlView: View {
                 Image(systemName: "terminal.fill")
                     .font(AppFont.section)
                     .foregroundStyle(Palette.accentText)
-                    .frame(width: 30, height: 30)
-                    .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 5) {
+                    .frame(width: 26, height: 26)
+                    .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Mulmo Control")
                         .font(AppFont.appTitle)
                         .foregroundStyle(Palette.primaryText)
@@ -1954,7 +1961,7 @@ struct ReleaseNotesButton: View {
                     Text("リリースノート")
                         .font(AppFont.section)
                         .foregroundStyle(Palette.primaryText)
-                    Text("まだ読み込めていません。`確認` を押すと取りに行きます。繋がらないときは GitHub で読めます。")
+                    Text("まだ読み込めていません。「確認」を押すと取りに行きます。繋がらないときは GitHub で読めます。")
                         .font(AppFont.small)
                         .foregroundStyle(Palette.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2258,7 +2265,7 @@ struct OperateView: View {
     @ObservedObject var model: ControlModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 12) {
             ServicePanel(
                 title: "MulmoTerminal",
                 subtitle: model.mtInstalled ? (model.mtRunning ? "動作中・ブラウザで使えます" : "停止中") : "未インストール",
@@ -2295,11 +2302,58 @@ struct OperateView: View {
                     Button("入手", action: model.openMCRepo)
                 }
             }
-            GuideToggleRow()
-            if model.mcInstalled {
-                TelegramToggleRow(model: model)
+            // 押すだけ・見るだけの物は、器を1枚にまとめる（Issue #192）。
+            // 1枚ずつ台紙を立てると、余白と間隔だけで 120pt を超えていた。
+            SettingsGroup {
+                SettingsRow(showsSeparator: false) { GuideToggleRow() }
+                if model.mcInstalled {
+                    SettingsRow { TelegramToggleRow(model: model) }
+                }
+                InstalledFamilyPanel(model: model)
             }
-            InstalledFamilyPanel(model: model)
+        }
+    }
+}
+
+/// 薄い行をまとめて1つの塊にする入れ物（Issue #192）。
+///
+/// これまでは、トグル1つ・追加ツール1覧に**それぞれカードを1枚**立てていた。
+/// カードは1枚ごとに上下の余白 28pt と、次との間隔 15pt を食う。3枚あれば
+/// それだけで 120pt を超える。#187 で行を1つ足したとき画面からはみ出したのは、
+/// **増えた行そのものより、増えたカードの器のほう**が効いていた。
+///
+/// 押すだけの物・見るだけの物に、1枚ずつ台紙は要らない。器は1枚にして、
+/// 中を細い線で区切る（CodexBar のメニュー部分と同じ形）。
+struct SettingsGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        // 左揃え。既定の中央揃えだと、Spacer を持たない行（節の見出しなど）
+        // だけが真ん中に寄って浮く（Issue #192）。
+        VStack(alignment: .leading, spacing: 0) {
+            content
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 2)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// 塊の中の1行。上下の余白はここだけが持つ。
+struct SettingsRow<Content: View>: View {
+    var showsSeparator = true
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showsSeparator {
+                Rectangle()
+                    .fill(Palette.hairline)
+                    .frame(height: 1)
+            }
+            content
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -2313,26 +2367,21 @@ struct InstalledFamilyPanel: View {
 
     var body: some View {
         if !installedPackages.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Color.clear
-                        .frame(width: 10, height: 10)
-                    Text("追加ツール")
-                        .font(AppFont.section)
-                        .foregroundStyle(Palette.primaryText)
-                    Spacer()
-                }
-                VStack(spacing: 9) {
-                    ForEach(installedPackages) { package in
-                        FamilyToolRow(
-                            package: package,
-                            update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
-                        )
-                    }
+            // 見出しも1行として扱う。**区切り線を持たせないと、上の行と
+            // くっついて見える**（Issue #192）。台紙は持たない。
+            SettingsRow {
+                Text("追加ツール")
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+            }
+            ForEach(installedPackages) { package in
+                SettingsRow(showsSeparator: package.id != installedPackages.first?.id) {
+                    FamilyToolRow(
+                        package: package,
+                        update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
+                    )
                 }
             }
-            .padding(14)
-            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 }
@@ -2497,11 +2546,18 @@ struct ModeButton: View {
 struct TelegramToggleRow: View {
     @ObservedObject var model: ControlModel
 
+    /// 押す前に、押したら何が起きるかが読めること（Issue #192）。
+    ///
+    /// 最初は「オフ（`yarn telegram` は自分で立てます）」と書いていた。**バック
+    /// クォートはそのまま文字として出る**うえ、コマンド名を知らない人には何の
+    /// 話か分からない。オフのときは**オンにすると何が変わるか**を書く。
     private var detail: String {
-        if model.mcTelegram {
-            return model.mcRunning ? "MulmoClaude と一緒に動いています" : "次の起動から一緒に立てます"
+        guard model.mcTelegram else {
+            return "オンにすると、MulmoClaude と一緒に起動・停止します"
         }
-        return "オフ（`yarn telegram` は自分で立てます）"
+        return model.mcRunning
+            ? "MulmoClaude と一緒に動いています"
+            : "MulmoClaude を起動すると、一緒に立ち上がります"
     }
 
     var body: some View {
@@ -2516,7 +2572,10 @@ struct TelegramToggleRow: View {
                 Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
+                    // 1行に切り詰めない。捨てられるのは「押したら何が起きるか」
+                    // なので、切るくらいなら2行にする（#180 と同じ判断）。
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Button(model.mcTelegram ? "やめる" : "オン") {
@@ -2530,9 +2589,6 @@ struct TelegramToggleRow: View {
             .background(model.mcTelegram ? Palette.secondaryText : Palette.accent, in: Capsule())
             .disabled(model.mcBusyLabel != nil)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
@@ -2939,7 +2995,7 @@ struct ServicePanel<Extra: View>: View {
     @ViewBuilder let extra: () -> Extra
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 10) {
                 Circle()
                     // 下敷きではなく「印」なので accentText 側。accent は白い文字を
@@ -2970,8 +3026,8 @@ struct ServicePanel<Extra: View>: View {
                         }
                         .buttonStyle(.plain)
                         .font(AppFont.action)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
                         .background(Palette.controlFill, in: Capsule())
                         trailingControl()
                     } else {
@@ -3006,8 +3062,9 @@ struct ServicePanel<Extra: View>: View {
             .font(AppFont.small)
             .foregroundStyle(Palette.secondaryText)
         }
-        .padding(14)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -3084,8 +3141,8 @@ struct CapsuleButton: View {
                     .font(.system(size: 10, weight: .semibold, design: .default))
             }
             .font(AppFont.action)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
             .foregroundStyle(foreground)
             .background(background, in: Capsule())
         }

@@ -1068,6 +1068,53 @@ grep -q 'mulmoclaude-live-ports' "${ROOT}/scripts/mulmoclaude-stop" \
   || fail "停止が実際のポートの控えを捨てていません（#190 / #149）"
 ok "実際のポートの控えが、書く側と読む側で揃っている"
 
+# ── 行が増えても画面に収まる（Issue #192）─────────────────────
+#
+# #187 でトグルの行を1つ足したら、パネルが画面からはみ出して**一番下の `終了` が
+# 押せなくなった。** 効いていたのは増えた行そのものより、**増えたカードの器**の
+# ほう。カードは1枚ごとに上下の余白 28pt と、次との間隔 15pt を食う。
+#
+# なので「押すだけ・見るだけの物は、器を1枚にまとめる」ことを守る。次に行を足す
+# 人が、また1枚ずつ台紙を立てると同じところへ戻る。
+grep -q 'struct SettingsGroup' "${ROOT}/Sources/main.swift" \
+  || fail "薄い行をまとめる入れ物がありません。行を足すたびにカードが増えます（#192）"
+OPERATE="$(awk '/^struct OperateView: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${OPERATE}" | grep -q 'SettingsGroup {' \
+  || fail "運用タブが、行をまとめる入れ物を通っていません（#192）"
+
+# 中に入る行が、自前の台紙を持っていないこと。**持っていると器が二重になり、
+# まとめた意味が消える。** ファイル名で書かずに列挙して回す（#147 の教訓）。
+for boxed_entry in "Sources/main.swift:TelegramToggleRow" \
+                   "Sources/main.swift:InstalledFamilyPanel" \
+                   "Sources/GuideServer.swift:GuideToggleRow"; do
+  boxed_file="${boxed_entry%%:*}"
+  boxed_view="${boxed_entry#*:}"
+  BOXED="$(awk -v v="struct ${boxed_view}: View {" 'index($0, v) { inside=1 } inside { print; if ($0 ~ /^\}$/) exit }' \
+    "${ROOT}/${boxed_file}")"
+  [ -n "${BOXED}" ] || fail "${boxed_view} を見失いました（#192）"
+  printf '%s\n' "${BOXED}" | grep -q 'Palette.panelFill' \
+    && fail "${boxed_view} が自前の台紙を持っています。器が二重になり、まとめた意味が消えます（#192）"
+done
+ok "押すだけの物に、台紙を1枚ずつ立てていない"
+
+# 画面に出す文にバッククォートを書かない。
+#
+# Markdown のつもりで書いても、SwiftUI の Text は**そのまま文字として出す。**
+# Telegram の行の説明が「オフ（`yarn telegram` は自分で立てます）」と出ていた。
+# 記号が見えるだけでなく、コマンド名を知らない人には何の話か分からない。
+#
+# 記号を**落とす**処理（リリースノートの素通し防止）だけは通す。あれは出さない
+# ための処理なので、ここで落とすと本末転倒。
+BACKTICK="$(grep -n '`' "${ROOT}/Sources"/*.swift 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*\/\//) print }' \
+  | grep '"' \
+  | grep -v 'replacingOccurrences' || true)"
+if [ -n "${BACKTICK}" ]; then
+  printf '%s\n' "${BACKTICK}"
+  fail "画面に出す文にバッククォートが入っています。そのまま記号として出ます（#192）"
+fi
+ok "画面に出す文に記号が紛れていない"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
