@@ -16,7 +16,7 @@
 
 ## 運用ルール
 
-- Issue → ブランチ → 実装 → チェック → PR → マージ の1周を崩さない（有本さん流）
+- Issue → ブランチ → 実装 → チェック → PR → マージ の1周を崩さない
 - PR は意味のある最小粒度。1 Issue = 1 PR
 - バージョンは semver。修正 = patch（v1.0.1）、機能 = minor（v1.1.0）
 - アプリの挙動が変わるマージのたびに GitHub Releases を更新する（build → zip → gh release）
