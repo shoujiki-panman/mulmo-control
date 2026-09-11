@@ -699,9 +699,17 @@ DUP_SH=$!
 
 sleep 1
 
+# 子まで落とす。囮のシェル（`sh -c 'echo ... ; sleep 60'`）は sleep を**子として**
+# 持つので、シェルだけ落とすと sleep が孤児として残る。GitHub Actions の
+# 「Cleaning up orphan processes」に1本出て気づいた。作者の Mac では
+# `./check.sh` のあと 60 秒ぶん残ることになる。
 dup_cleanup() {
   for victim in "${DUP_A}" "${DUP_B}" "${DUP_TG}" "${DUP_BUILD}" "${DUP_CLAUDE}" "${DUP_SH}"; do
-    [ -n "${victim}" ] && /bin/kill -KILL "${victim}" 2>/dev/null || true
+    [ -n "${victim}" ] || continue
+    for child in $(/bin/ps -Ao pid=,ppid= | /usr/bin/awk -v p="${victim}" '$2 == p { print $1 }'); do
+      /bin/kill -KILL "${child}" 2>/dev/null || true
+    done
+    /bin/kill -KILL "${victim}" 2>/dev/null || true
   done
   rm -rf "${DUP_PROBE}"
 }
