@@ -19,6 +19,29 @@ if [ ! -d "${APP_DIR}/.git" ]; then
   exit 1
 fi
 
+# 停止から起動までを1本の処理として錠を取る（Issue #187）。
+#
+# 利用者の実測はここが一番効く: 33秒の間に `更新` を4回押したところ、
+# `yarn server` が2本（3001 と 3002）孤児として残った。更新は途中で
+# MulmoClaude を止めてから git pull と yarn install を走らせるので、
+# 2本目の更新は**1本目の更新が作業ツリーを触っている最中に stash を掛ける。**
+# 二重起動より先に、リポジトリのほうが壊れる。
+#
+# 断るだけで、待たせない。待たせると、押した4回ぶんの再ビルドが順番に走る。
+if [ -z "${MULMO_MC_LOCK_HELD:-}" ]; then
+  if HOLDER="$("${SCRIPT_DIR}/mulmoclaude-lock" acquire $$ "更新")"; then
+    MULMO_MC_LOCK_HELD=1
+    export MULMO_MC_LOCK_HELD
+    trap '"${SCRIPT_DIR}/mulmoclaude-lock" release '"$$"' >/dev/null 2>&1 || true' EXIT INT TERM
+  else
+    BUSY_PID="${HOLDER%%	*}"
+    BUSY_LABEL="${${HOLDER#*	}%%	*}"
+    [ -n "${BUSY_LABEL}" ] || BUSY_LABEL="操作"
+    echo "MulmoClaude: いま${BUSY_LABEL}の処理中です（pid ${BUSY_PID}）。終わるまで待ってください" | tee -a "${LOG}"
+    exit 0
+  fi
+fi
+
 echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] update requested" | tee -a "${LOG}"
 cd "${APP_DIR}"
 

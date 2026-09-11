@@ -207,6 +207,75 @@ enum MulmoClaudeMode: String {
     }
 }
 
+/// MulmoClaude の起動・再起動・更新が走っている最中かどうか（Issue #187）。
+///
+/// 利用者は 33秒の間に `起動` を3回・`更新` を4回押した。**押せてしまうこと
+/// 自体が入口だった。** 通常モードの起動は画面を作り直すのに約1分かかり、その
+/// 間は何も listen していないので、画面は「停止中」と表示し、起動ボタンは何度
+/// でも押せる。結果 `yarn server` が2本（3001 と 3002）孤児として残り、翌朝の
+/// 定期通知が4重に届いた。
+///
+/// 錠は `scripts/mulmoclaude-lock` が置く。ここはそれを読むだけで、書かない —
+/// 実際に処理を始めるのはスクリプト側なので、錠の持ち主もあちらが決める。
+///
+/// 読むのは1行の `pid<TAB>ラベル<TAB>開始時刻`。ファイルを1つ読むだけなので、
+/// refresh のたびに払っても安い（シェルは起こさない。Issue #38）。
+struct MulmoClaudeLock {
+    /// 生きたまま固まったプロセスに錠を持たれ続けても、いつかは諦める。
+    /// **この数は `scripts/mulmoclaude-lock` の MAX_AGE と同じでなければ
+    /// ならない。** 食い違うと「画面は処理中と言うのにスクリプトは錠を奪う」
+    /// （その逆も）になる。check.sh が突き合わせている。
+    static let maxAge: TimeInterval = 900
+
+    static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/mulmoclaude-start.lock"
+
+    /// 押した人に見せる言葉。「起動」「再起動」「更新」のどれか。
+    let label: String
+
+    static func current() -> MulmoClaudeLock? {
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return nil }
+        guard let line = text.split(separator: "\n").first else { return nil }
+        let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+        guard fields.count >= 2, let pid = pid_t(String(fields[0])), pid > 0 else { return nil }
+        // 持ち主が死んでいれば、錠は置き忘れ。処理中と言ってはいけない。
+        // pid を 0 や負の数のまま渡さない（kill はプロセスグループの意味になる）。
+        guard kill(pid, 0) == 0 else { return nil }
+        if fields.count >= 3, let stamp = Double(String(fields[2])) {
+            guard Date().timeIntervalSince1970 - stamp <= maxAge else { return nil }
+        }
+        let label = String(fields[1])
+        return MulmoClaudeLock(label: label.isEmpty ? "操作" : label)
+    }
+}
+
+/// Telegram ブリッジ（`yarn telegram`）を起動・停止といっしょに面倒を見るか
+/// （Issue #187）。
+///
+/// ブリッジの接続先は 3001 固定なので、サーバーを立て直すたびに手で立て直す
+/// ことになっていた。既定は off — ブリッジには token が要るので、持っていない
+/// 人の起動のたびにエラーログを積みたくない。
+///
+/// 置き場所と読み方は MulmoClaudeMode と同じ理由で揃えてある。対応する読み手は
+/// `scripts/mulmoclaude-telegram`。
+enum MulmoClaudeTelegram {
+    static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/mulmoclaude-telegram"
+
+    static func isOn() -> Bool {
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return false }
+        let word = text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return word == "on"
+    }
+}
+
+/// 書くのは1語だけ。読む側（`scripts/mulmoclaude-telegram`）が知らない語を
+/// off へ倒すので、壊れた値が起動コマンドまで届くことはない。
+func writeMulmoClaudeTelegram(_ on: Bool) {
+    let path = MulmoClaudeTelegram.filePath
+    let dir = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try? "\(on ? "on" : "off")\n".write(toFile: path, atomically: true, encoding: .utf8)
+}
+
 /// 書くのは1語だけ。読む側（`scripts/mulmoclaude-mode`）が知らない語を既定へ
 /// 倒すので、壊れた値が起動コマンドまで届くことはない。
 func writeMulmoClaudeMode(_ mode: MulmoClaudeMode) {
@@ -393,6 +462,11 @@ enum AppFont {
 final class ControlModel: ObservableObject {
     @Published var mtRunning = false
     @Published var mcRunning = false
+    /// MulmoClaude の起動・再起動・更新が走っている最中なら、その言葉（Issue #187）。
+    /// 押せるのに効かないボタンを出さないために使う。
+    @Published var mcBusyLabel: String?
+    /// Telegram ブリッジを起動・停止といっしょに面倒を見るか（Issue #187）。
+    @Published var mcTelegram = false
     /// 二重に走らせない印（Issue #116）。
     private var lightChecksRunning = false
     @Published var nodePath: String?
@@ -591,6 +665,10 @@ final class ControlModel: ObservableObject {
         mcMode = MulmoClaudeMode.current()
         releaseNotes = readReleaseNotes()
         mcRunning = mulmoClaudeIsRunning()
+        // 錠を1つ読むだけ。シェルは起こさないので、閉じている間の refresh でも
+        // 払える（Issue #38 / #187）。
+        mcBusyLabel = MulmoClaudeLock.current()?.label
+        mcTelegram = MulmoClaudeTelegram.isOn()
         mtInstalled = FileManager.default.isExecutableFile(atPath: "\(localBin)/mulmoterminal")
         // 「入っている」の意味は、スクリプト側と揃える（Issue #107）。
         // 以前はフォルダの有無だけを見ていたので、空のフォルダを指していると
@@ -650,6 +728,10 @@ final class ControlModel: ObservableObject {
         if mcRunning {
             openURL(mcMode.url)
         } else {
+            // 止まっていれば起こしてから開く。処理中なら押せないのは `起動` と
+            // 同じ（Issue #187）。ここを抜かすと、ビルド中に `開く` を押した人
+            // だけが二重起動の入口に残る。
+            guard !declineIfMCBusy() else { return }
             runThenOpen(tool("mulmoclaude-start"), url: mcMode.url)
         }
     }
@@ -793,6 +875,8 @@ final class ControlModel: ObservableObject {
         run(updateCommand(command), label: "追加ツールをまとめて更新中")
     }
     func updateAllInstalled() {
+        // MulmoClaude を含む一括更新も、処理中なら受け取らない（Issue #187）。
+        if mcInstalled, declineIfMCBusy() { return }
         var commands: [String] = []
         // 実際に走らせるコマンドと同じ範囲で報告する。未導入の物は更新していないので載せない。
         var updated: [FamilyPackage] = []
@@ -831,6 +915,8 @@ final class ControlModel: ObservableObject {
     /// 「停止中」と表示され、`開く` も居ない側を開く。
     func setMCMode(_ mode: MulmoClaudeMode) {
         guard mode != mcMode else { return }
+        // 切り替えは起こし直しを伴うので、処理中なら受け取らない（Issue #187）。
+        guard !declineIfMCBusy() else { return }
         writeMulmoClaudeMode(mode)
         mcMode = mode
         if mcRunning {
@@ -840,15 +926,62 @@ final class ControlModel: ObservableObject {
         }
     }
 
-    func startMC() { run(tool("mulmoclaude-start"), label: "MulmoClaudeを起動中") }
+    /// 走っている処理があれば、次の1押しを受け取らない（Issue #187）。
+    ///
+    /// 利用者は 33秒の間に `起動` を3回・`更新` を4回押した。**押せてしまうこと
+    /// 自体が入口だった。** 通常モードの起動は画面を作り直すのに約1分かかり、
+    /// その間は何も listen していないので、画面は「停止中」と表示し、ボタンは
+    /// 何度でも押せる。結果 `yarn server` が2本（3001 と 3002）孤児として残った。
+    ///
+    /// 画面の控え（mcBusyLabel）ではなく、**押した瞬間に錠を読み直す。** 控えは
+    /// 最後の refresh の話しかできないので、開いたまま押した場合に古い。
+    ///
+    /// 止める側は通さない。**停止は最後の逃げ道**で、起動処理中でも必ず届いて
+    /// ほしい（スクリプト側が印を見て、ビルド明けの立ち上げを中止する）。
+    @discardableResult
+    private func declineIfMCBusy() -> Bool {
+        guard let label = MulmoClaudeLock.current()?.label else { return false }
+        mcBusyLabel = label
+        showMessage(
+            title: "MulmoClaudeは\(label)の処理中です",
+            text: "終わるまでお待ちください。重ねて押すと MulmoClaude が二重に立ち上がり、通知が何重にも届きます。"
+        )
+        return true
+    }
+
+    func startMC() {
+        guard !declineIfMCBusy() else { return }
+        run(tool("mulmoclaude-start"), label: "MulmoClaudeを起動中")
+    }
     func stopMC() { run(tool("mulmoclaude-stop"), label: "MulmoClaudeを停止中") }
-    func restartMC() { run(tool("mulmoclaude-restart"), label: "MulmoClaudeを再起動中") }
+    func restartMC() {
+        guard !declineIfMCBusy() else { return }
+        run(tool("mulmoclaude-restart"), label: "MulmoClaudeを再起動中")
+    }
     func updateMC() {
+        guard !declineIfMCBusy() else { return }
         prepareUpdateReport(
             title: "MulmoClaudeを更新しました",
             items: updateItems.filter { $0.id == "mulmoclaude" && $0.status == "update" }
         )
         run(updateCommand(tool("mulmoclaude-update-latest")), label: "MulmoClaudeを更新中")
+    }
+
+    /// Telegram ブリッジを見るかどうかを切り替える（Issue #187）。
+    ///
+    /// 動いている最中に切り替えたら起こし直す。ブリッジはサーバーが立ってから
+    /// でないと繋がらないので、`起動` を通さずに入れても何も立たない。モードの
+    /// 切り替え（setMCMode）と同じ形。
+    func setMCTelegram(_ on: Bool) {
+        guard on != mcTelegram else { return }
+        guard !declineIfMCBusy() else { return }
+        writeMulmoClaudeTelegram(on)
+        mcTelegram = on
+        if mcRunning {
+            restartMC()
+        } else {
+            actionText = on ? "Telegram ブリッジは次の起動から一緒に立てます" : "Telegram ブリッジは見ないようにしました"
+        }
     }
     func openMCRepo() { openURL(mulmoClaudeRepo) }
     func openReleases() { openURL(mulmoControlReleases) }
@@ -2004,6 +2137,10 @@ struct NoticeCard: View {
 /// 決まっているので、押さずに見える場所はここしかない。
 @MainActor func mulmoClaudeSubtitle(_ model: ControlModel) -> String {
     guard model.mcInstalled else { return "未インストール" }
+    // 処理中を最初に言う（Issue #187）。通常モードの起動は画面を作り直すのに
+    // 約1分かかり、その間は何も listen していないので、ここが「停止中」のまま
+    // だった。**押せるのに効かないボタンが、そのあいだ出ていた。**
+    if let busy = model.mcBusyLabel { return "\(busy)の処理中です・終わるまでお待ちください" }
     if model.mcRunning { return "動作中・\(model.mcMode.label)（\(model.mcMode.note)）" }
     return "停止中・次は\(model.mcMode.label)で起動します"
 }
@@ -2036,6 +2173,7 @@ struct OperateView: View {
                 accent: Palette.accent,
                 inactiveTitle: model.mcInstalled ? "起動" : "入手",
                 inactiveSystemImage: model.mcInstalled ? "play.fill" : "arrow.up.right",
+                busyNote: model.mcBusyLabel,
                 openAction: model.openMC,
                 startAction: model.mcInstalled ? model.startMC : model.openMCRepo,
                 stopAction: model.stopMC,
@@ -2049,6 +2187,9 @@ struct OperateView: View {
                 }
             }
             GuideToggleRow()
+            if model.mcInstalled {
+                TelegramToggleRow(model: model)
+            }
             InstalledFamilyPanel(model: model)
         }
     }
@@ -2233,6 +2374,56 @@ struct ModeButton: View {
             .padding(14)
             .frame(width: 260)
         }
+    }
+}
+
+/// Telegram ブリッジを起動・停止といっしょに面倒を見るかどうか（Issue #187）。
+///
+/// 見た目は GuideToggleRow に揃える。置き場所が運用タブなのは、押した結果が
+/// 起動・停止の振る舞いだから — 追加タブ（入れる物の話）ではない。
+///
+/// 状態は `~/Library/Application Support/Mulmo Control/mulmoclaude-telegram` に
+/// 書く。`@AppStorage` を使わないのは、**スクリプト側も同じ値を読む**ためで、
+/// UserDefaults はシェルから素直に読めない（mulmoclaude-mode と同じ判断）。
+struct TelegramToggleRow: View {
+    @ObservedObject var model: ControlModel
+
+    private var detail: String {
+        if model.mcTelegram {
+            return model.mcRunning ? "MulmoClaude と一緒に動いています" : "次の起動から一緒に立てます"
+        }
+        return "オフ（`yarn telegram` は自分で立てます）"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(model.mcTelegram ? Palette.ok : Palette.secondaryText)
+                .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Telegram ブリッジ")
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text(detail)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button(model.mcTelegram ? "やめる" : "オン") {
+                model.setMCTelegram(!model.mcTelegram)
+            }
+            .buttonStyle(.plain)
+            .font(AppFont.action)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(model.mcTelegram ? Palette.secondaryText : Palette.accent, in: Capsule())
+            .disabled(model.mcBusyLabel != nil)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
@@ -2625,6 +2816,9 @@ struct ServicePanel<Extra: View>: View {
     let accent: Color
     var inactiveTitle = "起動"
     var inactiveSystemImage = "play.fill"
+    /// 処理中なら、その言葉（Issue #187）。入っている間は起こす側のボタンを
+    /// 押せなくする。**停止は押せるままにする** — 最後の逃げ道なので。
+    var busyNote: String?
     let openAction: () -> Void
     let startAction: () -> Void
     let stopAction: () -> Void
@@ -2658,8 +2852,10 @@ struct ServicePanel<Extra: View>: View {
             if isAvailable {
                 HStack(spacing: 8) {
                     CapsuleButton(title: "開く", systemImage: "arrow.up.right", style: .primary(accent), action: openAction)
+                        .disabled(busyNote != nil && !isRunning)
                     if isRunning {
                         CapsuleButton(title: "再起動", systemImage: "arrow.clockwise", style: .quiet, action: restartAction)
+                            .disabled(busyNote != nil)
                         Button("停止") {
                             stopAction()
                         }
@@ -2676,8 +2872,17 @@ struct ServicePanel<Extra: View>: View {
                         // `openAction` も止まっていれば起動してから開くが、それが分かるのは
                         // 押したあとで、画面を見て分かる必要がある。
                         CapsuleButton(title: inactiveTitle, systemImage: inactiveSystemImage, style: .quiet, action: startAction)
+                            .disabled(busyNote != nil)
                         trailingControl()
                     }
+                }
+                // 押せない理由を書く。灰色になっているだけでは、壊れているのと
+                // 区別が付かない（Issue #187）。
+                if let busyNote {
+                    Text("\(busyNote)の処理中です。終わるまで押せません")
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 HStack(spacing: 8) {

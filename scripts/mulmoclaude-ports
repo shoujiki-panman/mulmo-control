@@ -15,14 +15,30 @@ set -u
 # 立てて **本物の `mulmoclaude-stop` を当てる**。そのために、見るポートを差し
 # 替えられる必要がある。実行時にこれを設定するものは無い。
 if [ -n "${MULMO_TEST_PORTS:-}" ]; then
-  printf '%s\n' ${=MULMO_TEST_PORTS}
+  if [ "${1:-}" = "--api" ]; then
+    printf '%s\n' ${=MULMO_TEST_PORTS} | /usr/bin/tail -1
+  else
+    printf '%s\n' ${=MULMO_TEST_PORTS}
+  fi
   exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
 
-case "${MODE}" in
-  app) printf '3001\n' ;;
-  *) printf '5173\n3001\n' ;;
-esac
+ports() {
+  case "${MODE}" in
+    app) printf '3001\n' ;;
+    *) printf '5173\n3001\n' ;;
+  esac
+}
+
+# バックエンド（API）のポート（Issue #187）。Telegram ブリッジの接続先はここで、
+# 開発モードでも変わらない。表をもう1つ持つと必ず食い違うので、上の表の
+# 最後の行を読む — 開発モードで増えるのは前に付く Vite のほうだけ。
+if [ "${1:-}" = "--api" ]; then
+  ports | /usr/bin/tail -1
+  exit 0
+fi
+
+ports

@@ -3,8 +3,11 @@ set -u
 
 # MulmoClaude のポートを持っているプロセスを、自分のものか他人のものかに分ける。
 #
-#   mulmoclaude-pids            設定の MulmoClaude から起きているものだけ
+#   mulmoclaude-pids            設定の MulmoClaude のサーバー側（既定）
+#   mulmoclaude-pids --all      サーバー側 + Telegram ブリッジ（停止が使う。#187）
+#   mulmoclaude-pids --bridge   Telegram ブリッジだけ（#187）
 #   mulmoclaude-pids --others   同じポートを持っている、それ以外のもの
+#   mulmoclaude-pids --roots    サーバー側が何本立っているか（起動の木の頭。#187）
 #   mulmoclaude-pids --tree <pid>...
 #                               渡された pid が属する「起動の木」を丸ごと返す
 #                               （一番上 + その下ぜんぶ。Issue #172）
@@ -32,8 +35,12 @@ APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"
 # 「動いていない」と言い続け、停止も切り替えも届かなくなる。
 APP_DIR="$(cd "${APP_DIR}" 2>/dev/null && pwd -P || printf '%s' "${APP_DIR}")"
 
-WANT_OTHERS=0
-[ "${1:-}" = "--others" ] && WANT_OTHERS=1
+WANT="${1:-}"
+case "${WANT}" in
+  "") WANT="--server" ;;
+  --server|--all|--bridge|--others|--roots|--tree) ;;
+  *) echo "mulmoclaude-pids: 知らない指定です: ${WANT}" >&2; exit 2 ;;
+esac
 
 listeners() {
   for port in "${MC_PORTS[@]}"; do
@@ -44,6 +51,114 @@ listeners() {
 # そのプロセスがどこで動いているか。lsof の -Fn は `n<パス>` の形で返す。
 cwd_of() {
   /usr/sbin/lsof -a -p "$1" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' | head -1
+}
+
+# 設定の MulmoClaude の下で動いているか。
+mine_dir() {
+  case "$1" in
+    "${APP_DIR}"|"${APP_DIR}"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# ポートを見るだけでは、2本目以降が見えない（Issue #187）。
+#
+# MulmoClaude はポートが埋まっていると 3002, 3003… へ自動で逃げる。連打で
+# 立った2本目は 5173 も 3001 も持たないので、**ここから先は最初から居ない
+# ものとして扱われていた。** 実測では 3001 と 3002 の `yarn server` が孤児と
+# して残り、翌朝の定期通知が4重に届いた。
+#
+# 「同じフォルダで動いている node」では広すぎる。MulmoClaude のフォルダは
+# claude を走らせる場所でもあるので、それだと**人が開いている作業セッション
+# まで落とす**（STATUS.md の #152 の教訓がまさにこれ）。
+#
+# なので綴りを列挙して、MulmoClaude の起動としか読めないものだけを拾う。
+# 足すときは、起動の途中で走るだけの物に当たらないか必ず確かめること。
+# `vite` を入れてはいけないのが実例で、通常モードの起動は `yarn build:client`
+# から vite を起こすため、**起動の最中に「もう動いている」と言い出す。**
+# 綴りが「どこかに出てくる」だけでは拾わない（Issue #187）。
+#
+# **動かしている本体が node / yarn / npm であること**まで見る。ここを省くと、
+# 同じ綴りを含む文字列を渡されたシェル（`zsh -lc "... yarn server ..."` の形）が
+# 混ざる。作業ディレクトリが MulmoClaude の下なら「自分のもの」と判定される
+# ので、**停止がそのシェルを落とす。** #187 の検査の足場を組んだとき、実際に
+# 3本拾った。
+#
+# `--tree` の launch_chain が `-zsh` で止まるのと同じ話で、あちらが親をたどる
+# ときにやっていることを、こちらは入口でやる。
+#
+# 2語まで見るのは、yarn がシェルの包みで配られている環境があるため
+# （`/bin/bash /opt/homebrew/bin/yarn server` の形）。本体が包みでも、
+# その次の語が yarn なら本物。
+node_runtime() {
+  case "$1" in
+    # 文字列を渡されたシェル。MulmoClaude の起動にこの形は無い。
+    *" -c "*|*" -lc "*) return 1 ;;
+  esac
+  local program="${1%% *}" rest="${1#* }" arg1 word
+  arg1="${rest%% *}"
+  for word in "${program}" "${arg1}"; do
+    case "${word}" in
+      node|*/node|*/node[0-9]*|yarn|*/yarn|*yarn.js|*yarn-[0-9]*.cjs|npm|*/npm|npx|*/npx|tsx|*/tsx) return 0 ;;
+    esac
+  done
+  # `env -u PORT ... yarn server` の形。起動はこれで包んでいる（#141）。
+  case "${program}" in
+    env|/usr/bin/env) return 0 ;;
+  esac
+  return 1
+}
+
+server_command() {
+  node_runtime "$1" || return 1
+  case "$1" in
+    # MulmoClaude 側の supervisor（落ちた子を起こし直す）と、バックエンドの入口。
+    *dev-server.mjs*|*server/index.ts*|*server/index.js*) return 0 ;;
+  esac
+  # `yarn dev` / `yarn server`。ps には `node .../yarn.js server` の形で出る。
+  # `yarn install` や `yarn build:client` には当たらない。
+  case "$1" in
+    *yarn*|*npm*)
+      case "$1" in
+        *" dev"|*" dev "*|*" dev:"*|*" server"|*" server "*|*" server:"*) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+# Telegram ブリッジ（Issue #187）。サーバーとは別の木で立つので、
+# 「何本立っているか」を数えるときは混ぜない。停止では一緒に落とす。
+bridge_command() {
+  node_runtime "$1" || return 1
+  case "$1" in
+    *yarn*|*npm*)
+      case "$1" in
+        *" telegram"|*" telegram "*|*" telegram:"*) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+# ps は1回だけ読む。当たった数本にしか cwd を取りに行かない（lsof は1本 210ms
+# かかるので、全プロセスに掛けるとメニューが固まる。Issue #38 で一度払った）。
+scan_pids() {
+  /bin/ps -Ao pid=,command= 2>/dev/null | while read -r pid cmd; do
+    case "$1" in
+      server) server_command "${cmd}" || continue ;;
+      bridge) bridge_command "${cmd}" || continue ;;
+    esac
+    mine_dir "$(cwd_of "${pid}")" && printf '%s\n' "${pid}"
+  done
+}
+
+# ポートを持っていて、設定の MulmoClaude の下にいるもの（従来の見方）。
+port_pids() {
+  local pid
+  for pid in $(listeners); do
+    mine_dir "$(cwd_of "${pid}")" && printf '%s\n' "${pid}"
+  done
 }
 
 # 起動の連なりの一番上（Issue #172）。
@@ -104,27 +219,51 @@ descendants() {
   done
 }
 
-if [ "${1:-}" = "--tree" ]; then
-  shift
-  for pid in "$@"; do
-    descendants "$(root_of "${pid}")"
-  done | /usr/bin/awk '!seen[$0]++'
-  exit 0
-fi
+case "${WANT}" in
+  --tree)
+    shift
+    for pid in "$@"; do
+      descendants "$(root_of "${pid}")"
+    done | /usr/bin/awk '!seen[$0]++'
+    ;;
 
-for pid in $(listeners); do
-  cwd="$(cwd_of "${pid}")"
-  # APP_DIR そのものか、その下で動いていれば自分のもの。
-  case "${cwd}" in
-    "${APP_DIR}"|"${APP_DIR}"/*) mine=1 ;;
-    *) mine=0 ;;
-  esac
-  if [ "${WANT_OTHERS}" = "1" ]; then
-    [ "${mine}" = "0" ] && printf '%s\n' "${pid}"
-  else
-    [ "${mine}" = "1" ] && printf '%s\n' "${pid}"
-  fi
-done
+  --roots)
+    # サーバー側が何本立っているか（Issue #187）。
+    #
+    # 1本の MulmoClaude は、ポートを持つ子も supervisor も、たどれば同じ頭に
+    # 着く。頭が2つ以上あるのは**別々に起こされた**ということで、それは常に
+    # 事故。`mulmoclaude-start` がここを見て、まとめて畳んでから1本立て直す。
+    shift
+    if [ "$#" -gt 0 ]; then
+      roots_from="$*"
+    else
+      roots_from="$({ port_pids; scan_pids server } | /usr/bin/sort -u | /usr/bin/xargs 2>/dev/null || true)"
+    fi
+    for pid in ${=roots_from}; do
+      root_of "${pid}"
+    done | /usr/bin/awk '!seen[$0]++'
+    ;;
+
+  --others)
+    # ポートを他人が持っている場合だけ。ここはプロセスでは見分けられない
+    # （相手が何であるかを知らないので、綴りの表が使えない）。
+    for pid in $(listeners); do
+      mine_dir "$(cwd_of "${pid}")" || printf '%s\n' "${pid}"
+    done
+    ;;
+
+  --bridge)
+    scan_pids bridge | /usr/bin/sort -u
+    ;;
+
+  --all)
+    { port_pids; scan_pids server; scan_pids bridge } | /usr/bin/sort -u
+    ;;
+
+  *)
+    { port_pids; scan_pids server } | /usr/bin/sort -u
+    ;;
+esac
 
 # 該当なしは失敗ではない。呼ぶ側が `|| true` を書かずに済むよう、ここで揃える。
 exit 0

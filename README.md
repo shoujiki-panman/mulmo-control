@@ -13,7 +13,8 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 ## できること
 
 - MulmoTerminal を開く / 起動 / 停止 / 再起動
-- MulmoClaude を開く / 起動 / 停止 / 再起動
+- MulmoClaude を開く / 起動 / 停止 / 再起動（連打しても二重に立ち上がりません）
+- MulmoClaude の Telegram ブリッジを起動・停止といっしょに面倒を見る（既定はオフ）
 - MulmoTerminal をログイン時に起動し、落ちたら再起動する LaunchAgent を設定
 - MulmoTerminal / MulmoClaude / Mulmo 系 npm パッケージの最新版確認
 - 更新があるとメニューバーアイコンで知らせる
@@ -135,6 +136,18 @@ pgrep -lf MulmoControl
 - `停止`: サーバーを止め、ログイン時起動も解除します
 - `ログ`: ログの場所を確認します
 
+MulmoClaude の起動・再起動・更新が走っている間は、そのパネルのボタンが押せなく
+なり、1行目に「○○の処理中です」と出ます。**通常モードの起動は画面を作り直すのに
+1分ほどかかり、その間はまだ何も立っていません。** 立つまで押せたままだと、重ねて
+押したぶんだけサーバーが増え、しかも空いている次のポート（3002, 3003…）へ逃げる
+ので誰にも見えない状態で通知を送り続けます。`停止` だけは処理中でも押せます
+（ビルド中に押せば、明けてからの立ち上げを中止します）。
+
+`Telegram ブリッジ` の行をオンにすると、`yarn telegram` を MulmoClaude の起動・
+停止といっしょに面倒を見ます。ブリッジの接続先は 3001 固定なので、オフのままだと
+サーバーを立て直すたびに手で立て直すことになります。token などブリッジ側の設定は
+MulmoClaude 側に置いてください（この画面では扱いません）。
+
 ### 追加
 
 MulmoCast など、周辺ツールを追加します。
@@ -157,6 +170,7 @@ Mulmo Control 自身に更新がある場合もここで確認できます。更
 - MulmoTerminal データ: `~/.mulmoterminal`
 - MulmoTerminal 実行ファイル: `~/.local/bin/mulmoterminal`
 - MulmoClaude リポジトリ: `~/mulmoclaude`
+- モード・Telegram ブリッジの設定: `~/Library/Application Support/Mulmo Control`
 
 ## アンインストール
 

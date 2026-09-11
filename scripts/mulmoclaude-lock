@@ -1,0 +1,135 @@
+#!/bin/zsh
+set -u
+
+# MulmoClaude の起動・再起動・更新を、一度に1本だけにする錠（Issue #187）。
+#
+#   mulmoclaude-lock acquire <pid> <label>  取れたら 0、他が持っていたら 1
+#   mulmoclaude-lock release <pid>          自分が持っているときだけ外す
+#   mulmoclaude-lock holder                 持ち主を `pid<TAB>label<TAB>開始時刻` で出す
+#
+# 連打で何が起きたか（実測、利用者の報告）:
+# 33秒の間に `起動` を3回・`更新` を4回押したところ、`yarn server` が2本
+# （3001 と 3002）孤児として残り、翌朝の定期通知が4重に届いた。
+# `mulmoclaude-start` は通常モードで画面を作り直すのに約1分かかり、**その間は
+# 何も listen していない**ので、ポートを見るガードは連打をすべて通す。
+#
+# 見張る場所を「ポート」から「処理そのもの」に移す。ポートが立つ前から
+# 立ったあとまで、start が走っている間ずっと持っている物が要る。
+#
+# ## 作り方: ハードリンク
+#
+# `mkdir` も原子的だが、**中の持ち主ファイルを書くまでに隙間ができる。**
+# その隙間に別のプロセスが読むと「錠はあるが持ち主が分からない」になり、
+# 放置された錠と見分けが付かない。`ln` なら、中身を書き終えたファイルに
+# 名前を1つ足すだけなので、錠が見えた時点で中身は必ず揃っている。
+#
+# ## 放置された錠を、いつ奪うか
+#
+#  1. 持ち主の pid が死んでいる（強制終了・再起動・電源断）
+#  2. 取ってから MAX_AGE を超えた（生きたまま固まっている）
+#
+# 2 が無いと、固まった `yarn install` ひとつで MulmoClaude を二度と起動でき
+# なくなる。逆に短すぎると、遅い回線の更新中に錠を奪って**まさに防ぎたかった
+# 二重起動**が起きる。旧 Air の npm は ECONNRESET で数分かかることがある
+# （STATUS.md）ので、そこに耐える幅を取る。
+#
+# この数は Sources/main.swift も持っている（画面がボタンを止める判断に使う）。
+# 食い違うと「画面は処理中と言うのにスクリプトは錠を奪う」になるので、
+# check.sh が突き合わせている。
+MAX_AGE=900
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# 置き場所は app-info.env の隣ではなく、install.sh が触らないところ。
+# mulmoclaude-mode と同じ理由で、更新のたびに消えてほしくない。
+STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
+LOCK="${STATE_DIR}/mulmoclaude-start.lock"
+
+# 生きているか。EPERM でも 0 が返るが、同じ利用者で動く物しか見ないので届く。
+alive() { /bin/kill -0 "$1" 2>/dev/null; }
+
+now() { /bin/date '+%s'; }
+
+# 持ち主を返す。放置された錠は「持ち主なし」として扱い、ここでは消さない
+# （読むだけの `holder` が書き換えると、検査も画面も再現しなくなる）。
+read_owner() {
+  [ -f "${LOCK}" ] || return 1
+  local line pid stamp age
+  line="$(/usr/bin/head -1 "${LOCK}" 2>/dev/null)"
+  pid="${line%%	*}"
+  case "${pid}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  alive "${pid}" || return 1
+  stamp="${line##*	}"
+  case "${stamp}" in
+    ''|*[!0-9]*) stamp="" ;;
+  esac
+  if [ -n "${stamp}" ]; then
+    age=$(( $(now) - stamp ))
+    [ "${age}" -le "${MAX_AGE}" ] || return 1
+  fi
+  printf '%s\n' "${line}"
+  return 0
+}
+
+case "${1:-}" in
+  acquire)
+    PID="${2:-}"
+    LABEL="${3:-操作}"
+    case "${PID}" in
+      ''|*[!0-9]*) echo "mulmoclaude-lock: acquire には pid が要ります" >&2; exit 2 ;;
+    esac
+    # 区切りに使う文字は落とす。ここを通さないと、ラベルに紛れたタブで
+    # 「持ち主の pid」を読み違える。
+    LABEL="$(printf '%s' "${LABEL}" | /usr/bin/tr -d '\t\n')"
+    [ -n "${LABEL}" ] || LABEL="操作"
+
+    mkdir -p "${STATE_DIR}" 2>/dev/null || true
+
+    # 奪い合いになっても、勝つのは ln が通った1本だけ。負けたほうはもう一度
+    # 読み直して、今度は生きている錠を見つけて引き返す。
+    attempt=0
+    while [ "${attempt}" -lt 3 ]; do
+      attempt=$(( attempt + 1 ))
+      TMP="${LOCK}.$$.${attempt}"
+      printf '%s\t%s\t%s\n' "${PID}" "${LABEL}" "$(now)" > "${TMP}" 2>/dev/null || {
+        # 錠を置けないなら、黙って通さない。通してしまうと連打が素通りする。
+        echo "mulmoclaude-lock: ${STATE_DIR} に書けません" >&2
+        exit 2
+      }
+      if /bin/ln "${TMP}" "${LOCK}" 2>/dev/null; then
+        /bin/rm -f "${TMP}"
+        exit 0
+      fi
+      /bin/rm -f "${TMP}"
+      if OWNER="$(read_owner)"; then
+        printf '%s\n' "${OWNER}"
+        exit 1
+      fi
+      # 持ち主が死んでいるか、古すぎる。奪う。
+      /bin/rm -f "${LOCK}"
+    done
+    echo "mulmoclaude-lock: 錠を取れませんでした" >&2
+    exit 1
+    ;;
+  release)
+    PID="${2:-}"
+    [ -f "${LOCK}" ] || exit 0
+    LINE="$(/usr/bin/head -1 "${LOCK}" 2>/dev/null)"
+    HELD="${LINE%%	*}"
+    # 自分の錠だけ外す。奪われたあとに外すと、奪った側の処理中に錠が消える。
+    if [ "${HELD}" = "${PID}" ] || ! alive "${HELD}"; then
+      /bin/rm -f "${LOCK}"
+    fi
+    exit 0
+    ;;
+  holder)
+    read_owner || true
+    exit 0
+    ;;
+  *)
+    echo "usage: mulmoclaude-lock acquire <pid> <label> | release <pid> | holder" >&2
+    exit 2
+    ;;
+esac
