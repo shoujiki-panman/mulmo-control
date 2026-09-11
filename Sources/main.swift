@@ -2328,7 +2328,9 @@ struct SettingsGroup<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(spacing: 0) {
+        // 左揃え。既定の中央揃えだと、Spacer を持たない行（節の見出しなど）
+        // だけが真ん中に寄って浮く（Issue #192）。
+        VStack(alignment: .leading, spacing: 0) {
             content
         }
         .padding(.horizontal, 12)
@@ -2351,6 +2353,7 @@ struct SettingsRow<Content: View>: View {
             }
             content
                 .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -2364,11 +2367,13 @@ struct InstalledFamilyPanel: View {
 
     var body: some View {
         if !installedPackages.isEmpty {
-            // 見出しは細い文字の1行だけ。台紙は持たない（Issue #192）。
-            Text("追加ツール")
-                .font(AppFont.small)
-                .foregroundStyle(Palette.secondaryText)
-                .padding(.top, 2)
+            // 見出しも1行として扱う。**区切り線を持たせないと、上の行と
+            // くっついて見える**（Issue #192）。台紙は持たない。
+            SettingsRow {
+                Text("追加ツール")
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+            }
             ForEach(installedPackages) { package in
                 SettingsRow(showsSeparator: package.id != installedPackages.first?.id) {
                     FamilyToolRow(
