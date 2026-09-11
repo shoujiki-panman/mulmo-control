@@ -184,6 +184,9 @@ enum MulmoClaudeMode: String {
     static var chosen: Bool { FileManager.default.fileExists(atPath: filePath) }
 
     /// 通常モードでは Vite が立たないので 5173 は開かない。
+    ///
+    /// これは**決め打ちの既定**で、動いていないときに使う。実際に立っている
+    /// ときは `MulmoClaudeLivePorts` が本物を持っている（Issue #190）。
     var ports: [Int] { self == .app ? [3001] : [5173, 3001] }
 
     /// 身元を確かめに行く先（Issue #93）。画面を配っているほうを見る。
@@ -204,6 +207,45 @@ enum MulmoClaudeMode: String {
     /// ここで決まっているため。
     var note: String {
         self == .app ? "作業中にリロードされません" : "保存すると画面が作り直されます"
+    }
+}
+
+/// いま動いている MulmoClaude が、実際に待っているポート（Issue #190）。
+///
+/// MulmoClaude はポートが埋まっていると 3002, 3003… で起動する。上流の作りなので
+/// こちらでは変えられない。決め打ちのままだと、逃げた先に `開く` が届かず、生存
+/// 判定も「停止中」と出る。`.env` で `PORT` を変えている人にも合っていなかった。
+///
+/// 控えは `mulmoclaude-start` が書き、`mulmoclaude-stop` が捨てる。ここは読むだけ。
+/// **`lsof` をここから叩かない** — 実測で1回 210ms かかり、メニューを開くたびの
+/// refresh では払えない（#38 で一度払っている）。ファイルを1つ読むだけにする。
+///
+/// 控えは古くなりうる（手で起こし直された、控えを書いたあとに落ちた）。だから
+/// **既定の表と併用する**。どちらのポートも見て、身元を確かめてから動作中と言う。
+struct MulmoClaudeLivePorts {
+    static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/mulmoclaude-live-ports"
+
+    /// ブラウザで開く先（画面を配っている側）。
+    let open: Int?
+    /// バックエンド。
+    let api: Int?
+
+    static func current() -> MulmoClaudeLivePorts {
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else {
+            return MulmoClaudeLivePorts(open: nil, api: nil)
+        }
+        var open: Int?
+        var api: Int?
+        for line in text.split(separator: "\n") {
+            let field = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard field.count >= 2, let port = Int(String(field[1])), (1...65535).contains(port) else { continue }
+            switch field[0] {
+            case "open": open = port
+            case "api": api = port
+            default: break
+            }
+        }
+        return MulmoClaudeLivePorts(open: open, api: api)
     }
 }
 
@@ -629,29 +671,52 @@ final class ControlModel: ObservableObject {
     private var mcIdentity = false
     private var mcIdentityChecking = false
 
+    /// 身元が取れたポート（Issue #190）。`開く` はここを開く。
+    @Published var mcOpenPort: Int?
+
+    /// 見に行くポート（Issue #190）。
+    ///
+    /// 控え（実際に立っていたポート）を先に、決め打ちの既定をあとに置く。控えは
+    /// 古くなりうる（手で起こし直された、書いたあとに落ちた）ので、**どちらも見る。**
+    /// 片方だけにすると、逃げた先を取りこぼすか、控えが古いまま「停止中」と言う。
+    private func candidatePorts() -> [Int] {
+        let live = MulmoClaudeLivePorts.current()
+        var ports: [Int] = []
+        for port in [live.open, live.api].compactMap({ $0 }) + mcMode.ports where !ports.contains(port) {
+            ports.append(port)
+        }
+        return ports
+    }
+
     /// ポートが閉じていれば即座に「動いていない」。開いていたら中身を確かめる。
     /// 確かめ終わるまでは前回分かった値を返す。起動直後に一瞬「停止中」と出るが、
     /// 他人のものを「動作中」と言うよりはよい。
     private func mulmoClaudeIsRunning() -> Bool {
-        guard mcMode.ports.contains(where: portIsOpen) else {
+        // 開いているものだけを身元確認に回す。ポート確認は実測 0.1ms なので、
+        // 数個を順に見ても refresh の負担にならない（HTTP は 1.0ms、lsof は 210ms）。
+        let open = candidatePorts().filter(portIsOpen)
+        guard !open.isEmpty else {
             mcIdentity = false
+            mcOpenPort = nil
             return false
         }
-        confirmMulmoClaudeIdentity()
+        confirmMulmoClaudeIdentity(open)
         return mcIdentity
     }
 
-    private func confirmMulmoClaudeIdentity() {
+    private func confirmMulmoClaudeIdentity(_ ports: [Int]) {
         guard !mcIdentityChecking else { return }
         mcIdentityChecking = true
-        let port = mcMode.probePort
         Task.detached { [weak self] in
-            let confirmed = servesMulmoClaude(port: port)
+            // 最初に MulmoClaude だと名乗ったものを採る。他人が同じポートを
+            // 持っているだけのときに「動作中」と言わないための確認（Issue #93）。
+            let found = ports.first(where: { servesMulmoClaude(port: $0) })
             await MainActor.run {
                 guard let self else { return }
                 self.mcIdentityChecking = false
-                self.mcIdentity = confirmed
-                self.mcRunning = confirmed
+                self.mcIdentity = found != nil
+                self.mcOpenPort = found
+                self.mcRunning = found != nil
             }
         }
     }
@@ -726,15 +791,59 @@ final class ControlModel: ObservableObject {
             return
         }
         if mcRunning {
-            openURL(mcMode.url)
+            // 身元が取れたポートを開く（Issue #190）。3002 へ逃げていても届く。
+            openURL(mcOpenURL)
         } else {
             // 止まっていれば起こしてから開く。処理中なら押せないのは `起動` と
             // 同じ（Issue #187）。ここを抜かすと、ビルド中に `開く` を押した人
             // だけが二重起動の入口に残る。
             guard !declineIfMCBusy() else { return }
-            runThenOpen(tool("mulmoclaude-start"), url: mcMode.url)
+            // 起こしてから開く。起こし終えた時点の実際のポートを、スクリプトが
+            // 控えているので、開く直前に読み直す（Issue #190）。
+            runThenOpenMC()
         }
     }
+    /// いま開くべき MulmoClaude のアドレス（Issue #190）。
+    ///
+    /// 身元が取れたポートを優先し、無ければ控え、それも無ければ決め打ちの既定。
+    /// 決め打ちに倒れるのは「動いていないとき」だけなので、そこは既定で正しい。
+    var mcOpenURL: String {
+        if let port = mcOpenPort { return "http://localhost:\(port)" }
+        if let port = MulmoClaudeLivePorts.current().open { return "http://localhost:\(port)" }
+        return mcMode.url
+    }
+
+    /// 起こしてから開く。**開く直前にアドレスを読み直す**（Issue #190）。
+    ///
+    /// 起動前は、どのポートに立つか分からない（3001 が埋まっていれば 3002 へ逃げる）。
+    /// `mulmoclaude-start` が立ち上がりを見届けて控えを書くので、走り終えてから
+    /// 読めば本物が分かる。先にアドレスを決めてしまうと、逃げた先を開けない。
+    private func runThenOpenMC() {
+        actionText = "MulmoClaudeを起動中"
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", "mkdir -p \"\(logDir)\"\n(\n\(tool("mulmoclaude-start"))\n) >\"\(actionLogPath)\" 2>&1"]
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                try? "failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
+            }
+            let succeeded = process.terminationStatus == 0
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await MainActor.run {
+                self.refreshAfterAction()
+                if succeeded {
+                    self.actionText = nil
+                    self.openURL(self.mcOpenURL)
+                } else {
+                    self.actionText = Self.failureText(prefix: "起動に失敗しました")
+                }
+            }
+        }
+    }
+
     func startMT() { run(tool("mulmoterminal-start"), label: "MulmoTerminalを起動中") }
     func stopMT() { run(tool("mulmoterminal-stop"), label: "MulmoTerminalを停止中") }
     func restartMT() { run(tool("mulmoterminal-restart"), label: "MulmoTerminalを再起動中") }

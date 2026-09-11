@@ -5,6 +5,20 @@ set -u
 # 対応表の置き場所は mulmoclaude-ports と同じ考え方。
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 動いているなら、実際に待っているポートを開く（Issue #190）。
+#
+# MulmoClaude はポートが埋まっていると 3002, 3003… で起動する。決め打ちのままだと、
+# 逃げた先に `開く` が届かない。`.env` で PORT を変えている人にも合わない。
+#
+# 動いていなければ下の表へ倒す。止まっているときの `開く` は起動してから開くので、
+# そのあとは実際のポートが読める。
+LIVE="$("${SCRIPT_DIR}/mulmoclaude-live-ports" 2>/dev/null | /usr/bin/awk -F'\t' '$1 == "open" { print $2; exit }')"
+if [ -n "${LIVE}" ]; then
+  printf 'http://localhost:%s\n' "${LIVE}"
+  exit 0
+fi
+
 MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
 
 case "${MODE}" in

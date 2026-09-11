@@ -37,7 +37,14 @@ ports() {
 # 開発モードでも変わらない。表をもう1つ持つと必ず食い違うので、上の表の
 # 最後の行を読む — 開発モードで増えるのは前に付く Vite のほうだけ。
 if [ "${1:-}" = "--api" ]; then
-  ports | /usr/bin/tail -1
+  # 動いているなら、実際に待っているポート（Issue #190）。ブリッジの接続先が
+  # ここで決まるので、3002 へ逃げていたら繋がらないまま「立てました」になる。
+  LIVE="$("${SCRIPT_DIR}/mulmoclaude-live-ports" 2>/dev/null | /usr/bin/awk -F'\t' '$1 == "api" { print $2; exit }')"
+  if [ -n "${LIVE}" ]; then
+    printf '%s\n' "${LIVE}"
+  else
+    ports | /usr/bin/tail -1
+  fi
   exit 0
 fi
 
