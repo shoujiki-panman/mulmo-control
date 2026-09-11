@@ -18,6 +18,10 @@ STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}
 mkdir -p "${STATE_DIR}" 2>/dev/null || true
 /bin/date '+%s' > "${STATE_DIR}/mulmoclaude-stop-requested" 2>/dev/null || true
 
+# 実際のポートの控えを捨てる（Issue #190）。止めたのに残っていると、画面が
+# 居ない場所を指したまま「動作中」と言いかねない（#149 の形）。
+/bin/rm -f "${STATE_DIR}/mulmoclaude-live-ports"
+
 # 落としてよいのは、設定の MulmoClaude から起きているものだけ（Issue #91）。
 # 以前は 5173 と 3001 を持っているものを確かめずに全部落としていた。5173 は
 # Vite の既定ポートなので、他のプロジェクトを開いているだけで巻き添えになる。

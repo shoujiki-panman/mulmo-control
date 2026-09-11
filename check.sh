@@ -363,13 +363,22 @@ ok "他人のプロセスを巻き添えにしない"
 # 機械が見る。
 MODE_PROBE="$(mktemp -d)"
 
+# ここで見たいのは**決め打ちの既定**のほう。#190 で `mulmoclaude-url` は動いて
+# いる MulmoClaude の実際のポートを先に読むようになったので、**検査を走らせた
+# Mac で MulmoClaude が動いていると、本物のポートが返って表と食い違う。**
+# 設定を空のフォルダに向けて、動いているものが1つも見つからない状態にする。
+mkdir -p "${MODE_PROBE}/empty"
+printf "MULMO_CONTROL_MULMOCLAUDE_DIR='%s'\n" "${MODE_PROBE}/empty" > "${MODE_PROBE}/cfg.env"
+
 mode_ports() {
   printf '%s\n' "$1" > "${MODE_PROBE}/mode"
-  MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-ports" | tr '\n' ',' | sed 's/,$//'
+  MULMO_MODE_FILE="${MODE_PROBE}/mode" MULMO_CONFIG_FILE="${MODE_PROBE}/cfg.env" \
+    "${ROOT}/scripts/mulmoclaude-ports" | tr '\n' ',' | sed 's/,$//'
 }
 mode_url_port() {
   printf '%s\n' "$1" > "${MODE_PROBE}/mode"
-  MULMO_MODE_FILE="${MODE_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-url" | sed 's|.*:||'
+  MULMO_MODE_FILE="${MODE_PROBE}/mode" MULMO_CONFIG_FILE="${MODE_PROBE}/cfg.env" \
+    "${ROOT}/scripts/mulmoclaude-url" | sed 's|.*:||'
 }
 
 PORTS_LINE="$(grep 'var ports: \[Int\]' "${ROOT}/Sources/main.swift" | head -1)"
@@ -935,6 +944,129 @@ for api_mode in app dev; do
 done
 rm -rf "${API_PROBE}"
 ok "Telegram ブリッジの既定と接続先"
+
+# ── 逃げた先のポートに届く（Issue #190）─────────────────────
+#
+# #187 では「見えない2本目を見つけて止める」ところまでやったが、**アドレスは
+# 3001 決め打ちのままだった。** 3002 で立っているものには `開く` が届かず、
+# 生存判定も「停止中」と出る。`.env` で PORT を変えている人にも最初から
+# 合っていなかった。
+#
+# 綴りで見ても意味がない。**実際に別のポートで待っているプロセスを立てて、
+# そこを指すかを見る。**
+step "逃げた先のポートに届く（#190）"
+
+LIVE_PROBE="$(mktemp -d)"
+LIVE_APP="${LIVE_PROBE}/app"
+mkdir -p "${LIVE_APP}" "${LIVE_PROBE}/cfg"
+printf "MULMO_CONTROL_MULMOCLAUDE_DIR='%s'\n" "${LIVE_APP}" > "${LIVE_PROBE}/cfg/app-info.env"
+
+# 実物（3001 / 5173）には触らない。空いている2つを借りる。
+LIVE_API=""
+LIVE_UI=""
+for candidate in $(seq 45800 45870); do
+  if [ -z "$(/usr/sbin/lsof -tiTCP:"${candidate}" -sTCP:LISTEN 2>/dev/null)" ]; then
+    if [ -z "${LIVE_API}" ]; then LIVE_API="${candidate}"
+    elif [ -z "${LIVE_UI}" ]; then LIVE_UI="${candidate}"; break
+    fi
+  fi
+done
+[ -n "${LIVE_API}" ] && [ -n "${LIVE_UI}" ] \
+  || { rm -rf "${LIVE_PROBE}"; fail "検査用の空きポートが見つかりませんでした（#190）"; }
+
+# 本物と同じ形（ps には `node .../yarn.js server` と出る）。開発モードのときは
+# 画面側（vite）を子として起こす。
+cat > "${LIVE_APP}/vite.js" <<'LIVE_VITE'
+require("net").createServer().listen(Number(process.argv[2]), "127.0.0.1");
+setInterval(() => {}, 1000);
+LIVE_VITE
+cat > "${LIVE_APP}/yarn.js" <<'LIVE_YARN'
+const args = process.argv.slice(2);
+if (args[0] === "dev") {
+  require("child_process").spawn(process.execPath, [__dirname + "/vite.js", args[2]], { stdio: "ignore" });
+}
+require("net").createServer().listen(Number(args[1]), "127.0.0.1");
+setInterval(() => {}, 1000);
+LIVE_YARN
+
+live_run() {
+  env MULMO_CONFIG_FILE="${LIVE_PROBE}/cfg/app-info.env" MULMO_MODE_FILE="${LIVE_PROBE}/mode" "$@"
+}
+live_cleanup() {
+  for victim in $(live_run "${ROOT}/scripts/mulmoclaude-pids" --tree \
+      $(live_run "${ROOT}/scripts/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null) 2>/dev/null); do
+    /bin/kill -KILL "${victim}" 2>/dev/null || true
+  done
+  rm -rf "${LIVE_PROBE}"
+}
+live_fail() { live_cleanup; fail "$1"; }
+
+# ── 動いていなければ既定へ倒れる ────────────────────────────
+printf 'app\n' > "${LIVE_PROBE}/mode"
+[ "$(live_run "${ROOT}/scripts/mulmoclaude-url")" = "http://localhost:3001" ] \
+  || live_fail "動いていないのに既定の 3001 を指していません（#190）"
+[ "$(live_run "${ROOT}/scripts/mulmoclaude-ports" --api)" = "3001" ] \
+  || live_fail "動いていないのに --api が既定へ倒れていません（#190）"
+
+# ── 通常モード: 3001 以外で立っているものを指す ─────────────
+( cd "${LIVE_APP}" && exec node ./yarn.js server "${LIVE_API}" ) >/dev/null 2>&1 &
+LIVE_SERVER=$!
+for _ in $(seq 1 40); do
+  sleep 0.25
+  [ -n "$(/usr/sbin/lsof -tiTCP:"${LIVE_API}" -sTCP:LISTEN 2>/dev/null)" ] && break
+done
+[ -n "$(/usr/sbin/lsof -tiTCP:"${LIVE_API}" -sTCP:LISTEN 2>/dev/null)" ] \
+  || live_fail "検査用のサーバーが立ちませんでした（#190）"
+
+GOT_URL="$(live_run "${ROOT}/scripts/mulmoclaude-url")"
+[ "${GOT_URL}" = "http://localhost:${LIVE_API}" ] \
+  || live_fail "逃げた先を開けません: ${GOT_URL}（${LIVE_API} を指すはず・#190）"
+GOT_API="$(live_run "${ROOT}/scripts/mulmoclaude-ports" --api)"
+[ "${GOT_API}" = "${LIVE_API}" ] \
+  || live_fail "ブリッジの接続先が逃げた先を向いていません: ${GOT_API}（#190）"
+
+/bin/kill -KILL "${LIVE_SERVER}" 2>/dev/null || true
+sleep 1
+ok "3001 以外で立っていても、開く先と接続先がそこを指す"
+
+# ── 開発モード: 画面側とバックエンドを取り違えない ──────────
+#
+# 番号では決められない（どちらも逃げる）。**プロセスの綴りで決めている**ことを
+# 見る。取り違えると `開く` が API を、ブリッジが Vite を掴む。
+printf 'dev\n' > "${LIVE_PROBE}/mode"
+( cd "${LIVE_APP}" && exec node ./yarn.js dev "${LIVE_API}" "${LIVE_UI}" ) >/dev/null 2>&1 &
+LIVE_DEV=$!
+for _ in $(seq 1 40); do
+  sleep 0.25
+  [ -n "$(/usr/sbin/lsof -tiTCP:"${LIVE_UI}" -sTCP:LISTEN 2>/dev/null)" ] && break
+done
+[ -n "$(/usr/sbin/lsof -tiTCP:"${LIVE_UI}" -sTCP:LISTEN 2>/dev/null)" ] \
+  || live_fail "検査用の画面側が立ちませんでした（#190）"
+
+GOT_URL="$(live_run "${ROOT}/scripts/mulmoclaude-url")"
+[ "${GOT_URL}" = "http://localhost:${LIVE_UI}" ] \
+  || live_fail "開発モードで画面側を開いていません: ${GOT_URL}（${LIVE_UI} を指すはず・#190）"
+GOT_API="$(live_run "${ROOT}/scripts/mulmoclaude-ports" --api)"
+[ "${GOT_API}" = "${LIVE_API}" ] \
+  || live_fail "開発モードでバックエンドを取り違えています: ${GOT_API}（${LIVE_API} のはず・#190）"
+ok "開発モードで、画面側とバックエンドを取り違えない"
+
+live_cleanup
+
+# 控えの置き場所が、書く側と読む側で同じであること。
+#
+# 画面は `lsof` を叩けない（1回 210ms。メニューを開くたびには払えない・#38）ので、
+# スクリプトが書いた控えを読む。**綴りが食い違うと、画面だけ永久に既定のまま。**
+# 落ちないので誰も気づけない。
+LIVE_FILE_SH="$(grep -o 'mulmoclaude-live-ports' "${ROOT}/scripts/mulmoclaude-start" | head -1)"
+LIVE_FILE_SWIFT="$(grep -o 'mulmoclaude-live-ports' "${ROOT}/Sources/main.swift" | head -1)"
+[ -n "${LIVE_FILE_SH}" ] || fail "mulmoclaude-start が実際のポートを控えていません（#190）"
+[ "${LIVE_FILE_SH}" = "${LIVE_FILE_SWIFT}" ] \
+  || fail "控えの置き場所が食い違っています。画面だけ既定のまま動きません（#190）"
+# 止めたら捨てる。残すと、居ない場所を指したまま「動作中」と言いかねない（#149）。
+grep -q 'mulmoclaude-live-ports' "${ROOT}/scripts/mulmoclaude-stop" \
+  || fail "停止が実際のポートの控えを捨てていません（#190 / #149）"
+ok "実際のポートの控えが、書く側と読む側で揃っている"
 
 # 設定ファイルを shell として実行しない（Issue #67）。
 #

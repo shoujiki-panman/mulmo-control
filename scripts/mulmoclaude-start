@@ -19,6 +19,11 @@ TG_ERR="${LOG_DIR}/mulmoclaude-telegram-error.log"
 # install.sh が触らないところに置く（mulmoclaude-mode と同じ理由）。
 STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
 STOP_STAMP="${STATE_DIR}/mulmoclaude-stop-requested"
+# 実際に待っているポートの控え（Issue #190）。**画面のためだけにある。**
+# スクリプトは押されたときにしか走らないので毎回 lsof を掛けられるが、画面は
+# メニューを開くたびに refresh する。lsof は実測で1回 210ms かかり、そこでは
+# 払えない（#38 で一度払っている）。ファイルを1つ読むだけで済むようにしておく。
+LIVE_PORTS="${STATE_DIR}/mulmoclaude-live-ports"
 
 mkdir -p "${LOG_DIR}"
 
@@ -71,22 +76,19 @@ start_bridge_if_wanted() {
     return 0
   fi
 
-  local bridge_yarn api waited
+  local bridge_yarn api
   bridge_yarn="$(command -v yarn || true)"
   if [ -z "${bridge_yarn}" ]; then
     echo "MulmoClaude: yarn が見つからないので、Telegram ブリッジは立てませんでした" | /usr/bin/tee -a "${TG_ERR}"
     return 0
   fi
 
+  # 接続先は決め打ちではなく、実際に立っているポートを読む（Issue #190）。
+  # 3002 へ逃げていた場合、3001 に繋ぎに行っても繋がらないまま「立てました」に
+  # なってしまう。
   api="$("${SCRIPT_DIR}/mulmoclaude-ports" --api)"
-  waited=0
-  while [ "${waited}" -lt 40 ]; do
-    /usr/bin/nc -z 127.0.0.1 "${api}" >/dev/null 2>&1 && break
-    waited=$(( waited + 1 ))
-    sleep 1
-  done
   if ! /usr/bin/nc -z 127.0.0.1 "${api}" >/dev/null 2>&1; then
-    echo "MulmoClaude: ${api} が立たないので、Telegram ブリッジは立てませんでした" | /usr/bin/tee -a "${TG_ERR}"
+    echo "MulmoClaude: バックエンドが応えないので、Telegram ブリッジは立てませんでした" | /usr/bin/tee -a "${TG_ERR}"
     return 0
   fi
 
@@ -94,6 +96,31 @@ start_bridge_if_wanted() {
   # cd は副シェルの中だけ。呼び出し側の作業ディレクトリは動かさない。
   # PORT を渡さないのは本体と同じ理由（#141）。
   ( cd "${APP_DIR}" 2>/dev/null && nohup /usr/bin/env -u PORT "${bridge_yarn}" telegram >>"${TG_LOG}" 2>>"${TG_ERR}" & )
+}
+
+# ── 実際に待っているポートを控える（Issue #190）──────────────
+#
+# サーバーが立ちきるまで待ってから読む。立ち上がりかけでは、まだ何も listen して
+# いないか、片方（開発モードの Vite）だけ立っていることがある。
+record_live_ports() {
+  local waited=0 live=""
+  while [ "${waited}" -lt 40 ]; do
+    live="$("${SCRIPT_DIR}/mulmoclaude-live-ports" 2>/dev/null)"
+    case "${live}" in
+      *api*) break ;;
+    esac
+    waited=$(( waited + 1 ))
+    sleep 1
+  done
+  mkdir -p "${STATE_DIR}" 2>/dev/null || true
+  if [ -n "${live}" ]; then
+    printf '%s\n' "${live}" > "${LIVE_PORTS}" 2>/dev/null || true
+    echo "[$(stamp)] live ports: $(printf '%s' "${live}" | /usr/bin/tr '\n' ' ')" >>"${OUT_LOG}"
+  else
+    # 立たなかったものの控えを残さない。残すと画面が居ない場所を指し続ける
+    # （「アプリが世界の状態について嘘をつく」形。#149）。
+    /bin/rm -f "${LIVE_PORTS}"
+  fi
 }
 
 # ── すでに立っているものを数える（Issue #187）────────────────
@@ -116,6 +143,8 @@ if [ "${ROOT_COUNT}" -gt 1 ]; then
   sleep 1
 elif [ "${ROOT_COUNT}" = "1" ]; then
   echo "MulmoClaude: already running"
+  # 控えを取り直す（Issue #190）。手で起こし直されていると、前の控えが古い。
+  record_live_ports
   # ブリッジだけ落ちている場合は、ここで立て直す。サーバーが動いていると
   # `起動` は何もしないので、そうしないと手で立て直すしかない。
   start_bridge_if_wanted
@@ -216,6 +245,7 @@ else
 fi
 
 sleep 2
+record_live_ports
 start_bridge_if_wanted
 # ブラウザを開くかどうかはアプリ側が決める（`開く` だけが開く）。
 # ここで開くと `開く` は二重に開き、`起動` と `再起動` は開かないつもりなのに

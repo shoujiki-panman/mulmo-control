@@ -1,0 +1,62 @@
+#!/bin/zsh
+set -u
+
+# いま動いている MulmoClaude が、実際に待っているポート（Issue #190）。
+#
+#   open<TAB><port>   ブラウザで開く先（画面を配っている側）
+#   api<TAB><port>    バックエンド。Telegram ブリッジの接続先もここ
+#
+# 動いていなければ何も出さない。呼ぶ側は、出なければ既定の表
+# （mulmoclaude-ports / mulmoclaude-url）に倒す。
+#
+# ## なぜ要るか
+#
+# MulmoClaude はポートが埋まっていると 3002, 3003… で起動する。上流の作りなので
+# こちらでは変えられない。決め打ちのままだと、3002 で立っているものに `開く` が
+# 届かず、生存判定も「停止中」と出る（#187 で「見つけて止める」まではやったが、
+# アドレスは 3001 のままだった）。
+#
+# `.env` で PORT を変えている人にも、最初から合っていなかった。同じ直し方で
+# 片付くので、ここでまとめて見る。
+#
+# ## どうやって見分けるか
+#
+# 開発モードでは2つ立つ（Vite と バックエンド）。番号では決められない —
+# どちらも逃げるので。**プロセスの綴りで決める。** `vite` を動かしているほうが
+# 画面側で、残りがバックエンド。通常モードでは Vite が立たず、バックエンドが
+# 画面も配るので、同じポートが両方の役になる。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+SERVERS="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
+[ -n "${SERVERS}" ] || exit 0
+
+# 木ごと見る。Vite は `yarn dev` の子（concurrently の下）なので、サーバー側の
+# 一覧には入らない。**入れてはいけない** — 通常モードの起動は build:client から
+# vite を起こすので、綴りに入れると起動の最中に「もう動いている」になる（#187）。
+TREE="$("${SCRIPT_DIR}/mulmoclaude-pids" --tree ${=SERVERS} | /usr/bin/xargs 2>/dev/null || true)"
+[ -n "${TREE}" ] || exit 0
+
+OPEN_PORT=""
+API_PORT=""
+
+for pid in ${=TREE}; do
+  ports="$(/usr/sbin/lsof -a -p "${pid}" -iTCP -sTCP:LISTEN -P -n -Fn 2>/dev/null \
+    | /usr/bin/sed -n 's/^n.*:\([0-9][0-9]*\)$/\1/p' | /usr/bin/sort -u)"
+  [ -n "${ports}" ] || continue
+  cmd="$(/bin/ps -o command= -p "${pid}" 2>/dev/null)"
+  for port in ${=ports}; do
+    case "${cmd}" in
+      *vite*) [ -n "${OPEN_PORT}" ] || OPEN_PORT="${port}" ;;
+      *) [ -n "${API_PORT}" ] || API_PORT="${port}" ;;
+    esac
+  done
+done
+
+# 通常モードは1本で両方を配る。Vite が居なければ、画面もバックエンドと同じ場所。
+[ -n "${OPEN_PORT}" ] || OPEN_PORT="${API_PORT}"
+
+[ -n "${OPEN_PORT}" ] && printf 'open\t%s\n' "${OPEN_PORT}"
+[ -n "${API_PORT}" ] && printf 'api\t%s\n' "${API_PORT}"
+exit 0
