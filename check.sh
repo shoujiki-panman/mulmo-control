@@ -102,6 +102,7 @@ RMRF="$(grep -rn 'rm -rf\|rm -fr' "${SAFETY_TARGETS[@]}" 2>/dev/null | noncommen
   | grep -v '"${CHECK_DIR}"' \
   | grep -v '"${STAGE_DIR}"' \
   | grep -v '"${VERIFY_DIR}"' \
+  | grep -v '"${SETUP_DIR}"' \
   | grep -v 'rm -rf "${APP_DIR}"$' || true)"
 if [ -n "${RMRF}" ]; then
   printf '%s\n' "${RMRF}"

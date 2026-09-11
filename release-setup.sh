@@ -67,21 +67,21 @@ ok "Apple に入れることを確認"
 
 # ── 証明書を書き出す ───────────────────────────────────────────
 step "証明書を書き出す"
-WORK="$(mktemp -d /private/tmp/mulmo-release-setup.XXXXXX)"
-trap 'rm -rf "${WORK}"' EXIT
+SETUP_DIR="$(mktemp -d /private/tmp/mulmo-release-setup.XXXXXX)"
+trap 'rm -rf "${SETUP_DIR}"' EXIT
 P12_PASSWORD="$(openssl rand -base64 24)"
 # security export は種類でしか選べないので、同じキーチェーンにある署名用の
 # 身元が全部入る。GitHub 側は Developer ID Application だけを選んで使う。
-security export -t identities -f pkcs12 -P "${P12_PASSWORD}" -o "${WORK}/certificate.p12" >/dev/null \
+security export -t identities -f pkcs12 -P "${P12_PASSWORD}" -o "${SETUP_DIR}/certificate.p12" >/dev/null \
   || fail "証明書を書き出せませんでした（ダイアログで「許可」を押しましたか）"
-[ -s "${WORK}/certificate.p12" ] || fail "書き出した証明書が空です"
+[ -s "${SETUP_DIR}/certificate.p12" ] || fail "書き出した証明書が空です"
 ok "書き出した（この Mac のキーチェーンはそのまま）"
 
 # ── 預ける ────────────────────────────────────────────────────
 # 名前は .github/workflows/release.yml が読むものと揃える。check.sh が
 # 突き合わせているので、片方だけ変えると PR で落ちる。
 step "GitHub の Secrets に預ける"
-base64 -i "${WORK}/certificate.p12" | tr -d '\n' \
+base64 -i "${SETUP_DIR}/certificate.p12" | tr -d '\n' \
   | gh secret set MACOS_CERTIFICATE_P12 --repo "${REPO}" >/dev/null
 ok "MACOS_CERTIFICATE_P12"
 printf '%s' "${P12_PASSWORD}" | gh secret set MACOS_CERTIFICATE_PASSWORD --repo "${REPO}" >/dev/null
