@@ -611,7 +611,10 @@ fi
 
 # ここからが本題。**配っている `mulmoclaude-stop` そのもの**を当てる。
 # 検査用のロジックを書き写すと、書き写したほうだけが正しいまま通ってしまう。
+# 状態の置き場所も検査用に逃がす。停止は「押された」印を残すので（#187）、
+# 逃がさないと検査を走らせただけで実機の状態フォルダにファイルが増える。
 MULMO_CONFIG_FILE="${STOP_PROBE}/cfg/app-info.env" MULMO_TEST_PORTS="${STOP_PORT}" \
+  MULMO_STATE_DIR="${STOP_PROBE}/state" \
   "${ROOT}/scripts/mulmoclaude-stop" >/dev/null 2>&1 || true
 
 # 起こし直す親が生きているなら、その瞬間ポートが空いて見えても止まっていない。
@@ -691,7 +694,7 @@ DUP_BUILD=$!
 DUP_CLAUDE=$!
 #  綴りを含む文字列を渡されたシェル。作業ディレクトリが MulmoClaude の下なので、
 #  本体まで見ないと自分のものに見える
-( cd "${DUP_APP}" && exec /bin/sh -c 'echo "node yarn server"; sleep 60' ) >/dev/null 2>&1 &
+( cd "${DUP_APP}" && exec /bin/sh -c 'echo node yarn server ; sleep 60' ) >/dev/null 2>&1 &
 DUP_SH=$!
 
 sleep 1
@@ -783,7 +786,34 @@ dup_lock acquire "${DUP_B}" "更新" >/dev/null 2>&1 \
 sleep 1
 dup_lock acquire "${DUP_A}" "起動" >/dev/null 2>&1 \
   || dup_fail "持ち主が死んだ錠を奪えません。強制終了のあと永久に起動できません（#187）"
-ok "錠は1本だけ・置き忘れは奪える"
+
+# 同時に押されたときに1本だけ通ること。**順番に取って断られることを見ても、
+# 競り合いは見ていない。** #187 の報告は 33秒に7回なので、競り合いは実際に起きる。
+DUP_RACE="${DUP_PROBE}/race"
+mkdir -p "${DUP_RACE}"
+DUP_RACE_PIDS=()
+for _ in 1 2 3 4 5; do
+  sleep 30 &
+  DUP_RACE_PIDS+=($!)
+done
+# 待つのは取りに行った側だけ。引数なしの `wait` は上の sleep まで待つので、
+# 検査が 30 秒固まる（実際に固まった）。
+DUP_RACE_RUNNERS=()
+for race_pid in "${DUP_RACE_PIDS[@]}"; do
+  (
+    if env MULMO_STATE_DIR="${DUP_PROBE}/race-state" "${DUP_LOCK}" acquire "${race_pid}" "起動" >/dev/null 2>&1; then
+      : > "${DUP_RACE}/${race_pid}"
+    fi
+  ) &
+  DUP_RACE_RUNNERS+=($!)
+done
+for runner in "${DUP_RACE_RUNNERS[@]}"; do wait "${runner}" 2>/dev/null || true; done
+DUP_RACE_WON="$(ls "${DUP_RACE}" | wc -l | tr -d ' ')"
+for race_pid in "${DUP_RACE_PIDS[@]}"; do /bin/kill -KILL "${race_pid}" 2>/dev/null || true; done
+[ "${DUP_RACE_WON}" = "1" ] \
+  || dup_fail "同時に押すと錠を ${DUP_RACE_WON} 本取れます。連打がそのまま通ります（#187）"
+
+ok "錠は1本だけ・置き忘れは奪える・同時でも1本"
 
 # ── 錠を持たれている間、起動が引き返すこと（Issue #187）──────
 # 断るのは失敗ではないので、終了コードは 0。押した人に理由が届くこと、

@@ -36,10 +36,8 @@ stamp() { /bin/date '+%Y-%m-%d %H:%M:%S'; }
 #
 # 再起動と更新は、自分で錠を取ってからここを呼ぶ。二重に取ると自分で自分を
 # 締め出すので、持っていることを環境変数で渡してもらう。
-LOCK_MINE=0
 if [ -z "${MULMO_MC_LOCK_HELD:-}" ]; then
   if HOLDER="$("${SCRIPT_DIR}/mulmoclaude-lock" acquire $$ "起動")"; then
-    LOCK_MINE=1
     MULMO_MC_LOCK_HELD=1
     export MULMO_MC_LOCK_HELD
     trap '"${SCRIPT_DIR}/mulmoclaude-lock" release '"$$"' >/dev/null 2>&1 || true' EXIT INT TERM
