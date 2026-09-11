@@ -490,14 +490,20 @@ private let familyPackages = [
 ]
 
 enum AppFont {
-    static let appTitle = Font.system(size: 19, weight: .semibold, design: .default)
-    static let tab = Font.system(size: 13, weight: .semibold, design: .default)
-    static let section = Font.system(size: 15, weight: .semibold, design: .default)
-    static let cardTitle = Font.system(size: 17, weight: .semibold, design: .default)
+    // メニューバーのパネルは、読むものではなく**押すもの**（Issue #192）。
+    // 見出しを本文の1.5倍にする必要はない。大きいほど1行あたりの高さが増え、
+    // 行が増えたときに真っ先に効いてくる。
+    //
+    // 数を下げるときは、**下げすぎて読めなくならないか**を実機で見ること。
+    // 作者の画面で読めても、外付けの大きいディスプレイでは小さすぎることがある。
+    static let appTitle = Font.system(size: 16, weight: .semibold, design: .default)
+    static let tab = Font.system(size: 12.5, weight: .semibold, design: .default)
+    static let section = Font.system(size: 13.5, weight: .semibold, design: .default)
+    static let cardTitle = Font.system(size: 14.5, weight: .semibold, design: .default)
     static let rowTitle = Font.system(size: 12.5, weight: .semibold, design: .default)
-    static let body = Font.system(size: 12, weight: .medium, design: .default)
-    static let small = Font.system(size: 11, weight: .medium, design: .default)
-    static let action = Font.system(size: 12, weight: .semibold, design: .default)
+    static let body = Font.system(size: 11.5, weight: .medium, design: .default)
+    static let small = Font.system(size: 10.5, weight: .medium, design: .default)
+    static let action = Font.system(size: 11.5, weight: .semibold, design: .default)
 }
 
 @MainActor
@@ -1689,7 +1695,7 @@ struct ControlView: View {
 
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 11) {
             header
             if let actionText = model.actionText {
                 HStack(spacing: 8) {
@@ -1744,8 +1750,8 @@ struct ControlView: View {
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
@@ -1755,9 +1761,9 @@ struct ControlView: View {
                 Image(systemName: "terminal.fill")
                     .font(AppFont.section)
                     .foregroundStyle(Palette.accentText)
-                    .frame(width: 30, height: 30)
-                    .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 5) {
+                    .frame(width: 26, height: 26)
+                    .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Mulmo Control")
                         .font(AppFont.appTitle)
                         .foregroundStyle(Palette.primaryText)
@@ -2984,7 +2990,7 @@ struct ServicePanel<Extra: View>: View {
     @ViewBuilder let extra: () -> Extra
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 10) {
                 Circle()
                     // 下敷きではなく「印」なので accentText 側。accent は白い文字を
@@ -3015,8 +3021,8 @@ struct ServicePanel<Extra: View>: View {
                         }
                         .buttonStyle(.plain)
                         .font(AppFont.action)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
                         .background(Palette.controlFill, in: Capsule())
                         trailingControl()
                     } else {
@@ -3051,8 +3057,9 @@ struct ServicePanel<Extra: View>: View {
             .font(AppFont.small)
             .foregroundStyle(Palette.secondaryText)
         }
-        .padding(14)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -3129,8 +3136,8 @@ struct CapsuleButton: View {
                     .font(.system(size: 10, weight: .semibold, design: .default))
             }
             .font(AppFont.action)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
             .foregroundStyle(foreground)
             .background(background, in: Capsule())
         }
