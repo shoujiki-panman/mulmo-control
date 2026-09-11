@@ -1068,6 +1068,49 @@ grep -q 'mulmoclaude-live-ports' "${ROOT}/scripts/mulmoclaude-stop" \
   || fail "停止が実際のポートの控えを捨てていません（#190 / #149）"
 ok "実際のポートの控えが、書く側と読む側で揃っている"
 
+# ── 行が増えても画面に収まる（Issue #192）─────────────────────
+#
+# パネルは行を1つ足すたびに全体が伸びる作りだった。#187 で Telegram の行を
+# 足したら画面からはみ出し、**一番下の `終了` が押せなくなった。**
+#
+# 足すたびに余白を縮める直し方だと、次に足した人がまた踏む。収まらないぶんだけ
+# スクロールさせ、ヘッダ・タブ・`終了` は動かさない形にしてある。
+grep -q 'struct ScrollIfTall' "${ROOT}/Sources/main.swift" \
+  || fail "収まらないときにスクロールする入れ物がありません。行が増えると終了できなくなります（#192）"
+# タブの中身が、その入れ物を通っていること。定義があるだけで使っていなければ同じこと。
+grep -q 'ScrollIfTall(maxHeight:' "${ROOT}/Sources/main.swift" \
+  || fail "タブの中身がスクロールする入れ物を通っていません（#192）"
+# `終了` は入れ物の外。中に入れると、スクロールしないと押せない物に戻る。
+BODY="$(awk '/ScrollIfTall\(maxHeight:/,/^            \}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${BODY}" | grep -q '終了' \
+  && fail "終了ボタンがスクロールの中に入っています。下まで送らないと押せません（#192）"
+
+# 上限を決め打ちの数にしない。13インチのノートと外付けの大きい画面では、
+# 収まる量が倍ちがう。作者の画面でだけ収まる数を書くと #6 と同じ穴になる。
+CAP="$(awk '/static var contentMaxHeight/,/^    \}$/' "${ROOT}/Sources/main.swift")"
+[ -n "${CAP}" ] || fail "本文の高さの上限を見失いました（#192）"
+printf '%s\n' "${CAP}" | grep -q 'NSScreen' \
+  || fail "本文の高さの上限が画面から決まっていません。小さい画面でだけはみ出します（#192 / #6）"
+ok "行が増えても終了できる（上限は画面から決まる）"
+
+# 画面に出す文にバッククォートを書かない。
+#
+# Markdown のつもりで書いても、SwiftUI の Text は**そのまま文字として出す。**
+# Telegram の行の説明が「オフ（`yarn telegram` は自分で立てます）」と出ていた。
+# 記号が見えるだけでなく、コマンド名を知らない人には何の話か分からない。
+#
+# 記号を**落とす**処理（リリースノートの素通し防止）だけは通す。あれは出さない
+# ための処理なので、ここで落とすと本末転倒。
+BACKTICK="$(grep -n '`' "${ROOT}/Sources"/*.swift 2>/dev/null \
+  | awk '{ body=$0; sub(/^[^:]*:[0-9]+:/,"",body); if (body !~ /^[[:space:]]*\/\//) print }' \
+  | grep '"' \
+  | grep -v 'replacingOccurrences' || true)"
+if [ -n "${BACKTICK}" ]; then
+  printf '%s\n' "${BACKTICK}"
+  fail "画面に出す文にバッククォートが入っています。そのまま記号として出ます（#192）"
+fi
+ok "画面に出す文に記号が紛れていない"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた

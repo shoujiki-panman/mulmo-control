@@ -1683,9 +1683,53 @@ struct MulmoControlApp: App {
     }
 }
 
+/// 中身が画面に収まらなくなったら、そこだけスクロールさせる（Issue #192）。
+///
+/// 行が1つ増えるたびに全体が伸びる作りだった。#187 で Telegram の行を足したら
+/// 画面からはみ出し、**一番下の `終了` が押せなくなった。** 足すたびに余白を
+/// 縮める直し方では、次に足した人がまた踏む。収まらないぶんだけスクロールさせる。
+///
+/// ScrollView は与えられた高さを全部使う（縦に貪欲）。そのまま上限を渡すと、
+/// 中身が短いタブでも上限いっぱいの高さになってしまう。**中身の高さを測って
+/// `min(中身, 上限)` を渡す。**
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+struct ScrollIfTall<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder var content: Content
+    @State private var measured: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical) {
+            content
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                    }
+                )
+        }
+        .frame(height: min(measured > 0 ? measured : maxHeight, maxHeight))
+        .scrollIndicators(.automatic)
+        .onPreferenceChange(ContentHeightKey.self) { measured = $0 }
+    }
+}
+
 struct ControlView: View {
     @ObservedObject var model: ControlModel
     @State private var screen: ControlScreen = .operate
+
+    /// 本文に渡してよい高さ（Issue #192）。
+    ///
+    /// 決め打ちの数にしない。**13インチのノートと外付けの大きい画面では、
+    /// 収まる量が倍ちがう。** 使える高さから、ヘッダ・タブ・更新の帯・`終了` の
+    /// ぶんを引いて残りを渡す。
+    static var contentMaxHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 800
+        return max(300, visible - 300)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -1724,16 +1768,20 @@ struct ControlView: View {
             TopTabs(selection: $screen)
             UpdateToolbar(model: model)
             Hairline()
-            switch screen {
-            case .operate:
-                OperateView(model: model)
-            case .family:
-                FamilyView(model: model) { package in
-                    model.installFamily(package)
-                    screen = .operate
+            // ヘッダ・タブ・`終了` は動かさない。**どれだけ行が増えても
+            // 終了できること**が、ここで守りたいこと（Issue #192）。
+            ScrollIfTall(maxHeight: Self.contentMaxHeight) {
+                switch screen {
+                case .operate:
+                    OperateView(model: model)
+                case .family:
+                    FamilyView(model: model) { package in
+                        model.installFamily(package)
+                        screen = .operate
+                    }
+                case .environment:
+                    EnvironmentView(model: model)
                 }
-            case .environment:
-                EnvironmentView(model: model)
             }
             Hairline()
             HStack {
@@ -1954,7 +2002,7 @@ struct ReleaseNotesButton: View {
                     Text("リリースノート")
                         .font(AppFont.section)
                         .foregroundStyle(Palette.primaryText)
-                    Text("まだ読み込めていません。`確認` を押すと取りに行きます。繋がらないときは GitHub で読めます。")
+                    Text("まだ読み込めていません。「確認」を押すと取りに行きます。繋がらないときは GitHub で読めます。")
                         .font(AppFont.small)
                         .foregroundStyle(Palette.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2497,11 +2545,18 @@ struct ModeButton: View {
 struct TelegramToggleRow: View {
     @ObservedObject var model: ControlModel
 
+    /// 押す前に、押したら何が起きるかが読めること（Issue #192）。
+    ///
+    /// 最初は「オフ（`yarn telegram` は自分で立てます）」と書いていた。**バック
+    /// クォートはそのまま文字として出る**うえ、コマンド名を知らない人には何の
+    /// 話か分からない。オフのときは**オンにすると何が変わるか**を書く。
     private var detail: String {
-        if model.mcTelegram {
-            return model.mcRunning ? "MulmoClaude と一緒に動いています" : "次の起動から一緒に立てます"
+        guard model.mcTelegram else {
+            return "オンにすると、MulmoClaude と一緒に起動・停止します"
         }
-        return "オフ（`yarn telegram` は自分で立てます）"
+        return model.mcRunning
+            ? "MulmoClaude と一緒に動いています"
+            : "MulmoClaude を起動すると、一緒に立ち上がります"
     }
 
     var body: some View {
@@ -2516,7 +2571,10 @@ struct TelegramToggleRow: View {
                 Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
+                    // 1行に切り詰めない。捨てられるのは「押したら何が起きるか」
+                    // なので、切るくらいなら2行にする（#180 と同じ判断）。
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Button(model.mcTelegram ? "やめる" : "オン") {
