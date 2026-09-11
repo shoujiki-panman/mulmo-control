@@ -12,14 +12,115 @@ APP_DIR="${APP_DIR:-${HOME}/mulmoclaude}"
 LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
 OUT_LOG="${LOG_DIR}/mulmoclaude.log"
 ERR_LOG="${LOG_DIR}/mulmoclaude-error.log"
+TG_LOG="${LOG_DIR}/mulmoclaude-telegram.log"
+TG_ERR="${LOG_DIR}/mulmoclaude-telegram-error.log"
+
+# 起動処理中の印と、停止が押された印の置き場所（Issue #187）。
+# install.sh が触らないところに置く（mulmoclaude-mode と同じ理由）。
+STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
+STOP_STAMP="${STATE_DIR}/mulmoclaude-stop-requested"
 
 mkdir -p "${LOG_DIR}"
 
+stamp() { /bin/date '+%Y-%m-%d %H:%M:%S'; }
+
+# ── 一度に1本だけにする（Issue #187）──────────────────────────
+#
+# 連打で何が起きたか（利用者の実測）: 33秒の間に `起動` を3回・`更新` を4回
+# 押したところ、`yarn server` が2本（3001 と 3002）孤児として残り、翌朝の
+# 定期通知が4重に届いた。
+#
+# 通常モードの起動は画面を作り直すのに約1分かかり、**その間は何も listen して
+# いない。** だから下の「もう動いている」は連打をすべて通してしまう。ポートが
+# 立つ前から立ったあとまで持ち続けられる物が要る。それが錠。
+#
+# 再起動と更新は、自分で錠を取ってからここを呼ぶ。二重に取ると自分で自分を
+# 締め出すので、持っていることを環境変数で渡してもらう。
+LOCK_MINE=0
+if [ -z "${MULMO_MC_LOCK_HELD:-}" ]; then
+  if HOLDER="$("${SCRIPT_DIR}/mulmoclaude-lock" acquire $$ "起動")"; then
+    LOCK_MINE=1
+    MULMO_MC_LOCK_HELD=1
+    export MULMO_MC_LOCK_HELD
+    trap '"${SCRIPT_DIR}/mulmoclaude-lock" release '"$$"' >/dev/null 2>&1 || true' EXIT INT TERM
+  else
+    # 断るのは失敗ではない。押した人が知りたいのは「いま何をしている最中か」。
+    BUSY_PID="${HOLDER%%	*}"
+    BUSY_LABEL="${${HOLDER#*	}%%	*}"
+    [ -n "${BUSY_LABEL}" ] || BUSY_LABEL="操作"
+    echo "MulmoClaude: いま${BUSY_LABEL}の処理中です（pid ${BUSY_PID}）。終わるまで待ってください" | /usr/bin/tee -a "${OUT_LOG}"
+    exit 0
+  fi
+fi
+
+# ── Telegram ブリッジ（Issue #187）────────────────────────────
+#
+# ブリッジの接続先は 3001 固定なので、サーバーを立て直すたびに手で立て直す
+# ことになっていた。既定は off で、運用タブで入れた人だけ立てる。
+#
+# サーバーが立ちきる前に起こしても繋がらずに落ちるので、API が応えるまで待つ。
+start_bridge_if_wanted() {
+  [ "$("${SCRIPT_DIR}/mulmoclaude-telegram")" = "on" ] || return 0
+
+  if [ -n "$("${SCRIPT_DIR}/mulmoclaude-pids" --bridge)" ]; then
+    echo "[$(stamp)] telegram bridge is already running" >>"${OUT_LOG}"
+    return 0
+  fi
+
+  # 無い物を起こそうとして毎回エラーを積まない。理由はログに残す。
+  if ! /usr/bin/grep -q '"telegram"' "${APP_DIR}/package.json" 2>/dev/null; then
+    echo "MulmoClaude: この版の MulmoClaude に telegram はないので、ブリッジは立てません" | /usr/bin/tee -a "${TG_ERR}"
+    return 0
+  fi
+
+  local bridge_yarn api waited
+  bridge_yarn="$(command -v yarn || true)"
+  if [ -z "${bridge_yarn}" ]; then
+    echo "MulmoClaude: yarn が見つからないので、Telegram ブリッジは立てませんでした" | /usr/bin/tee -a "${TG_ERR}"
+    return 0
+  fi
+
+  api="$("${SCRIPT_DIR}/mulmoclaude-ports" --api)"
+  waited=0
+  while [ "${waited}" -lt 40 ]; do
+    /usr/bin/nc -z 127.0.0.1 "${api}" >/dev/null 2>&1 && break
+    waited=$(( waited + 1 ))
+    sleep 1
+  done
+  if ! /usr/bin/nc -z 127.0.0.1 "${api}" >/dev/null 2>&1; then
+    echo "MulmoClaude: ${api} が立たないので、Telegram ブリッジは立てませんでした" | /usr/bin/tee -a "${TG_ERR}"
+    return 0
+  fi
+
+  echo "[$(stamp)] starting telegram bridge" >>"${TG_LOG}"
+  # cd は副シェルの中だけ。呼び出し側の作業ディレクトリは動かさない。
+  # PORT を渡さないのは本体と同じ理由（#141）。
+  ( cd "${APP_DIR}" 2>/dev/null && nohup /usr/bin/env -u PORT "${bridge_yarn}" telegram >>"${TG_LOG}" 2>>"${TG_ERR}" & )
+}
+
+# ── すでに立っているものを数える（Issue #187）────────────────
+#
 # 「もう動いている」と言ってよいのは、設定の MulmoClaude が動いているときだけ
 # （Issue #91）。以前はポートが埋まっているだけで引き返していたので、他の
 # プロジェクトが 5173 を持っていると、起動を押しても何も起きなかった。
-if [ -n "$("${SCRIPT_DIR}/mulmoclaude-pids")" ]; then
+#
+# 数えるのは listener ではなく**起動の木の頭**（#187）。1本の MulmoClaude は
+# 子が何個あっても頭は1つなので、頭が2つ以上あるのは別々に起こされた証拠で、
+# それは常に事故。黙って「もう動いている」と言うと、3002 に逃げた2本目が
+# 誰にも見えないまま通知を二重に送り続ける。
+ROOTS="$("${SCRIPT_DIR}/mulmoclaude-pids" --roots | /usr/bin/xargs 2>/dev/null || true)"
+ROOT_COUNT=0
+for _root in ${=ROOTS}; do ROOT_COUNT=$(( ROOT_COUNT + 1 )); done
+
+if [ "${ROOT_COUNT}" -gt 1 ]; then
+  echo "MulmoClaude: ${ROOT_COUNT}本立っています（pid ${ROOTS}）。全部畳んでから1本で立て直します" | /usr/bin/tee -a "${OUT_LOG}"
+  "${SCRIPT_DIR}/mulmoclaude-stop" >>"${OUT_LOG}" 2>&1 || true
+  sleep 1
+elif [ "${ROOT_COUNT}" = "1" ]; then
   echo "MulmoClaude: already running"
+  # ブリッジだけ落ちている場合は、ここで立て直す。サーバーが動いていると
+  # `起動` は何もしないので、そうしないと手で立て直すしかない。
+  start_bridge_if_wanted
   exit 0
 fi
 
@@ -32,8 +133,17 @@ if [ -n "${OTHERS}" ]; then
   exit 1
 fi
 
+# ここから先はビルドに1分前後かかる。その間に `停止` が押されたら、明けてから
+# サーバーを立てない（Issue #187）。押した人から見れば、止めたはずの物が1分後に
+# 立ち上がってくるのは二重起動と区別が付かない。
+#
+# 消すのはこの位置。上の畳み直しは `mulmoclaude-stop` を呼ぶので、先に消すと
+# 自分が置いた印で自分を止める。
+mkdir -p "${STATE_DIR}" 2>/dev/null || true
+/bin/rm -f "${STOP_STAMP}"
+
 cd "${APP_DIR}"
-echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] starting MulmoClaude" >>"${OUT_LOG}"
+echo "[$(stamp)] starting MulmoClaude" >>"${OUT_LOG}"
 YARN="$(command -v yarn || true)"
 if [ -z "${YARN}" ]; then
   echo "yarn was not found" >>"${ERR_LOG}"
@@ -48,16 +158,15 @@ fi
 #
 # 見つけにくいのは、その間 5173 だけが数秒立つこと。生存判定は 5173 を見ている
 # ので「動作中」と出て、ブラウザにもページが出る。中身が空なだけで、直ったように
-# 見える。mulmoclaude-pids も 5173 と 3001 しか見ないので、34567 で溺れている
-# バックエンドは最初から居ないものとして扱われる。
+# 見える。
 #
 # ここは MulmoClaude をサービスとして起こす場所で、呼び出し元シェルの続きでは
 # ない。どのポートで待つかは MulmoClaude の .env と既定が決める。
 if [ -n "${PORT:-}" ]; then
-  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] 引き継いだ PORT=${PORT} を外して起動します" >>"${OUT_LOG}"
+  echo "[$(stamp)] 引き継いだ PORT=${PORT} を外して起動します" >>"${OUT_LOG}"
 fi
 MODE="$("${SCRIPT_DIR}/mulmoclaude-mode")"
-echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] mode=${MODE}" >>"${OUT_LOG}"
+echo "[$(stamp)] mode=${MODE}" >>"${OUT_LOG}"
 
 if [ "${MODE}" = "app" ]; then
   # 通常モード（Issue #168）。ビルド済みの画面を production で配る。Vite は
@@ -65,13 +174,15 @@ if [ "${MODE}" = "app" ]; then
   #
   # 起動のたびに作り直す。更新（mulmoclaude-update-latest）は git pull と
   # yarn install で終わっているので、ここで作らないと「更新しました」と言い
-  # ながら画面だけ古いまま、になる（Issue #102 と同じ形）。画面のビルドは
-  # 実測 2 秒なので、毎回でも起動を待たせない。
+  # ながら画面だけ古いまま、になる（Issue #102 と同じ形）。
   #
   # 依存パッケージと生成コードは yarn dev が自前で見ている（predev の
   # plugins:codegen と dev-build-if-needed.mjs）。通常モードはそこを通らない
   # ので、同じ2つをここで通す。片方でも欠けると、起動はするが画面が古い版の
   # ままになる。
+  #
+  # ここが実測で約1分。**この1分が #187 の入口だった。** 何も listen して
+  # いないので、ポートを見るガードは連打を全部通す。いまは上の錠が受け止める。
   NODE="$(command -v node || true)"
   if [ -z "${NODE}" ]; then
     echo "MulmoClaude: node が見つからないので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
@@ -89,6 +200,17 @@ if [ "${MODE}" = "app" ]; then
     echo "MulmoClaude: 画面のビルドに失敗したので、起動を中止しました" | /usr/bin/tee -a "${ERR_LOG}"
     exit 1
   fi
+fi
+
+# ビルドの間に `停止` が押されていたら、ここで引き返す（Issue #187）。
+# nohup より前でなければ意味がない。
+if [ -f "${STOP_STAMP}" ]; then
+  /bin/rm -f "${STOP_STAMP}"
+  echo "MulmoClaude: 起動の途中で停止が押されたので、立ち上げを中止しました" | /usr/bin/tee -a "${OUT_LOG}"
+  exit 0
+fi
+
+if [ "${MODE}" = "app" ]; then
   nohup /usr/bin/env -u PORT NODE_ENV=production MULMOCLAUDE_CLIENT_DIR="${APP_DIR}/dist/client" \
     "${YARN}" server >>"${OUT_LOG}" 2>>"${ERR_LOG}" &
 else
@@ -96,6 +218,7 @@ else
 fi
 
 sleep 2
+start_bridge_if_wanted
 # ブラウザを開くかどうかはアプリ側が決める（`開く` だけが開く）。
 # ここで開くと `開く` は二重に開き、`起動` と `再起動` は開かないつもりなのに
 # 開いてしまう。mulmoterminal-start と同じく、このスクリプトは開かない。

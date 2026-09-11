@@ -20,9 +20,42 @@ for port in $("${SCRIPT_DIR}/mulmoclaude-ports"); do
 done
 /usr/sbin/lsof -nP "${LSOF_ARGS[@]}" -sTCP:LISTEN 2>/dev/null || echo "not running"
 echo
+
+# 何本立っているか（Issue #187）。ポートを見るだけでは、3002 に逃げた2本目が
+# 見えない。ここが 2 以上なら連打で二重に起こしている。
+echo "Instances:"
+ROOTS="$("${SCRIPT_DIR}/mulmoclaude-pids" --roots | /usr/bin/xargs 2>/dev/null || true)"
+if [ -n "${ROOTS}" ]; then
+  echo "${ROOTS}"
+else
+  echo "not running"
+fi
+echo
+
+# 処理中かどうか（Issue #187）。押しても効かないときの一番の理由がこれ。
+echo "In progress:"
+HOLDER="$("${SCRIPT_DIR}/mulmoclaude-lock" holder)"
+if [ -n "${HOLDER}" ]; then
+  printf '%s\n' "${HOLDER}"
+else
+  echo "none"
+fi
+echo
+
+echo "Telegram bridge:"
+echo "$("${SCRIPT_DIR}/mulmoclaude-telegram")"
+BRIDGE="$("${SCRIPT_DIR}/mulmoclaude-pids" --bridge | /usr/bin/xargs 2>/dev/null || true)"
+if [ -n "${BRIDGE}" ]; then
+  echo "running: ${BRIDGE}"
+else
+  echo "not running"
+fi
+echo
 echo "Open:"
 "${SCRIPT_DIR}/mulmoclaude-url"
 echo
 echo "Logs:"
 echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude.log"
 echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude-error.log"
+echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude-telegram.log"
+echo "${HOME}/Library/Logs/Mulmo Control/mulmoclaude-telegram-error.log"

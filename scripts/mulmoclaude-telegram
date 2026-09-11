@@ -1,0 +1,35 @@
+#!/bin/zsh
+set -u
+
+# Telegram ブリッジ（`yarn telegram`）を、起動・停止といっしょに面倒を見るか
+# （Issue #187）。
+#
+#   on   `起動` / `再起動` でサーバーのあとに立て、`停止` で一緒に落とす
+#   off  触らない（既定）
+#
+# ブリッジの接続先は 3001 固定なので、サーバーを立て直すたびに手で立て直す
+# ことになっていた。利用者の「あれば嬉しい」がここ。
+#
+# 既定を off にしてあるのは、ブリッジには token が要るからで、持っていない人の
+# 起動のたびにエラーログを積みたくない。使う人だけが運用タブで入れる。
+#
+# 置き場所が app-info.env でないのは mulmoclaude-mode と同じ理由。
+# install.sh はあのファイルを更新のたびに丸ごと書き直すので、置くと更新の
+# たびに off へ戻る。
+#
+# 値は「その2語かどうか」だけを見る。読んだ文字列が起動コマンドの組み立てまで
+# 届く経路があるので、知らない文字は既定に倒す（Issue #67）。
+
+FILE="${MULMO_TELEGRAM_FILE:-${HOME}/Library/Application Support/Mulmo Control/mulmoclaude-telegram}"
+
+VALUE=""
+if [ -f "${FILE}" ]; then
+  VALUE="$(/usr/bin/head -1 "${FILE}" 2>/dev/null | /usr/bin/tr -d '[:space:]')"
+fi
+
+case "${VALUE}" in
+  on|off) ;;
+  *) VALUE="off" ;;
+esac
+
+printf '%s\n' "${VALUE}"

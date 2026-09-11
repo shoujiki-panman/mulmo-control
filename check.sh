@@ -634,6 +634,270 @@ fi
 stop_probe_cleanup ${=STOP_TREE} "${STOP_BACK}"
 ok "止めたら止まる（起こし直す親ごと）"
 
+# ── 連打で二重に立ち上がらない（Issue #187）──────────────────
+#
+# 利用者の実測: 33秒の間に `起動` を3回・`更新` を4回押したところ、
+# `yarn server` が2本（3001 と 3002）孤児として残り、翌朝の定期通知が4重に
+# 届いた。効いていなかったのは2つある。
+#
+#  1. `mulmoclaude-pids` が 5173 と 3001 の listener しか見ていなかった。
+#     MulmoClaude はポートが埋まっていると 3002, 3003… へ逃げるので、
+#     **2本目以降は最初から居ないものとして扱われていた**
+#  2. 通常モードの起動は画面を作り直すのに約1分かかり、その間は何も listen
+#     していない。ポートを見るガードは、その1分ぶんの連打を全部通す
+#
+# 綴りで見ても意味がない。「プロセスも見ている」ことを grep で確かめても、
+# 見方が間違っていれば通る。**同じ形のプロセスを立てて、実際に見つかるか /
+# 見つけないかを見る。** MulmoClaude は要らない。
+step "連打で二重に立ち上がらない（#187）"
+
+DUP_PROBE="$(mktemp -d)"
+DUP_APP="${DUP_PROBE}/app"
+mkdir -p "${DUP_APP}" "${DUP_PROBE}/cfg" "${DUP_PROBE}/state" "${DUP_PROBE}/home"
+printf "MULMO_CONTROL_MULMOCLAUDE_DIR='%s'\n" "${DUP_APP}" > "${DUP_PROBE}/cfg/app-info.env"
+
+# 本物と同じ形にする。yarn は node スクリプトなので、Homebrew でも corepack でも
+# ps には `node .../yarn.js server` と出る。
+printf 'setInterval(() => {}, 1000);\n' > "${DUP_APP}/yarn.js"
+cp "${DUP_APP}/yarn.js" "${DUP_APP}/claude.js"
+
+# 実物のポート（5173 / 3001）には触らない。**ここは誰も持っていないポートに
+# しておく。** そうすることで「ポートでは1本も見つからない」状態を作り、
+# 見つかったものは全部プロセス側の判定が拾ったことになる。
+DUP_PORT=""
+for candidate in $(seq 45960 45999); do
+  if [ -z "$(/usr/sbin/lsof -tiTCP:"${candidate}" -sTCP:LISTEN 2>/dev/null)" ]; then
+    DUP_PORT="${candidate}"
+    break
+  fi
+done
+[ -n "${DUP_PORT}" ] || { rm -rf "${DUP_PROBE}"; fail "検査用の空きポートが見つかりませんでした（#187）"; }
+
+# `exec` を使うので `$!` は node 自身の pid になる。cwd は DUP_APP。
+( cd "${DUP_APP}" && exec node ./yarn.js server ) >/dev/null 2>&1 &
+DUP_A=$!
+( cd "${DUP_APP}" && exec node ./yarn.js server ) >/dev/null 2>&1 &
+DUP_B=$!
+( cd "${DUP_APP}" && exec node ./yarn.js telegram ) >/dev/null 2>&1 &
+DUP_TG=$!
+# ここから下は「拾ってはいけない」もの。
+#  build:client は通常モードの起動が毎回走らせる。拾うと**起動の最中に
+#  「もう動いている」と言い出す**（`vite` を綴りに入れると実際にそうなる）
+( cd "${DUP_APP}" && exec node ./yarn.js build:client ) >/dev/null 2>&1 &
+DUP_BUILD=$!
+#  MulmoClaude のフォルダは claude を走らせる場所でもある。同じフォルダの node を
+#  全部自分のものと見なすと、**人が開いている作業セッションを落とす**
+( cd "${DUP_APP}" && exec node ./claude.js ) >/dev/null 2>&1 &
+DUP_CLAUDE=$!
+#  綴りを含む文字列を渡されたシェル。作業ディレクトリが MulmoClaude の下なので、
+#  本体まで見ないと自分のものに見える
+( cd "${DUP_APP}" && exec /bin/sh -c 'echo "node yarn server"; sleep 60' ) >/dev/null 2>&1 &
+DUP_SH=$!
+
+sleep 1
+
+dup_cleanup() {
+  for victim in "${DUP_A}" "${DUP_B}" "${DUP_TG}" "${DUP_BUILD}" "${DUP_CLAUDE}" "${DUP_SH}"; do
+    [ -n "${victim}" ] && /bin/kill -KILL "${victim}" 2>/dev/null || true
+  done
+  rm -rf "${DUP_PROBE}"
+}
+dup_fail() { dup_cleanup; fail "$1"; }
+
+dup_pids() {
+  env MULMO_CONFIG_FILE="${DUP_PROBE}/cfg/app-info.env" MULMO_TEST_PORTS="${DUP_PORT}" \
+    "${ROOT}/scripts/mulmoclaude-pids" "$@" | /usr/bin/xargs 2>/dev/null || true
+}
+
+DUP_SERVERS="$(dup_pids)"
+case " ${DUP_SERVERS} " in
+  *" ${DUP_A} "*) ;;
+  *) dup_fail "ポートを持っていない MulmoClaude を見つけられません。3002 へ逃げた2本目が孤児になります（#187）" ;;
+esac
+case " ${DUP_SERVERS} " in
+  *" ${DUP_B} "*) ;;
+  *) dup_fail "2本目の MulmoClaude を見つけられません（#187）" ;;
+esac
+
+# 拾ってはいけないものを拾っていないこと。**こちらのほうが大事。**
+# 落とすのは SIGTERM の2秒後に SIGKILL なので、間違えた相手に保存の機会はない。
+for forbidden_entry in "${DUP_BUILD}:画面のビルド（build:client）" "${DUP_CLAUDE}:同じフォルダで動いている別の node（人の claude セッション）" "${DUP_SH}:綴りを含む文字列を渡されただけのシェル"; do
+  forbidden_pid="${forbidden_entry%%:*}"
+  forbidden_what="${forbidden_entry#*:}"
+  case " ${DUP_SERVERS} " in
+    *" ${forbidden_pid} "*)
+      dup_fail "${forbidden_what}を MulmoClaude とみなしています。停止が巻き添えにします（#187 / #91）"
+      ;;
+  esac
+done
+
+# Telegram ブリッジは既定の一覧には入らない（起動の本数を数えるときに混ざる）。
+# 停止のときだけ `--all` で拾う。
+case " ${DUP_SERVERS} " in
+  *" ${DUP_TG} "*) dup_fail "Telegram ブリッジが起動の本数に混ざっています。常に「2本立っている」と読まれます（#187）" ;;
+esac
+DUP_BRIDGE="$(dup_pids --bridge)"
+case " ${DUP_BRIDGE} " in
+  *" ${DUP_TG} "*) ;;
+  *) dup_fail "Telegram ブリッジを見つけられません。サーバーを立て直しても繋ぎ先の無いブリッジが残ります（#187）" ;;
+esac
+DUP_ALL="$(dup_pids --all)"
+case " ${DUP_ALL} " in
+  *" ${DUP_TG} "*) ;;
+  *) dup_fail "--all に Telegram ブリッジが入っていません。停止が落とし損ねます（#187）" ;;
+esac
+
+# 何本立っているか。1本の MulmoClaude は子が何個あっても頭は1つなので、
+# ここが 2 なら別々に起こされている。`mulmoclaude-start` はこれを見て畳む。
+DUP_ROOTS="$(dup_pids --roots)"
+DUP_ROOT_COUNT=0
+for _dup_root in ${=DUP_ROOTS}; do DUP_ROOT_COUNT=$(( DUP_ROOT_COUNT + 1 )); done
+[ "${DUP_ROOT_COUNT}" = "2" ] \
+  || dup_fail "別々に起こした2本を ${DUP_ROOT_COUNT} 本と数えています。二重起動に気づけません（#187）"
+
+ok "ポートを持っていない2本目を見つけ、拾ってはいけないものは拾わない"
+
+# ── 錠（Issue #187）──────────────────────────────────────────
+# 起動の1分間を受け止める物。ここが効かないと、連打はそのまま通る。
+DUP_LOCK="${ROOT}/scripts/mulmoclaude-lock"
+dup_lock() { env MULMO_STATE_DIR="${DUP_PROBE}/state" "${DUP_LOCK}" "$@"; }
+
+dup_lock acquire "${DUP_A}" "起動" >/dev/null 2>&1 \
+  || dup_fail "錠が取れません（#187）"
+if dup_lock acquire "${DUP_B}" "更新" >/dev/null 2>&1; then
+  dup_fail "同じ錠を2本取れます。連打がそのまま通ります（#187）"
+fi
+# 断るときは「何の処理中か」を返す。押した人に見せる言葉がここから来る。
+DUP_HOLDER="$(dup_lock holder)"
+case "${DUP_HOLDER}" in
+  *起動*) ;;
+  *) dup_fail "錠が「何の処理中か」を返していません。画面に出せません（#187）" ;;
+esac
+dup_lock release "${DUP_A}" >/dev/null 2>&1 || true
+dup_lock acquire "${DUP_B}" "更新" >/dev/null 2>&1 \
+  || dup_fail "外した錠が取り直せません（#187）"
+
+# 持ち主が死んだ錠は奪える。ここが無いと、強制終了や電源断のあと
+# MulmoClaude を二度と起動できなくなる。
+/bin/kill -KILL "${DUP_B}" 2>/dev/null || true
+sleep 1
+dup_lock acquire "${DUP_A}" "起動" >/dev/null 2>&1 \
+  || dup_fail "持ち主が死んだ錠を奪えません。強制終了のあと永久に起動できません（#187）"
+ok "錠は1本だけ・置き忘れは奪える"
+
+# ── 錠を持たれている間、起動が引き返すこと（Issue #187）──────
+# 断るのは失敗ではないので、終了コードは 0。押した人に理由が届くこと、
+# そして**立ち上げに進まないこと**の両方を見る。
+DUP_START_OUT="$(env HOME="${DUP_PROBE}/home" MULMO_STATE_DIR="${DUP_PROBE}/state" \
+  MULMO_CONFIG_FILE="${DUP_PROBE}/cfg/app-info.env" MULMO_TEST_PORTS="${DUP_PORT}" \
+  "${ROOT}/scripts/mulmoclaude-start" 2>&1 || true)"
+case "${DUP_START_OUT}" in
+  *処理中*) ;;
+  *) dup_fail "錠を持たれているのに、起動が理由も言わずに進みます（#187）: ${DUP_START_OUT}" ;;
+esac
+case "${DUP_START_OUT}" in
+  *started*) dup_fail "錠を持たれているのに、起動が立ち上げまで進みました（#187）" ;;
+esac
+dup_lock release "${DUP_A}" >/dev/null 2>&1 || true
+ok "処理中は起動が引き返す"
+
+dup_cleanup
+
+# 3本そろって錠を通していること。**ファイル名で書かずに列挙して回す。**
+# 片側だけ直した修正はガードも片側にしか掛からない（#147 の教訓）。実際、
+# `mulmoclaude-start` だけに錠を持たせても `再起動` と `更新` の停止は
+# 素通りするので、起動が2本並ぶ形は残る。
+for locked in mulmoclaude-start mulmoclaude-restart mulmoclaude-update-latest; do
+  grep -q 'mulmoclaude-lock" acquire' "${ROOT}/scripts/${locked}" \
+    || fail "${locked} が錠を取っていません。連打がここから通ります（#187）"
+  grep -q 'MULMO_MC_LOCK_HELD' "${ROOT}/scripts/${locked}" \
+    || fail "${locked} が錠を持っていることを下に渡していません。自分の錠に締め出されます（#187）"
+done
+# 停止は錠を取らない。**最後の逃げ道**なので、起動処理中でも必ず通す。
+grep -q 'mulmoclaude-lock" acquire' "${ROOT}/scripts/mulmoclaude-stop" \
+  && fail "停止が錠を取っています。起動処理中に止められなくなります（#187）"
+ok "起動・再起動・更新は錠を通り、停止は通らない"
+
+# 停止は Telegram ブリッジも落とす。既定の一覧（--server）にはブリッジが
+# 入らないので、ここで `--all` を使っていなければ繋ぎ先の無いブリッジが残る。
+grep -q 'mulmoclaude-pids" --all' "${ROOT}/scripts/mulmoclaude-stop" \
+  || fail "停止が Telegram ブリッジを落としていません（#187）"
+ok "停止はブリッジも落とす"
+
+# ビルド中に押された停止を、立ち上げの手前で見ていること。
+# **nohup より前でなければ意味がない。** 綴りがあることだけを見ると、
+# 順番が入れ替わっても通る。
+#
+# 見るのはサーバーを立てる行だけ。ブリッジの nohup は関数の中にあって、
+# 呼ばれるのはサーバーが立ったあとなので、行番号では前に来る。
+STOP_STAMP_LINE="$(grep -n 'if \[ -f "\${STOP_STAMP}" \]' "${ROOT}/scripts/mulmoclaude-start" \
+  | awk -F: '{ print $1 }' | head -1)"
+NOHUP_LINE="$(grep -n 'nohup' "${ROOT}/scripts/mulmoclaude-start" \
+  | grep -v 'telegram' \
+  | awk -F: '{ body=$0; sub(/^[0-9]+:/,"",body); if (body !~ /^[[:space:]]*#/) print $1 }' | head -1)"
+[ -n "${STOP_STAMP_LINE}" ] || fail "起動が「途中で停止が押されたか」を見ていません（#187）"
+[ -n "${NOHUP_LINE}" ] || fail "mulmoclaude-start の立ち上げ行を見失いました（#187）"
+[ "${STOP_STAMP_LINE}" -lt "${NOHUP_LINE}" ] \
+  || fail "停止の印を見るのが立ち上げより後です。止めたはずの物が1分後に立ちます（#187）"
+# 印を置くのは停止側。ここが無いと、上の順番は正しいのに印が一度も立たない。
+grep -q 'mulmoclaude-stop-requested' "${ROOT}/scripts/mulmoclaude-stop" \
+  || fail "停止が「押された」印を残していません。ビルド中の停止が届きません（#187）"
+ok "ビルド中の停止は、立ち上げの手前で効く"
+
+# 画面が錠を読む数と、スクリプトが錠を諦める数が同じであること。
+# 食い違うと「画面は処理中と言うのにスクリプトは錠を奪う」（その逆も）になる。
+LOCK_MAX_SH="$(grep -E '^MAX_AGE=[0-9]+$' "${ROOT}/scripts/mulmoclaude-lock" | head -1 | sed 's/.*=//')"
+LOCK_MAX_SWIFT="$(grep -E 'static let maxAge: TimeInterval = [0-9]+' "${ROOT}/Sources/main.swift" \
+  | head -1 | sed 's/.*= //')"
+[ -n "${LOCK_MAX_SH}" ] || fail "mulmoclaude-lock の MAX_AGE を読めませんでした（#187）"
+[ -n "${LOCK_MAX_SWIFT}" ] || fail "Sources/main.swift の maxAge を読めませんでした（#187）"
+[ "${LOCK_MAX_SH}" = "${LOCK_MAX_SWIFT}" ] \
+  || fail "錠を諦める時間が食い違っています: script=${LOCK_MAX_SH} / Swift=${LOCK_MAX_SWIFT}（#187）"
+ok "錠を諦める時間が2箇所で揃っている"
+
+# 画面側。MulmoClaude を起こす口はどれも、押した瞬間に錠を読み直すこと。
+# **押せるのに効かないボタンが出ていたことが #187 の入口だった。**
+# ここも列挙して回す（#147）。
+for presser in startMC restartMC updateMC openMC updateAllInstalled setMCMode setMCTelegram; do
+  BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
+    "${ROOT}/Sources/main.swift")"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（#187）"
+  printf '%s\n' "${BODY}" | grep -q 'declineIfMCBusy' \
+    || fail "${presser} が処理中を見ずに走ります。連打がここから通ります（#187）"
+done
+# 停止だけは通さない。ここを塞ぐと、起動処理中に止める手段が無くなる。
+STOP_BODY="$(awk 'index($0, "func stopMC()") { print }' "${ROOT}/Sources/main.swift")"
+[ -n "${STOP_BODY}" ] || fail "Sources/main.swift の stopMC を見失いました（#187）"
+printf '%s\n' "${STOP_BODY}" | grep -q 'declineIfMCBusy' \
+  && fail "停止が処理中を見て引き返します。起動処理中に止められなくなります（#187）"
+ok "押す口はどれも処理中を見る（停止だけは通す）"
+
+# Telegram ブリッジの既定は off。知らない値も off に倒す（#67 と同じ扱い）。
+TG_PROBE="$(mktemp -d)"
+[ "$(MULMO_TELEGRAM_FILE="${TG_PROBE}/none" "${ROOT}/scripts/mulmoclaude-telegram")" = "off" ] \
+  || { rm -rf "${TG_PROBE}"; fail "Telegram ブリッジの既定が off ではありません（#187）"; }
+printf 'on; rm -rf /\n' > "${TG_PROBE}/tg"
+[ "$(MULMO_TELEGRAM_FILE="${TG_PROBE}/tg" "${ROOT}/scripts/mulmoclaude-telegram")" = "off" ] \
+  || { rm -rf "${TG_PROBE}"; fail "知らない値を off へ倒していません（#187 / #67）"; }
+printf 'on\n' > "${TG_PROBE}/tg"
+[ "$(MULMO_TELEGRAM_FILE="${TG_PROBE}/tg" "${ROOT}/scripts/mulmoclaude-telegram")" = "on" ] \
+  || { rm -rf "${TG_PROBE}"; fail "自分で入れた人の設定が効いていません（#187）"; }
+rm -rf "${TG_PROBE}"
+
+# ブリッジの接続先はバックエンド側。ポートの表は1つだけにしてあるので、
+# `--api` はその最後の行と一致するはず。ここが食い違うと、ブリッジは
+# 立たないまま「立てました」になる。
+API_PROBE="$(mktemp -d)"
+for api_mode in app dev; do
+  printf '%s\n' "${api_mode}" > "${API_PROBE}/mode"
+  api_got="$(MULMO_MODE_FILE="${API_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-ports" --api)"
+  api_want="$(MULMO_MODE_FILE="${API_PROBE}/mode" "${ROOT}/scripts/mulmoclaude-ports" | tail -1)"
+  [ "${api_got}" = "${api_want}" ] \
+    || { rm -rf "${API_PROBE}"; fail "${api_mode} モードの --api が表と食い違っています: ${api_got} / ${api_want}（#187）"; }
+done
+rm -rf "${API_PROBE}"
+ok "Telegram ブリッジの既定と接続先"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
@@ -755,11 +1019,18 @@ ok "停止中に起動ボタンが出る"
 # その間 5173 だけが数秒立つので生存判定は「動作中」と言い、直ったように見える。
 #
 # yarn dev を起こす行が PORT を外していることを見る。
+#
+# 起こす行は1本ではない（通常モード / 開発モード / Telegram ブリッジ）。
+# `grep -q` だと**どれか1本が通れば合格**になるので、あとから増えた行が
+# PORT を引き継いでも素通りする。#187 でブリッジの行を足したときに気づいた。
+# 全部の行が外していることを見る（#147 と同じ「片側だけ」の形）。
 YARN_DEV="$(grep -vE '^[[:space:]]*#' "${ROOT}/scripts/mulmoclaude-start" | grep 'nohup' || true)"
 [ -n "${YARN_DEV}" ] || fail "mulmoclaude-start が yarn dev を起こす行を見失いました（141）"
-printf '%s\n' "${YARN_DEV}" | grep -q 'env -u PORT' \
-  || fail "起こす MulmoClaude に PORT が引き継がれます。MulmoTerminal のポートを奪って落ちます（141）"
-ok "起こす MulmoClaude に PORT を渡さない"
+NOHUP_TOTAL="$(printf '%s\n' "${YARN_DEV}" | grep -c 'nohup' || true)"
+NOHUP_CLEAN="$(printf '%s\n' "${YARN_DEV}" | grep -c 'env -u PORT' || true)"
+[ "${NOHUP_TOTAL}" = "${NOHUP_CLEAN}" ] \
+  || fail "起こす MulmoClaude に PORT が引き継がれます（${NOHUP_CLEAN}/${NOHUP_TOTAL} 本）。MulmoTerminal のポートを奪って落ちます（141）"
+ok "起こす MulmoClaude に PORT を渡さない（${NOHUP_TOTAL}本すべて）"
 
 # 143 配色が、外観に応じた値であること。
 #

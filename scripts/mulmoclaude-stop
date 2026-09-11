@@ -5,11 +5,28 @@ PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbi
 # 兄弟スクリプトは自分と同じディレクトリから呼ぶ（Issue #11）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 起動の途中（画面のビルド中）に押されたことを残す（Issue #187）。
+#
+# 通常モードの起動は約1分かかる。その間はまだ何も立っていないので、ここで
+# 落とす物が無い。印を置かないと、`mulmoclaude-start` はビルドが明けてから
+# 何も知らずにサーバーを立てる — 押した人から見れば、止めたはずの物が1分後に
+# 立ち上がってくるので、二重起動と区別が付かない。
+#
+# 錠は取らない。**停止は最後の逃げ道**で、起動処理中でも必ず通したい。
+# 代わりに印を置いて、起動のほうに引き返させる。
+STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
+mkdir -p "${STATE_DIR}" 2>/dev/null || true
+/bin/date '+%s' > "${STATE_DIR}/mulmoclaude-stop-requested" 2>/dev/null || true
+
 # 落としてよいのは、設定の MulmoClaude から起きているものだけ（Issue #91）。
 # 以前は 5173 と 3001 を持っているものを確かめずに全部落としていた。5173 は
 # Vite の既定ポートなので、他のプロジェクトを開いているだけで巻き添えになる。
 # しかも TERM の2秒後に KILL まで行くので、保存の機会もない。
-pids="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
+#
+# `--all` で取るのは、Telegram ブリッジも一緒に落とすため（Issue #187）。
+# ブリッジはサーバーとは別の木で立つので、既定の `--server` には入らない。
+# 落とさずに残すと、繋ぎ先の無いブリッジだけが動き続ける。
+pids="$("${SCRIPT_DIR}/mulmoclaude-pids" --all | /usr/bin/xargs 2>/dev/null || true)"
 others="$("${SCRIPT_DIR}/mulmoclaude-pids" --others | /usr/bin/xargs 2>/dev/null || true)"
 
 if [ -z "${pids}" ]; then
@@ -32,12 +49,22 @@ fi
 # 開発モードではたまたま止まっていた。`yarn dev` は concurrently -k で両側を
 # 束ねているので、vite を落とすと反対側ごと畳まれる。通常モード（#168）の
 # `yarn server` にはそれが無い。
+#
+# 何本立っていたかを残す（Issue #187）。2本以上あったなら、それは連打で
+# 二重に起こしていた跡なので、あとから追えるようにしておく。
+roots="$("${SCRIPT_DIR}/mulmoclaude-pids" --roots | /usr/bin/xargs 2>/dev/null || true)"
+root_count=0
+for _root in ${=roots}; do root_count=$(( root_count + 1 )); done
+if [ "${root_count}" -gt 1 ]; then
+  echo "MulmoClaude: ${root_count}本立っていました（pid ${roots}）。全部落とします"
+fi
+
 tree="$("${SCRIPT_DIR}/mulmoclaude-pids" --tree ${=pids} | /usr/bin/xargs 2>/dev/null || true)"
 
 /bin/kill -TERM ${=tree} 2>/dev/null || true
 sleep 2
 
-remaining="$("${SCRIPT_DIR}/mulmoclaude-pids" | /usr/bin/xargs 2>/dev/null || true)"
+remaining="$("${SCRIPT_DIR}/mulmoclaude-pids" --all | /usr/bin/xargs 2>/dev/null || true)"
 if [ -n "${remaining}" ]; then
   remaining_tree="$("${SCRIPT_DIR}/mulmoclaude-pids" --tree ${=remaining} | /usr/bin/xargs 2>/dev/null || true)"
   /bin/kill -KILL ${=remaining_tree} 2>/dev/null || true
