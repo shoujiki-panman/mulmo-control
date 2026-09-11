@@ -1,0 +1,130 @@
+name: release
+
+# リリースを GitHub 側で出す（Issue #198）。
+#
+# Actions の画面で「Run workflow」を押し、バージョンを入れる。あとは
+# ビルド → 検証 → 公証 → zip → タグ → Releases → 取り直して確認、まで
+# ここで走る。手元の Mac で 5〜10 分見張らなくていい。
+#
+# 手順そのものは release.sh が持つ。ここには書かない。同じことを2箇所に
+# 書くと、片方だけ直して安心する事故が起きる（check.sh と同じ理由）。
+#
+# 入口は手動だけ。「タグを push したら出る」のような入口は作らない。入口が
+# 2つあると二重に出る（#187 で連打が二重起動になったのと同じ形）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "出す版（X.Y.Z）"
+        required: true
+        type: string
+      notes:
+        description: "リリースノート（改行は \\n と書く。空なら PR の題を並べる）"
+        required: false
+        type: string
+        default: ""
+
+# 同時に2回押されても1本ずつ走る。2本目は1本目が終わるまで待つ。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # release.sh は origin/main と一致しているか・タグが既にないか・前回の
+          # 版より新しいかを git で見る。浅い clone だとそこが全部空振りする。
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 署名と公証の資格情報を、この実行だけの一時キーチェーンに入れる。
+      # runner は使い捨てだが、終わりの step で必ず消す（下の if: always()）。
+      #
+      # Secret は env: にだけ書く。run: の中に ${{ secrets.X }} を直接書くと
+      # シェルの文として展開され、エラー文や set -x で丸ごと出る。
+      - name: 署名と公証の資格情報を用意
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          set -eu
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD; do
+            [ -n "${(P)name}" ] || { echo "Secret ${name} が空です。./release-setup.sh で預けてください" >&2; exit 1; }
+          done
+
+          KEYCHAIN="${RUNNER_TEMP}/release.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "KEYCHAIN=${KEYCHAIN}" >> "${GITHUB_ENV}"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+
+          P12="${RUNNER_TEMP}/certificate.p12"
+          printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${P12}"
+          security import "${P12}" -k "${KEYCHAIN}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "${P12}"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
+
+          # build-app.sh は search list から Developer ID を探し、release.sh は
+          # 既定のキーチェーンで notarytool のプロファイルを探す。両方をこれにする。
+          security list-keychains -d user -s "${KEYCHAIN}" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "${KEYCHAIN}"
+
+          IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN}" \
+            | grep 'Developer ID Application' | head -1 | awk '{print $2}')"
+          [ -n "${IDENTITY}" ] || { echo "Developer ID Application の証明書が入りませんでした" >&2; exit 1; }
+          echo "MULMO_SIGN_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+
+          xcrun notarytool store-credentials mulmo-control \
+            --apple-id "${NOTARY_APPLE_ID}" --team-id "${NOTARY_TEAM_ID}" --password "${NOTARY_PASSWORD}" \
+            --keychain "${KEYCHAIN}" >/dev/null
+          echo "署名と公証の資格情報が入りました"
+        shell: zsh {0}
+
+      - name: リリースノートを用意
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -eu
+          if [ -n "${NOTES}" ]; then
+            printf '%b\n' "${NOTES}" > "${RUNNER_TEMP}/notes.md"
+            echo "NOTES_ARGS=-F ${RUNNER_TEMP}/notes.md" >> "${GITHUB_ENV}"
+          else
+            echo "NOTES_ARGS=--generate-notes" >> "${GITHUB_ENV}"
+          fi
+
+      # release.sh は最後に版の bump を main へ push し、gh でリリースを作る。
+      - name: release.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ./release.sh "${VERSION}" ${=NOTES_ARGS}
+        shell: zsh {0}
+
+      - name: 資格情報を消す
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ] && [ -f "${KEYCHAIN}" ]; then
+            security delete-keychain "${KEYCHAIN}"
+            echo "一時キーチェーンを消しました"
+          fi

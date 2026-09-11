@@ -212,6 +212,56 @@ printf '%s\n' "${REL}" | grep -q '\[ "${PUBLISHED}" = "${VERSION}" \]' \
   || fail "取り直した配信物の版を確かめていません"
 ok "リリース後に配信物を取り直して版を確かめる"
 
+# ── リリースを GitHub 側で回す（Issue #198）──────────────────────
+#
+# 手元の Mac で 5〜10 分見張っていたリリースを、Actions の画面から出せるようにした。
+# ここで守るのは3つ。入口が手動だけで1本ずつ走ること（入口が2つあると二重に出る。
+# #187 の連打と同じ形）、手順を release.sh に任せていること（2箇所に書くと片方
+# だけ直す）、Secret の扱い（読む側と預ける側の名前が揃い、run: に直接展開しない）。
+RELEASE_YML="${ROOT}/.github/workflows/release.yml"
+[ -f "${RELEASE_YML}" ] || fail "GitHub 側から出すワークフローがありません（#198）"
+
+# 159 入口は workflow_dispatch だけ。on: の直下の鍵を列挙して、それ以外があれば落とす。
+TRIGGERS="$(awk '/^on:/ { inside=1; next } inside && /^[^ #]/ { exit } inside && /^  [a-z_]+:/ { sub(/^  /,""); sub(/:.*/,""); print }' "${RELEASE_YML}")"
+[ "${TRIGGERS}" = "workflow_dispatch" ] \
+  || fail "リリースの入口が手動以外にもあります（$(printf '%s' "${TRIGGERS}" | tr '\n' ' ')）。入口が2つあると二重に出ます（#198）"
+grep -qE '^concurrency:' "${RELEASE_YML}" && grep -qE '^  cancel-in-progress: false' "${RELEASE_YML}" \
+  || fail "同時に2回押されたとき1本ずつ走る指定がありません（#198）"
+YML_RUN="$(grep -vE '^[[:space:]]*#' "${RELEASE_YML}")"
+printf '%s\n' "${YML_RUN}" | grep -q '\./release\.sh ' \
+  || fail "ワークフローが release.sh を呼んでいません。手順を2箇所に書かないでください（#198）"
+for redo in 'gh release create' 'notarytool submit' 'stapler' 'ditto -c'; do
+  printf '%s\n' "${YML_RUN}" | grep -q "${redo}" \
+    && fail "ワークフローが「${redo}」を自前でやっています。release.sh に任せてください（#198）"
+done
+# 資格情報を入れた一時キーチェーンは、成否に関係なく消す。コメントを落としてから
+# 探す（語で探すと、その話をしている自分のコメントに当たる。#83 の罠）。
+CLEANUP="$(printf '%s\n' "${YML_RUN}" | awk '/^        if: always\(\)/ { inside=1 } inside { print }')"
+printf '%s\n' "${CLEANUP}" | grep -q 'security delete-keychain' \
+  || fail "終わりに一時キーチェーンを消す step（if: always()）がありません（#198）"
+ok "リリースの入口は手動だけ・1本ずつ・release.sh に任せる・後始末あり"
+
+# 160 ワークフローが読む Secret と、release-setup.sh が預ける Secret が同じ集合。
+# 片方だけ増やすと、押しても落ちる（しかも落ちるのは公証の直前）。
+SECRETS_READ="$(printf '%s\n' "${YML_RUN}" | grep -o 'secrets\.[A-Z0-9_]*' | sed 's/^secrets\.//' | sort -u)"
+SECRETS_SET="$(grep -o 'gh secret set [A-Z0-9_]*' "${ROOT}/release-setup.sh" | awk '{print $4}' | sort -u)"
+[ -n "${SECRETS_READ}" ] || fail "ワークフローが Secret を1つも読んでいません（#198）"
+[ "${SECRETS_READ}" = "${SECRETS_SET}" ] || {
+  printf '  読む側: %s\n  預ける側: %s\n' "$(printf '%s' "${SECRETS_READ}" | tr '\n' ' ')" "$(printf '%s' "${SECRETS_SET}" | tr '\n' ' ')"
+  fail "ワークフローが読む Secret と release-setup.sh が預ける Secret が食い違っています（#198）"
+}
+ok "Secret の名前が読む側と預ける側で揃っている（$(printf '%s\n' "${SECRETS_READ}" | wc -l | tr -d ' ')つ）"
+
+# 161 Secret は env: にだけ書く。run: の中に直接書くと、シェルの文として展開されて
+# エラー文や set -x に丸ごと出る。
+LEAKY="$(printf '%s\n' "${YML_RUN}" | grep 'secrets\.' \
+  | awk '$0 !~ /^[[:space:]]+[A-Z0-9_]+: \$\{\{ secrets\.[A-Z0-9_]+ \}\}[[:space:]]*$/' || true)"
+if [ -n "${LEAKY}" ]; then
+  printf '%s\n' "${LEAKY}"
+  fail "Secret を env: 以外の場所に書いています。run: に直接書くとログに出ます（#198）"
+fi
+ok "Secret は env: 経由だけ"
+
 # ポートは mulmoterminal-agent-env と main.swift の mtPort の2箇所だけが持つ
 # （Issue #7）。他所に数字を書くと、MULMOTERMINAL_PORT で逃がしたつもりでも
 # 一部だけ 34567 のまま動くという、最も気づきにくい壊れ方をする。

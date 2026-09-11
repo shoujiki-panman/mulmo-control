@@ -206,6 +206,28 @@ pull → ビルド → 動いているアプリを止める → 差し替える 
 
 ### リリース
 
+**GitHub の画面から出す**のがいちばん楽です。[Actions → release](https://github.com/shoujiki-panman/mulmo-control/actions/workflows/release.yml)
+を開き、`Run workflow` を押して、版（`1.0.70` のように）とリリースノートを入れて `Run workflow`。
+ビルド → 検証 → 公証 → zip → タグ → Releases → 取り直して確認、まで GitHub 側で走ります。
+手元の Mac は閉じてかまいません。
+
+- リリースノートの改行は `\n` と書きます（入力欄が1行なので）。空にすると、前の版から入った PR の題を並べます
+- 同時に2回押しても1本ずつ走ります。タグを push しても出ません（入口は手動だけ）
+- 中で動くのは下の `release.sh` そのものです。手順は2箇所に書いていません
+
+初回だけ、署名と公証の資格情報を GitHub に預ける必要があります。**手元の Mac で1コマンド**です。
+
+```bash
+./release-setup.sh
+```
+
+Developer ID 証明書をキーチェーンから書き出し、公証に使う Apple ID と App用パスワード
+（[appleid.apple.com](https://appleid.apple.com) → サインインとセキュリティ → App用パスワード で作る）を
+聞いて、5つを Secrets に預けます。途中で macOS が「鍵を書き出してよいか」を1回聞くので `許可` を押します。
+預けたものは Apple 側でいつでも無効にできます。
+
+手元から出すこともできます。
+
 ```bash
 ./release.sh 1.0.14                 # リリースノートはエディタで書く
 ./release.sh 1.0.14 -F notes.md     # ファイルから読む
