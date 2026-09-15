@@ -1297,6 +1297,32 @@ printf '%s\n' "${SW_REPORT}" | grep -q 'lastUpdateNote' \
   || fail "「前回の更新」に、その後どうなったかを添えていません（解消しても失敗が残ります・136）"
 ok "「前回の更新」の失敗は解消したら添える"
 
+# 142 「前回の更新」の詳細は、パネルに直に置かない（Issue #183）。
+#
+# 記録には版の行・据え置きの理由・上流の新機能の箇条書き・ガイドのリンクまで
+# 入る。長い日は20行を超え、パネルが画面の下からはみ出して**一番下の「終了」が
+# 押せなくなる**（#192 でやった壊れ方と同じ）。
+#
+# 記録そのものは減らせない（#104 で理由を残すと決めた場所）。出す場所を移して、
+# 押したときだけ開き、中は上限つきのスクロールにする。こうしておけば、記録が
+# 何行に伸びてもパネルの高さは変わらない。
+SETUP_PANEL="$(awk '/^struct SetupPanel: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${SETUP_PANEL}" ] || fail "SetupPanel が見つかりません（183）"
+printf '%s\n' "${SETUP_PANEL}" | grep -q 'LinkedText(text: model.lastUpdateReport)' \
+  && fail "「前回の更新」の詳細をパネルに直に置いています。長い日に画面からはみ出します（183）"
+
+LAST_UPDATE_ROW="$(awk '/^struct LastUpdateRow: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${LAST_UPDATE_ROW}" ] || fail "「前回の更新」を畳む行が見つかりません（183）"
+printf '%s\n' "${LAST_UPDATE_ROW}" | grep -q 'popover(' \
+  || fail "「前回の更新」の詳細を開く口がありません（183）"
+printf '%s\n' "${LAST_UPDATE_ROW}" | grep -q 'frame(maxHeight:' \
+  || fail "開いた先に高さの上限がありません。記録が伸びた分だけ縦に伸びます（183）"
+printf '%s\n' "${LAST_UPDATE_ROW}" | grep -q 'lastUpdateDigest(' \
+  || fail "行に出すあらましが、検査から動かせる1本を通っていません（183）"
+ok "「前回の更新」の詳細は、押したときだけ開く"
+
 # 139 停止中に、起動ボタンが出ること。
 #
 # 「停止中」と書いてある隣に「開く」しか無く、そこから起動できるとは読めなかった。

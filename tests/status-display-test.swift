@@ -96,6 +96,82 @@ private func agentCases() -> [AgentCase] {
     return built
 }
 
+
+/// 「前回の更新」のあらまし（Issue #183）。記録の形ごとに、行に出る1行を見る。
+private struct DigestCase {
+    let title: String
+    let report: String
+    let headline: String
+    let hasDetail: Bool
+}
+
+/// 実物をそのまま持ってくる。作った形だけで確かめると、記録を書く側が変わった
+/// ときに検査だけ通り続ける。1件目は 2026-09-15 に実際に書かれたもの。
+private let digestCases: [DigestCase] = [
+    DigestCase(
+        title: "版が4つ動いた日（実物）",
+        report: """
+        9/15 22:06
+        MulmoTerminal: 4.21.0 → 4.25.0
+        MulmoClaude: 1.16.0 → 1.17.0
+        MulmoBridge CLI: 1.0.2 → 1.0.3
+        Slack Bridge: 1.1.0 → 1.1.1
+        更新の内容（MulmoTerminal）
+        ・Start without Claude Code, by declaring the agent you do have
+        ガイド: https://receptron.github.io/mulmoterminal/guide/ja/v4.25.0.html
+        更新の内容（MulmoClaude）
+        ・Choose the model — per setting, per role, or per chat
+        詳しく: https://github.com/receptron/mulmoclaude/releases/tag/v1.17.0
+        """,
+        headline: "9/15 22:06 ・ 4件を更新",
+        hasDetail: true
+    ),
+    DigestCase(
+        title: "一部だけ動いた日",
+        report: """
+        9/3 10:00
+        MulmoTerminal: 4.21.0 → 4.25.0
+        更新されなかったもの:
+        MulmoClaude: 1.16.0 のまま — npm が繋がりませんでした
+        MulmoBridge CLI: 1.0.2 のまま
+        """,
+        headline: "9/3 10:00 ・ 1件を更新 / 2件そのまま",
+        hasDetail: true
+    ),
+    DigestCase(
+        title: "1つも動かなかった日（ログの行は数に入れない）",
+        report: """
+        9/3 10:00
+        更新されなかったもの:
+        MulmoClaude: 1.16.0 のまま
+        ログ: /Users/me/Library/Logs/Mulmo Control
+        """,
+        headline: "9/3 10:00 ・ 1件そのまま",
+        hasDetail: true
+    ),
+    DigestCase(
+        title: "まだ一度も更新していない",
+        report: "まだありません",
+        headline: "まだありません",
+        hasDetail: false
+    ),
+    DigestCase(
+        title: "数えられない記録は、書いてあるものを出す",
+        report: """
+        9/3 10:00
+        変更内容は確認できませんでした
+        """,
+        headline: "9/3 10:00 ・ 変更内容は確認できませんでした",
+        hasDetail: true
+    ),
+    DigestCase(
+        title: "日付が無くても落とさない",
+        report: "変更内容は確認できませんでした",
+        headline: "変更内容は確認できませんでした",
+        hasDetail: false
+    ),
+]
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -171,10 +247,25 @@ struct StatusDisplayTest {
             }
         }
 
+        // ④ 「前回の更新」のあらまし（Issue #183）
+        for item in digestCases {
+            let digest = lastUpdateDigest(item.report)
+            if digest.headline != item.headline {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  \(item.title): あらましの期待 \(item.headline) / 実際 \(digest.headline)\n".utf8))
+            }
+            if digest.hasDetail != item.hasDetail {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  \(item.title): 開く口の期待 \(item.hasDetail) / 実際 \(digest.hasDetail)\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
     }
 }
