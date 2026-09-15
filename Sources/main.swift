@@ -2749,15 +2749,7 @@ struct SetupPanel: View {
             }
             Hairline()
                 .padding(.vertical, 2)
-            Text("前回の更新")
-                .font(AppFont.section)
-                .foregroundStyle(Palette.primaryText)
-            LinkedText(text: model.lastUpdateReport)
-            if let note = lastUpdateNote {
-                Text(note)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.ok)
-            }
+            LastUpdateRow(model: model, note: lastUpdateNote)
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -2904,6 +2896,69 @@ func versionDetail(status: String, current: String, latest: String, fallback: St
         return current.isEmpty || latest.isEmpty ? "更新あり" : "\(current) → \(latest)"
     default:
         return fallback
+    }
+}
+
+/// 「前回の更新」を1行に畳み、詳細は押したときだけ開く（Issue #183）。
+///
+/// 記録は版の行・据え置きの理由・上流の新機能の箇条書き・ガイドのリンクまで
+/// 入るので、20行を超える日がある。パネルに素で置くと画面の下からはみ出して、
+/// 一番下の「終了」に手が届かなくなる（#192 で一度やった壊れ方）。
+///
+/// **記録は減らさない**（#104 で理由を残すと決めた場所）。出す場所を移して、
+/// 追加ツールの行と同じ `>` で開く。中は上限つきのスクロールなので、何行に
+/// 増えても外側の高さは変わらない。
+struct LastUpdateRow: View {
+    @ObservedObject var model: ControlModel
+    let note: String?
+    @State private var showsDetail = false
+
+    private var digest: LastUpdateDigest { lastUpdateDigest(model.lastUpdateReport) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("前回の更新")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            Text(digest.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            // 開いても同じものしか出ないなら、押せる形にしない。押して何も
+            // 起きない行は、壊れているのと見分けがつかない。
+            if digest.hasDetail {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold, design: .default))
+                    .foregroundStyle(Palette.secondaryText)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard digest.hasDetail else { return }
+            showsDetail.toggle()
+        }
+        .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("前回の更新")
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                ScrollView {
+                    LinkedText(text: model.lastUpdateReport)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 280)
+                if let note {
+                    Text(note)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.ok)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(width: 300)
+        }
     }
 }
 
