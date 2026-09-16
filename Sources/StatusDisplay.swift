@@ -105,3 +105,82 @@ func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
 func agentRemoteOK(_ status: AgentRemote) -> Bool {
     status.state == "online" || status.state == "taken"
 }
+
+/// 「前回の更新」の記録を、行に収まる1行へ畳んだもの（Issue #183）。
+///
+/// `hasDetail` が false のときは開いても同じものしか出ない。押せる形にすると、
+/// 押して何も起きない行になる。
+struct LastUpdateDigest {
+    let headline: String
+    let hasDetail: Bool
+}
+
+/// 更新の記録は、版の行・更新されなかったものとその理由・上流の新機能の箇条書き
+/// まで入るので、長いときは20行を超える。そのままパネルに置くと画面の下から
+/// はみ出して、一番下の「終了」に手が届かなくなる（#192 と同じ壊れ方）。
+///
+/// **中身は減らさない。** 何が動いて何が動かなかったかは、あとから理由を辿る
+/// ための記録（#104）。減らすのではなく、あらましだけ行に出して、実物は押した
+/// ときに開く。
+///
+/// 数えられないときは、作った言葉を出さずに**書いてある最初の1行をそのまま**
+/// 出す。記録の形が変わったときに、嘘の要約を出すよりは素の文字のほうがいい。
+func lastUpdateDigest(_ report: String) -> LastUpdateDigest {
+    let lines = report
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .map(squeezed)
+        .filter { !$0.isEmpty }
+    guard let first = lines.first, first != "まだありません" else {
+        return LastUpdateDigest(headline: "まだありません", hasDetail: false)
+    }
+    let stamp = isTimeStamp(first) ? first : ""
+    let body = Array(lines.dropFirst(stamp.isEmpty ? 0 : 1))
+    // 版の行が並ぶのは、上流の新機能（更新の内容）と据え置き（更新されなかった
+    // もの）が始まるまで。箇条書きにも矢印が入ることがあるので、そこで区切る。
+    let versionLines = body.prefix(while: { !$0.hasPrefix("更新の内容") && !$0.hasPrefix("更新されなかったもの") })
+    let moved = versionLines.filter { $0.contains(" → ") }.count
+    let stalled = body.drop(while: { !$0.hasPrefix("更新されなかったもの") })
+        .dropFirst()
+        .prefix(while: { !$0.hasPrefix("更新の内容") && !$0.hasPrefix("ログ: ") })
+        .count
+    return LastUpdateDigest(
+        headline: headline(stamp: stamp, moved: moved, stalled: stalled, fallback: body.first ?? first),
+        hasDetail: lines.count > 1
+    )
+}
+
+/// 何件動いて何件そのままだったか。数が取れないときは1行目を返す。
+private func headline(stamp: String, moved: Int, stalled: Int, fallback: String) -> String {
+    let counted: String
+    switch (moved, stalled) {
+    case (0, 0):
+        // 数えられなかった。作らずに、書いてあるものを出す。
+        counted = fallback
+    case (let m, 0):
+        counted = "\(m)件を更新"
+    case (0, let s):
+        counted = "\(s)件そのまま"
+    case (let m, let s):
+        counted = "\(m)件を更新 / \(s)件そのまま"
+    }
+    return stamp.isEmpty ? counted : "\(stamp) ・ \(counted)"
+}
+
+/// 前後の空白を落とす。Foundation を呼ばずに済ませる（この1本は外の世界に
+/// 触らない約束で、検査から直に動かしている）。
+private func squeezed(_ value: Substring) -> String {
+    var slice = value
+    while let head = slice.first, head.isWhitespace { slice = slice.dropFirst() }
+    while let tail = slice.last, tail.isWhitespace { slice = slice.dropLast() }
+    return String(slice)
+}
+
+/// 記録の1行目に入る `9/15 22:06`。日付が無い記録もあるので、形で見分ける。
+private func isTimeStamp(_ line: String) -> Bool {
+    let parts = line.split(separator: " ")
+    guard parts.count == 2 else { return false }
+    let day = parts[0].split(separator: "/")
+    let time = parts[1].split(separator: ":")
+    guard day.count == 2, time.count == 2 else { return false }
+    return (day + time).allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+}
