@@ -1166,6 +1166,34 @@ if [ -n "${BACKTICK}" ]; then
 fi
 ok "画面に出す文に記号が紛れていない"
 
+# ── 画面ガイドのスクリプト（Issue #202）────────────────────────
+#
+# ホバーガイドの本体はユーザースクリプトで、**前はこのリポジトリの外にしか
+# 無かった。** Tampermonkey が Mac から消えた日に一緒に消え、作り直すしか
+# なくなった。だから「在ること」自体をここで見る。
+GUIDE_JS="${ROOT}/userscript/mulmoterminal-guide.user.js"
+[ -f "${GUIDE_JS}" ] \
+  || fail "画面ガイドのユーザースクリプトがありません。拡張の中だけに置くと、消えた日に誰も直せません（202）"
+
+# 接続先のポートが Swift 側と揃っていること。**食い違っても何も落ちない。**
+# ガイドが出なくなるだけで、原因は両方を読むまで分からない（#190 と同じ形）。
+GUIDE_PORT_SWIFT="$(grep -o 'static let port: UInt16 = [0-9][0-9]*' "${ROOT}/Sources/GuideServer.swift" \
+  | grep -o '[0-9][0-9]*$')"
+GUIDE_PORT_JS="$(grep -o 'http://127\.0\.0\.1:[0-9][0-9]*/mt-guide' "${GUIDE_JS}" \
+  | head -1 | grep -o ':[0-9][0-9]*' | tr -d ':')"
+[ -n "${GUIDE_PORT_SWIFT}" ] || fail "GuideServer のポートが読めません（202）"
+[ -n "${GUIDE_PORT_JS}" ] || fail "ユーザースクリプトの接続先が読めません（202）"
+[ "${GUIDE_PORT_SWIFT}" = "${GUIDE_PORT_JS}" ] \
+  || fail "画面ガイドの接続先が食い違っています（Swift ${GUIDE_PORT_SWIFT} / スクリプト ${GUIDE_PORT_JS}・202）"
+
+# MulmoTerminal のポートを決め打ちしないこと。ポートは動く（既定 34567・`.env` の
+# PORT・逃げた先）。決め打ちに戻すと、その日から黙って出なくなる（#190 の教訓）。
+# **コメントを落としてから探す。** 語で探すと、その話をしている自分のコメントに
+# 当たる（#83 で踏んだ罠。ここでも1回踏んだ）。
+grep -vE '^[[:space:]]*(//|\*)' "${GUIDE_JS}" | grep -q '34567' \
+  && fail "画面ガイドが MulmoTerminal のポートを決め打ちしています。ポートは動きます（190 / 202）"
+ok "画面ガイドのスクリプトが在り、接続先が Swift と揃っている"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
