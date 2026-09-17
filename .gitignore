@@ -5,3 +5,6 @@ build/
 *.swp
 node_modules/
 yarn.lock
+.env
+.env.*
+!.env.example
