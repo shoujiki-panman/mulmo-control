@@ -2216,9 +2216,20 @@ struct LinkedText: View {
     }
 }
 
+/// パネル上部の知らせ。更新の直後は「前回の更新」と同じ記録が入る。
+///
+/// **長いときは1行に畳み、詳細は押して開く**（Issue #205）。#183 で環境タブの
+/// 「前回の更新」を畳んだが、更新した直後は同じ記録をここがもう一度全部広げて
+/// いて、長い日にパネルが伸びる形が残っていた。あらましは同じ1本
+/// （`lastUpdateDigest`）を通すので、2か所で言うことが食い違わない。
+///
+/// 1行で収まる知らせは畳まない。開いても同じものしか出ない行は押させない。
 struct NoticeCard: View {
     let notice: NoticeMessage
     let close: () -> Void
+    @State private var showsDetail = false
+
+    private var digest: LastUpdateDigest { lastUpdateDigest(notice.text) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -2230,7 +2241,11 @@ struct NoticeCard: View {
                 Text(notice.title)
                     .font(AppFont.rowTitle)
                     .foregroundStyle(Palette.primaryText)
-                LinkedText(text: notice.text)
+                if digest.hasDetail {
+                    folded
+                } else {
+                    LinkedText(text: notice.text)
+                }
             }
             Spacer()
             Button(action: close) {
@@ -2243,6 +2258,36 @@ struct NoticeCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// あらまし1行と `>`。押すと上限つきのスクロールで全文を開く。
+    private var folded: some View {
+        HStack(spacing: 4) {
+            Text(digest.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showsDetail.toggle() }
+        .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(notice.title)
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                ScrollView {
+                    LinkedText(text: notice.text)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 280)
+            }
+            .padding(14)
+            .frame(width: 300)
+        }
     }
 }
 
