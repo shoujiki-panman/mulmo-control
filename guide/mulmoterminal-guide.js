@@ -1,22 +1,13 @@
-// ==UserScript==
-// @name         MulmoTerminal 画面ガイド（日本語）
-// @namespace    https://github.com/shoujiki-panman/mulmo-control
-// @version      0.4.0
-// @description  MulmoTerminal の画面に、カーソルを合わせると日本語の説明が出るようにする。Mulmo Control の環境タブから ON/OFF できる。
-// @author       shoujiki-panman
-// @match        http://localhost/*
-// @match        http://127.0.0.1/*
-// @grant        none
-// @run-at       document-idle
-// ==/UserScript==
-
-// このファイルは **Mulmo Control のリポジトリが持っている**（Issue #202）。
+// MulmoTerminal 画面ガイド（日本語）
 //
-// 前の版（v0.3.0）は Tampermonkey の中にしか無く、拡張が Mac から消えた日に
-// 一緒に消えた。実装が1箇所しか無く、それがリポジトリの外だったという話で、
-// 直し方は「拡張を入れ直す」ではなく「リポジトリに置く」。
+// MulmoTerminal の画面に、カーソルを合わせると日本語の説明が出るようにする。
+// **ブラウザ拡張は使わない**（Issue #207）。Mulmo Control が MulmoTerminal の前に
+// 中継（scripts/mulmoterminal-guide-proxy.mjs）を立て、画面の HTML にだけこの
+// ファイルを差し込む。「開く」から開いた画面で出る。
 //
-// 入れ方は README の「MulmoTerminal 画面ガイド」を読むこと。
+// 経緯: 最初は Tampermonkey のユーザースクリプトとして作ったが、本人は拡張を
+// 入れない方針で、**Tampermonkey は一度も入っていなかった**。#202 で「拡張が
+// 消えた」と書いたのは誤り。
 
 (() => {
   "use strict";

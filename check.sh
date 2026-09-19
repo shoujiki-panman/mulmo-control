@@ -99,6 +99,7 @@ ok "落としたものの丸投げ・eval・権限昇格がない"
 RMRF="$(grep -rn 'rm -rf\|rm -fr' "${SAFETY_TARGETS[@]}" 2>/dev/null | noncomment \
   | grep -v '"/Applications/Mulmo Control.app"' \
   | grep -v '"${APP_DIR}/Contents/Resources/scripts"' \
+  | grep -v '"${APP_DIR}/Contents/Resources/guide"' \
   | grep -v '"${CHECK_DIR}"' \
   | grep -v '"${STAGE_DIR}"' \
   | grep -v '"${VERIFY_DIR}"' \
@@ -1166,33 +1167,76 @@ if [ -n "${BACKTICK}" ]; then
 fi
 ok "画面に出す文に記号が紛れていない"
 
-# ── 画面ガイドのスクリプト（Issue #202）────────────────────────
+# ── 画面ガイド（Issue #202 / #207）──────────────────────────────
 #
-# ホバーガイドの本体はユーザースクリプトで、**前はこのリポジトリの外にしか
-# 無かった。** Tampermonkey が Mac から消えた日に一緒に消え、作り直すしか
-# なくなった。だから「在ること」自体をここで見る。
-GUIDE_JS="${ROOT}/userscript/mulmoterminal-guide.user.js"
+# 164 ガイドの本体がリポジトリに在ること。前の版はどこにも置かれておらず
+# （Tampermonkey の中に入れるつもりだったが、それも入っていなかった）、
+# 作り直すしかなかった。**在ること自体をここで見る。**
+GUIDE_JS="${ROOT}/guide/mulmoterminal-guide.js"
 [ -f "${GUIDE_JS}" ] \
-  || fail "画面ガイドのユーザースクリプトがありません。拡張の中だけに置くと、消えた日に誰も直せません（202）"
+  || fail "画面ガイドの本体がありません。リポジトリの外にしか無いと、無くした日に誰も直せません（202）"
 
 # 接続先のポートが Swift 側と揃っていること。**食い違っても何も落ちない。**
 # ガイドが出なくなるだけで、原因は両方を読むまで分からない（#190 と同じ形）。
 GUIDE_PORT_SWIFT="$(grep -o 'static let port: UInt16 = [0-9][0-9]*' "${ROOT}/Sources/GuideServer.swift" \
-  | grep -o '[0-9][0-9]*$')"
+  | head -1 | grep -o '[0-9][0-9]*$')"
 GUIDE_PORT_JS="$(grep -o 'http://127\.0\.0\.1:[0-9][0-9]*/mt-guide' "${GUIDE_JS}" \
   | head -1 | grep -o ':[0-9][0-9]*' | tr -d ':')"
 [ -n "${GUIDE_PORT_SWIFT}" ] || fail "GuideServer のポートが読めません（202）"
-[ -n "${GUIDE_PORT_JS}" ] || fail "ユーザースクリプトの接続先が読めません（202）"
+[ -n "${GUIDE_PORT_JS}" ] || fail "画面ガイドの接続先が読めません（202）"
 [ "${GUIDE_PORT_SWIFT}" = "${GUIDE_PORT_JS}" ] \
   || fail "画面ガイドの接続先が食い違っています（Swift ${GUIDE_PORT_SWIFT} / スクリプト ${GUIDE_PORT_JS}・202）"
 
 # MulmoTerminal のポートを決め打ちしないこと。ポートは動く（既定 34567・`.env` の
-# PORT・逃げた先）。決め打ちに戻すと、その日から黙って出なくなる（#190 の教訓）。
-# **コメントを落としてから探す。** 語で探すと、その話をしている自分のコメントに
-# 当たる（#83 で踏んだ罠。ここでも1回踏んだ）。
+# PORT・逃げた先）。**コメントを落としてから探す。** 語で探すと、その話をしている
+# 自分のコメントに当たる（#83 で踏んだ罠。ここでも1回踏んだ）。
 grep -vE '^[[:space:]]*(//|\*)' "${GUIDE_JS}" | grep -q '34567' \
   && fail "画面ガイドが MulmoTerminal のポートを決め打ちしています。ポートは動きます（190 / 202）"
-ok "画面ガイドのスクリプトが在り、接続先が Swift と揃っている"
+ok "画面ガイドの本体が在り、接続先が Swift と揃っている"
+
+# 166 中継を偽の MulmoTerminal に当てて、実際に走らせる（Issue #207）。
+#
+# 中継は上流に Origin を書き換えて渡すので、**門番が抜けるとブラウザで開いた
+# どのページからでもシェルを握れる。** 試作で実際にその穴を作り、書こうとした
+# ところで止められた。grep で「門番の関数がある」と見ても、呼ばれていなければ
+# 意味がない。だから本物の1本を立てて、よそのサイトを名乗る接続を投げる。
+PROXY_TEST="${ROOT}/tests/guide-proxy-test.mjs"
+[ -f "${PROXY_TEST}" ] || fail "中継の検査がありません（207）"
+command -v node >/dev/null 2>&1 || fail "node がありません。中継の検査を走らせられません（207）"
+PROXY_OUT=""
+PROXY_RC=0
+PROXY_OUT="$(node "${PROXY_TEST}" 2>&1)" || PROXY_RC=$?
+if [ "${PROXY_RC}" != "0" ]; then
+  printf '%s\n' "${PROXY_OUT}"
+  fail "画面ガイドの中継が期待どおりに動いていません（207）"
+fi
+ok "${PROXY_OUT}"
+
+# 167 中継はループバックだけで待ち受ける。上の検査は LAN のアドレスが無い
+# マシンでは飛ぶので、書き方でも止める。
+PROXY_JS="${ROOT}/scripts/mulmoterminal-guide-proxy.mjs"
+PROXY_CODE="$(grep -vE '^[[:space:]]*//' "${PROXY_JS}")"
+printf '%s\n' "${PROXY_CODE}" | grep -q 'server.listen(LISTEN, LOOPBACK' \
+  || fail "中継がループバック以外で待ち受けています。LAN から入れます（207）"
+printf '%s\n' "${PROXY_CODE}" | grep -qE '0\.0\.0\.0|"::"' \
+  && fail "中継に全体で待ち受ける指定があります（207）"
+
+# 168 中継のポートが Swift と揃っていること。食い違うと「開く」が中継を
+# 立てたつもりで、答えない場所を開く。
+PROXY_PORT_SWIFT="$(awk '/final class GuideProxy/,/^}/' "${ROOT}/Sources/GuideServer.swift" \
+  | grep -o 'static let port: UInt16 = [0-9][0-9]*' | grep -o '[0-9][0-9]*$')"
+PROXY_PORT_JS="$(grep -o 'GUIDE_LISTEN ?? [0-9][0-9]*' "${PROXY_JS}" | grep -o '[0-9][0-9]*$')"
+[ -n "${PROXY_PORT_SWIFT}" ] && [ "${PROXY_PORT_SWIFT}" = "${PROXY_PORT_JS}" ] \
+  || fail "中継のポートが食い違っています（Swift ${PROXY_PORT_SWIFT:-?} / 中継 ${PROXY_PORT_JS:-?}・207）"
+
+# 169 中継が立たないときは、今までどおり直接開く。中継が無いと MulmoTerminal が
+# 開けない形になると、ガイドのために本体が使えなくなる。
+OPEN_FN="$(awk '/^func mulmoTerminalOpenURL/,/^}/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${OPEN_FN}" | grep -q 'return mtURL' \
+  || fail "ガイドがオフのとき直接開く道がありません（207）"
+printf '%s\n' "${OPEN_FN}" | grep -q '? GuideProxy.url : mtURL' \
+  || fail "中継が立たないとき直接開く道がありません（207）"
+ok "中継はループバック限定・ポートが Swift と一致・立たなければ直接開く"
 
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
@@ -2320,6 +2364,9 @@ BUNDLED_COUNT="$(ls "${APP}/Contents/Resources/scripts" 2>/dev/null | wc -l | tr
 [ "${BUNDLED_COUNT}" = "${SOURCE_COUNT}" ] \
   || fail "同梱スクリプトが ${BUNDLED_COUNT} 本です（scripts/ には ${SOURCE_COUNT} 本）"
 ok "同梱スクリプト ${BUNDLED_COUNT} 本"
+[ -f "${APP}/Contents/Resources/guide/mulmoterminal-guide.js" ] \
+  || fail "画面ガイドの本体が同梱されていません。中継が立っても何も差し込めません（207）"
+ok "画面ガイドの本体が同梱されている"
 
 # 署名の検証は同期の外でやる（実測 2026-09-03）。
 # リポジトリが iCloud Drive 配下だと、fileprovider が拡張属性を随時付け直すので、
