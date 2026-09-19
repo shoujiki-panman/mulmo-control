@@ -65,6 +65,76 @@ final class GuideServer {
     }
 }
 
+/// MulmoTerminal の前に立つ中継（Issue #207）。画面の HTML にだけガイドを差し込む。
+///
+/// 画面ガイドは最初ブラウザ拡張（Tampermonkey）で描く作りだったが、本人は拡張を
+/// 入れない方針だった。中継の中身と門番は scripts/mulmoterminal-guide-proxy.mjs が
+/// 持つ。ここは立てる・生きているかを見る・止めるだけ。
+///
+/// **「開く」を押したときにだけ立てる。** ガイドを使わない人の Mac に、常駐の
+/// プロセスを1本増やさない。立てられなければ呼ぶ側は直接開く（中継が無いと
+/// MulmoTerminal が開けない、という形にはしない）。
+final class GuideProxy: @unchecked Sendable {
+    static let shared = GuideProxy()
+    /// 中継の待ち受け。**scripts/mulmoterminal-guide-proxy.mjs の既定と揃える**（check.sh が見ている）。
+    static let port: UInt16 = 34598
+    static var url: String { "http://127.0.0.1:\(port)/" }
+
+    private let lock = NSLock()
+    private var process: Process?
+
+    /// 中継が答えるか。自分が立てたものでも、前回アプリが落ちて残ったものでもよい。
+    static func isServing() -> Bool {
+        guard let url = URL(string: "\(url)__mulmo-guide.js") else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 0.5)
+        request.setValue("127.0.0.1:\(port)", forHTTPHeaderField: "Host")
+        let done = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            ok = (response as? HTTPURLResponse)?.statusCode == 200
+            done.signal()
+        }.resume()
+        _ = done.wait(timeout: .now() + 1)
+        return ok
+    }
+
+    /// 立てて、答えるまで待つ（最大2秒）。立てられなければ false。
+    func ensure(node: String, script: String, upstreamPort: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if Self.isServing() { return true }
+        guard FileManager.default.isExecutableFile(atPath: node),
+              FileManager.default.fileExists(atPath: script) else { return false }
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: node)
+        child.arguments = [script]
+        var env = ProcessInfo.processInfo.environment
+        // MulmoTerminal のセルから起動されていると PORT を持っている（#141）。
+        // 中継は自分の名前の変数しか読まないが、持ち込まない。
+        env.removeValue(forKey: "PORT")
+        env["GUIDE_LISTEN"] = String(Self.port)
+        env["GUIDE_UPSTREAM_PORT"] = String(upstreamPort)
+        child.environment = env
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        do { try child.run() } catch { return false }
+        process = child
+        for _ in 0..<20 {
+            if Self.isServing() { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+
+    /// 自分が立てたものだけ止める。人の立てたプロセスには触らない。
+    func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        process?.terminate()
+        process = nil
+    }
+}
+
 /// 運用タブに置くトグル行。台紙は持たない — `SettingsGroup` の中に
 /// 並ぶので、器は親が1枚だけ持つ（Issue #192）。
 struct GuideToggleRow: View {
@@ -79,7 +149,7 @@ struct GuideToggleRow: View {
                 Text("MulmoTerminal 画面ガイド")
                     .font(AppFont.rowTitle)
                     .foregroundStyle(Palette.primaryText)
-                Text(on ? "カーソルを合わせると日本語の説明が出ます" : "オフ（元の英語ツールチップに戻ります）")
+                Text(on ? "「開く」から開いた画面で、日本語の説明が出ます" : "オフ（元の英語ツールチップに戻ります）")
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
                     .lineLimit(1)
