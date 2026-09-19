@@ -150,6 +150,31 @@ private let digestCases: [DigestCase] = [
         hasDetail: true
     ),
     DigestCase(
+        title: "更新直後の知らせ（実物・日付なし・1件だけ動いた）",
+        report: """
+        MulmoClaude: 1.18.0 → 1.19.0
+        更新の内容（MulmoClaude）
+        ・a custom view's button can start the work
+        ・A custom view's button runs the chat
+        ・The firebase pin from the sign-in regression is lifted
+        ・Dependency refresh and steadier end-to-end tests
+        詳しく: https://github.com/receptron/mulmoclaude/releases/tag/v1.19.0
+        """,
+        headline: "MulmoClaude: 1.18.0 → 1.19.0",
+        hasDetail: true
+    ),
+    DigestCase(
+        title: "1件だけ動いた日（前回の更新・日付つき）",
+        report: """
+        9/20 1:57
+        MulmoClaude: 1.18.0 → 1.19.0
+        更新の内容（MulmoClaude）
+        ・Dependency refresh
+        """,
+        headline: "9/20 1:57 ・ MulmoClaude: 1.18.0 → 1.19.0",
+        hasDetail: true
+    ),
+    DigestCase(
         title: "まだ一度も更新していない",
         report: "まだありません",
         headline: "まだありません",

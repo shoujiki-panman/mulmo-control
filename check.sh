@@ -1351,6 +1351,22 @@ printf '%s\n' "${LAST_UPDATE_ROW}" | grep -q 'lastUpdateDigest(' \
   || fail "行に出すあらましが、検査から動かせる1本を通っていません（183）"
 ok "「前回の更新」の詳細は、押したときだけ開く"
 
+# 165 更新直後の知らせも、長いときは畳む（Issue #205）。
+#
+# #183 で環境タブの「前回の更新」は畳んだが、更新した直後はパネル上部の知らせが
+# **同じ記録をもう一度全部広げていた。** 長い日はここでパネルが伸びる（#192 と
+# 同じ壊れ方）。あらましは「前回の更新」と同じ1本を通し、2か所で食い違わせない。
+NOTICE_CARD="$(awk '/^struct NoticeCard: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${NOTICE_CARD}" ] || fail "上部の知らせ（NoticeCard）が見つかりません（205）"
+printf '%s\n' "${NOTICE_CARD}" | grep -q 'lastUpdateDigest(' \
+  || fail "上部の知らせが、前回の更新と同じあらましを通っていません（205）"
+printf '%s\n' "${NOTICE_CARD}" | grep -q 'popover(' \
+  || fail "上部の知らせに、詳細を開く口がありません（205）"
+printf '%s\n' "${NOTICE_CARD}" | grep -q 'frame(maxHeight:' \
+  || fail "上部の知らせの開いた先に、高さの上限がありません（205）"
+ok "更新直後の知らせも、長いときは押して開く"
+
 # 139 停止中に、起動ボタンが出ること。
 #
 # 「停止中」と書いてある隣に「開く」しか無く、そこから起動できるとは読めなかった。

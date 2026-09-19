@@ -143,8 +143,12 @@ func lastUpdateDigest(_ report: String) -> LastUpdateDigest {
         .dropFirst()
         .prefix(while: { !$0.hasPrefix("更新の内容") && !$0.hasPrefix("ログ: ") })
         .count
+    // 1件だけ動いた日は、数より**その行**のほうが言えることが多い
+    // （「1件を更新」より「MulmoClaude: 1.18.0 → 1.19.0」）。Issue #205。
+    let only = moved == 1 && stalled == 0 ? versionLines.first(where: { $0.contains(" → ") }) : nil
     return LastUpdateDigest(
-        headline: headline(stamp: stamp, moved: moved, stalled: stalled, fallback: body.first ?? first),
+        headline: only.map { stamp.isEmpty ? $0 : "\(stamp) ・ \($0)" }
+            ?? headline(stamp: stamp, moved: moved, stalled: stalled, fallback: body.first ?? first),
         hasDetail: lines.count > 1
     )
 }
