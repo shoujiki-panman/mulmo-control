@@ -42,6 +42,10 @@ rm -rf "${APP_DIR}/Contents/Resources/scripts"
 mkdir -p "${APP_DIR}/Contents/Resources/scripts"
 cp "${ROOT}/scripts"/* "${APP_DIR}/Contents/Resources/scripts/"
 chmod +x "${APP_DIR}/Contents/Resources/scripts"/*
+# 画面ガイドの本体。中継（scripts/mulmoterminal-guide-proxy.mjs）が ../guide から読む（Issue #207）。
+rm -rf "${APP_DIR}/Contents/Resources/guide"
+mkdir -p "${APP_DIR}/Contents/Resources/guide"
+cp "${ROOT}/guide"/* "${APP_DIR}/Contents/Resources/guide/"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 chmod +x "${APP_DIR}/Contents/MacOS/MulmoControl"
 xattr -cr "${APP_DIR}"

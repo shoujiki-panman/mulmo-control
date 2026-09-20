@@ -41,6 +41,19 @@ private let toolsDir: String = {
 /// 実行中のバンドル自身から読む。リリースタグ v1.0.12 と同じ文字列になる。
 let appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
 
+/// 「開く」で MulmoTerminal を開く先（Issue #207）。
+///
+/// 画面ガイドがオンなら中継（GuideProxy）を立ててそちらを開く。**オフのとき、
+/// node が無いとき、中継が立たないときは、今までどおり直接開く。** 中継が
+/// 無いと MulmoTerminal が開けない、という形にはしない。
+func mulmoTerminalOpenURL(node: String?) -> String {
+    guard GuideServer.isOn, let node else { return mtURL }
+    // シェルに渡す文字列ではなく Process に渡す本物のパスなので、tool()（引用符つき）は
+    // 使えない。文字列に埋めずに、パスとして繋ぐ（#32 の検査が見ているのは埋め込み）。
+    let script = (toolsDir as NSString).appendingPathComponent("mulmoterminal-guide-proxy.mjs")
+    return GuideProxy.shared.ensure(node: node, script: script, upstreamPort: mtPort) ? GuideProxy.url : mtURL
+}
+
 private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
 private func bin(_ name: String) -> String { "\"\(localBin)/\(name)\"" }
 private func shellQuoted(_ value: String) -> String {
@@ -784,10 +797,18 @@ final class ControlModel: ObservableObject {
             showMessage(title: "MulmoTerminalが未インストールです", text: "先にインストールしてください。")
             return
         }
-        if mtRunning {
-            openURL(mtURL)
-        } else {
-            runThenOpen(tool("mulmoterminal-start"), url: mtURL)
+        // 中継を立てるのに最大2秒かかるので、画面を止めないよう外で待つ（Issue #207）。
+        let running = mtRunning
+        let node = nodePath
+        Task.detached {
+            let url = mulmoTerminalOpenURL(node: node)
+            await MainActor.run {
+                if running {
+                    self.openURL(url)
+                } else {
+                    self.runThenOpen(tool("mulmoterminal-start"), url: url)
+                }
+            }
         }
     }
 
@@ -1746,6 +1767,9 @@ struct ControlView: View {
             HStack {
                 Spacer()
                 FooterButton(title: "終了", systemImage: "xmark.square", role: .destructive) {
+                    // 自分が立てた中継は連れて行く（Issue #207）。残すと次の起動まで
+                    // 古い版の中継が 34598 を持ち続ける。
+                    GuideProxy.shared.stop()
                     NSApplication.shared.terminate(nil)
                 }
             }
