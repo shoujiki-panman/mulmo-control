@@ -83,6 +83,14 @@ final class GuideProxy: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
 
+    /// いま自分が立てた中継が動いているか。**ポートを叩かずにプロセスだけ見る。**
+    /// 画面は5秒ごとに巡回するので、そのたびに通信すると電池を食う（Issue #38）。
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return process?.isRunning == true
+    }
+
     /// 中継が答えるか。自分が立てたものでも、前回アプリが落ちて残ったものでもよい。
     static func isServing() -> Bool {
         guard let url = URL(string: "\(url)__mulmo-guide.js") else { return false }
@@ -138,7 +146,18 @@ final class GuideProxy: @unchecked Sendable {
 /// 運用タブに置くトグル行。台紙は持たない — `SettingsGroup` の中に
 /// 並ぶので、器は親が1枚だけ持つ（Issue #192）。
 struct GuideToggleRow: View {
+    /// 中継が立っているか。立っていれば**どのアドレスで出ているか**を書く（Issue #209）。
+    /// 「開く」で新しい窓が増えるので、前から開いていた窓を見たまま「出ない」と
+    /// 読めてしまう。実際そうなった。
+    let serving: Bool
     @AppStorage(GuideServer.defaultsKey) private var on: Bool = true
+
+    private var detail: String {
+        if !on { return "オフ（元の英語ツールチップに戻ります）" }
+        return serving
+            ? "127.0.0.1:\(GuideProxy.port) の画面で出ています"
+            : "「開く」から開いた画面で、日本語の説明が出ます"
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -149,7 +168,7 @@ struct GuideToggleRow: View {
                 Text("MulmoTerminal 画面ガイド")
                     .font(AppFont.rowTitle)
                     .foregroundStyle(Palette.primaryText)
-                Text(on ? "「開く」から開いた画面で、日本語の説明が出ます" : "オフ（元の英語ツールチップに戻ります）")
+                Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
                     .lineLimit(1)
