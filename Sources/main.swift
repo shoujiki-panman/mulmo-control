@@ -592,9 +592,18 @@ final class ControlModel: ObservableObject {
         refresh()
     }
 
-    /// 中継の生き死にを画面に反映する。通信はしない（Issue #38 / #209）。
+    /// 中継の生き死にを画面に反映する（Issue #209）。
+    ///
+    /// **「自分が立てた子が生きているか」では足りない。** アプリを更新すると
+    /// 新しいアプリが起動する一方、前のアプリが立てた中継はそのまま残る
+    /// （`終了` を押していないので止まらない）。子で判定すると、**中継は動いて
+    /// いてガイドも配れているのに、行だけが「開くから開いた画面で出ます」に
+    /// 戻る。** 更新直後に実際にそうなった。
+    ///
+    /// ポートが開いているかだけを見る。`portIsOpen` は MulmoTerminal の判定で
+    /// 毎回の巡回が既に使っているものと同じで、通信を増やさない（Issue #38）。
     func refreshGuideServing() {
-        guideServing = GuideProxy.shared.isRunning
+        guideServing = portIsOpen(Int(GuideProxy.port))
     }
 
     /// 開いている間の巡回間隔。画面の表示を追従させるための値。
