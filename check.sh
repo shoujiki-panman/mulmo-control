@@ -1257,7 +1257,9 @@ NOTICE_FN="$(awk '/private func noticeWhichWindow/,/^    }$/' "${ROOT}/Sources/m
 # **両方のアドレス**を出すこと。片方だけでは、どちらを閉じるのか分からない。
 printf '%s\n' "${NOTICE_FN}" | grep -q 'mtURL' \
   || fail "知らせに、前から開いている窓のアドレスがありません（209）"
-printf '%s\n' "${NOTICE_FN}" | grep -q 'guideWindowNoticed' \
+# 印を**立てているか**ではなく、**見て引き返しているか**を見る。立てるだけの行は
+# 関数に残るので、guard を消しても語では当たってしまう（1回そうなった）。
+printf '%s\n' "${NOTICE_FN}" | grep -q '!guideWindowNoticed' \
   || fail "知らせが毎回出ます。押すたびに同じ説明が出ると読まれなくなります（209）"
 OPEN_MT="$(awk '/    func openMT\(\)/,/^    }$/' "${ROOT}/Sources/main.swift")"
 printf '%s\n' "${OPEN_MT}" | grep -q 'noticeWhichWindow' \
