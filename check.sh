@@ -1251,6 +1251,14 @@ printf '%s\n' "${GUIDE_ROW}" | grep -q 'GuideProxy.port' \
 printf '%s\n' "${GUIDE_ROW}" | grep -q 'serving' \
   || fail "ガイドの行が、中継が立っているかを見ていません（209）"
 
+# 判定は**ポートが答えるか**であること。「自分が立てた子が生きているか」に戻すと、
+# アプリを更新した直後（前のアプリの中継が残っている間）だけ行が嘘になる。
+SERVING_FN="$(awk '/    func refreshGuideServing\(\)/,/^    }$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${SERVING_FN}" ] || fail "中継の生死を画面に反映する場所が見つかりません（209）"
+printf '%s\n' "${SERVING_FN}" | grep -q 'portIsOpen' \
+  || fail "中継の生死を、ポートではなく自分の子で見ています。更新直後だけ行が嘘になります（209）"
+
 NOTICE_FN="$(awk '/private func noticeWhichWindow/,/^    }$/' "${ROOT}/Sources/main.swift" \
   | grep -vE '^[[:space:]]*(//|/\*|\*)')"
 [ -n "${NOTICE_FN}" ] || fail "どの窓を見ればいいかの知らせがありません（209）"
