@@ -1238,6 +1238,34 @@ printf '%s\n' "${OPEN_FN}" | grep -q '? GuideProxy.url : mtURL' \
   || fail "中継が立たないとき直接開く道がありません（207）"
 ok "中継はループバック限定・ポートが Swift と一致・立たなければ直接開く"
 
+# 170 どの窓を見ればいいかが画面から分かる（Issue #209）。
+#
+# 中継はアドレスが変わるので窓が2つになる。**前から開いていた窓を見たまま
+# 「ガイドが出ない」と読める。** 実際にそうなった（#207 を配った直後の報告）。
+# 行に出ているアドレスと、開いたときの知らせの2つで拾う。
+GUIDE_ROW="$(awk '/^struct GuideToggleRow: View \{/,/^\}$/' "${ROOT}/Sources/GuideServer.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${GUIDE_ROW}" ] || fail "画面ガイドの行が見つかりません（209）"
+printf '%s\n' "${GUIDE_ROW}" | grep -q 'GuideProxy.port' \
+  || fail "ガイドの行が、いま出ているアドレスを書いていません（209）"
+printf '%s\n' "${GUIDE_ROW}" | grep -q 'serving' \
+  || fail "ガイドの行が、中継が立っているかを見ていません（209）"
+
+NOTICE_FN="$(awk '/private func noticeWhichWindow/,/^    }$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${NOTICE_FN}" ] || fail "どの窓を見ればいいかの知らせがありません（209）"
+# **両方のアドレス**を出すこと。片方だけでは、どちらを閉じるのか分からない。
+printf '%s\n' "${NOTICE_FN}" | grep -q 'mtURL' \
+  || fail "知らせに、前から開いている窓のアドレスがありません（209）"
+# 印を**立てているか**ではなく、**見て引き返しているか**を見る。立てるだけの行は
+# 関数に残るので、guard を消しても語では当たってしまう（1回そうなった）。
+printf '%s\n' "${NOTICE_FN}" | grep -q '!guideWindowNoticed' \
+  || fail "知らせが毎回出ます。押すたびに同じ説明が出ると読まれなくなります（209）"
+OPEN_MT="$(awk '/    func openMT\(\)/,/^    }$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${OPEN_MT}" | grep -q 'noticeWhichWindow' \
+  || fail "「開く」が、どの窓を見ればいいかを知らせていません（209）"
+ok "ガイドがどこで出ているかが、行と知らせの両方から分かる"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた

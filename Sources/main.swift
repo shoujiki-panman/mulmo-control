@@ -528,9 +528,13 @@ final class ControlModel: ObservableObject {
     @Published var mcBusyLabel: String?
     /// Telegram ブリッジを起動・停止といっしょに面倒を見るか（Issue #187）。
     @Published var mcTelegram = false
+    /// どの窓を見ればいいかの知らせは、起動ごとに1回だけ（Issue #209）。
+    private var guideWindowNoticed = false
     /// 二重に走らせない印（Issue #116）。
     private var lightChecksRunning = false
     @Published var nodePath: String?
+    /// 画面ガイドの中継が動いているか（Issue #209）。行に「どこで出ているか」を書くため。
+    @Published var guideServing = false
     @Published var npmPath: String?
     @Published var mtInstalled = false
     @Published var mcInstalled = false
@@ -586,6 +590,11 @@ final class ControlModel: ObservableObject {
     private func refreshAfterAction() {
         invalidateCommandPathCache()
         refresh()
+    }
+
+    /// 中継の生き死にを画面に反映する。通信はしない（Issue #38 / #209）。
+    func refreshGuideServing() {
+        guideServing = GuideProxy.shared.isRunning
     }
 
     /// 開いている間の巡回間隔。画面の表示を追従させるための値。
@@ -744,6 +753,7 @@ final class ControlModel: ObservableObject {
         // ポート確認とファイル読みだけ。メニューバーのアイコンはこれで足りるので、
         // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(mtPort)
+        refreshGuideServing()
         // 起動より先に読む。ポートも URL もここから決まるので、古いモードの
         // まま判定すると「起動したのに停止中と出る」になる。
         mcMode = MulmoClaudeMode.current()
@@ -803,6 +813,8 @@ final class ControlModel: ObservableObject {
         Task.detached {
             let url = mulmoTerminalOpenURL(node: node)
             await MainActor.run {
+                self.refreshGuideServing()
+                self.noticeWhichWindow(opened: url)
                 if running {
                     self.openURL(url)
                 } else {
@@ -1308,6 +1320,20 @@ final class ControlModel: ObservableObject {
         if let url = URL(string: value) {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    /// ガイドつきで開いたときに、**どの窓を見ればいいか**を1回だけ知らせる（Issue #209）。
+    ///
+    /// 中継はアドレスが変わるので窓が2つになる。前から開いていた窓を見たまま
+    /// 「ガイドが出ない」と読めてしまう。実際にそうなった。起動ごとに1回だけ。
+    private func noticeWhichWindow(opened url: String) {
+        guard url != mtURL, !guideWindowNoticed else { return }
+        guideWindowNoticed = true
+        notice = NoticeMessage(
+            title: "ガイドつきで開きました",
+            text: "\(url) の窓で、カーソルを合わせると日本語の説明が出ます。\n"
+                + "前から開いている \(mtURL) の窓には出ません（そちらを閉じると迷いません）。"
+        )
     }
 
     private func showMessage(title: String, text: String) {
@@ -2374,7 +2400,7 @@ struct OperateView: View {
             // 押すだけ・見るだけの物は、器を1枚にまとめる（Issue #192）。
             // 1枚ずつ台紙を立てると、余白と間隔だけで 120pt を超えていた。
             SettingsGroup {
-                SettingsRow(showsSeparator: false) { GuideToggleRow() }
+                SettingsRow(showsSeparator: false) { GuideToggleRow(serving: model.guideServing) }
                 if model.mcInstalled {
                     SettingsRow { TelegramToggleRow(model: model) }
                 }
