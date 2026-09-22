@@ -1688,6 +1688,17 @@ if [ "${DISPLAY_RC}" != "0" ]; then
 fi
 ok "${DISPLAY_OUT}"
 
+# 176 自動の繋ぎ直しの知らせが、状態ごとに対応表どおり出る（Issue #212）。
+#
+# 対応表は上の検査が実際に走らせている。ここでは、その表が検査から消えて
+# いないことと、画面がその1本を通っていることを見る（通らずに画面側で言葉を
+# 作ると、表を通らない知らせが出る。133 と同じ形）。
+printf '%s\n' "${DISPLAY_OUT}" | grep -q '繋ぎ直しの知らせ' \
+  || fail "自動の繋ぎ直しの知らせを検査で走らせていません（Issue #212 / 176）"
+grep -q 'claudeRemoteNotes(model.claudeRemote, launchAtLogin: model.launchAtLogin)' "${ROOT}/Sources/main.swift" \
+  || fail "Claude Code の行が、繋ぎ直しの知らせを対応表から出していません（Issue #212 / 176）"
+ok "自動の繋ぎ直しの知らせは対応表が決める"
+
 # ── 版の比べ方 ──────────────────────────────────────────────────
 # SECURITY.md の E 節（041・043〜045）。Issue #67。
 #
@@ -1913,6 +1924,192 @@ if [ -n "${PATCHED_BUTTON}" ]; then
   fail "行のボタンを画面側で継ぎ足しています。対応表を通りません（Issue #166 / 133）"
 fi
 ok "行のボタンは対応表が決める"
+
+# ── スマホ連携（Claude Code）の自動の繋ぎ直し ───────────────────
+# SECURITY.md の L 節（171〜176）。Issue #212。
+#
+# 「繋いでおきたい」と言われたセッションが、Mac の再起動や異常終了で消えたら
+# Mulmo Control が立て直す。**ここは綴りではなく、本物の `mulmo-claude-remote` を
+# 偽の HOME で実際に走らせて見る。** 立て直すかどうかは、希望・生死・信頼・
+# 回数の組み合わせで決まり、grep では組み合わせを見られないため。
+#
+# 偽の claude は URL を1行出して、親（script）が居る間だけ居座る。本物と同じく
+# script(1) の下で立ち、sink が URL を拾う。HOME の中に空白を入れてある（#32）。
+step "スマホ連携（Claude Code）の自動の繋ぎ直し"
+
+RR_HOME="$(mktemp -d "${TMPDIR:-/tmp}/mulmo restore XXXXXX")"
+RR_LOGS="${RR_HOME}/Library/Logs/Mulmo Control"
+RR_STATE_DIR="${RR_HOME}/Library/Application Support/Mulmo Control"
+RR_WANT="${RR_STATE_DIR}/claude-remote-want"
+mkdir -p "${RR_HOME}/.local/bin" "${RR_HOME}/mulmoclaude"
+cat >"${RR_HOME}/.local/bin/claude" <<'FAKE'
+#!/bin/zsh
+print "/remote-control is active · or at https://claude.ai/code/session_01CHECKRESTORE"
+while kill -0 "${PPID}" 2>/dev/null; do /bin/sleep 1; done
+FAKE
+chmod +x "${RR_HOME}/.local/bin/claude"
+
+rr_trust() {
+  RR_HOME="${RR_HOME}" RR_TRUST="$1" /usr/bin/python3 -c '
+import json, os
+home = os.environ["RR_HOME"]
+projects = {os.path.join(home, "mulmoclaude"): {"hasTrustDialogAccepted": True}} \
+    if os.environ["RR_TRUST"] == "yes" else {}
+with open(os.path.join(home, ".claude.json"), "w", encoding="utf-8") as handle:
+    json.dump({"projects": projects}, handle)
+'
+}
+rr() {
+  env -u MULMO_CONFIG_FILE -u MULMO_STATE_DIR HOME="${RR_HOME}" "${CLAUDE_REMOTE}" "$@" >/dev/null 2>&1 || true
+}
+rr_field() {
+  /usr/bin/python3 -c 'import json, sys
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2])
+except (OSError, ValueError):
+    value = None
+print("" if value is None else value)' "$1" "$2"
+}
+rr_pid() { rr_field "${RR_LOGS}/claude-remote-session.json" pid; }
+rr_state() { rr_field "${RR_LOGS}/claude-remote.json" state; }
+rr_event() { rr_field "${RR_LOGS}/claude-remote.json" event; }
+rr_alive() { [ -n "$1" ] && /bin/ps -p "$1" >/dev/null 2>&1; }
+# 落とす。控えた pid だけ。消えるまで待つ（残っていると ensure が「生きている」と読む）。
+rr_crash() {
+  RR_VICTIM="$(rr_pid)"
+  [ -n "${RR_VICTIM}" ] || fail "立てたはずのセッションの控えがありません（Issue #212）"
+  kill "${RR_VICTIM}" 2>/dev/null || true
+  for RR_I in 1 2 3 4 5; do rr_alive "${RR_VICTIM}" || break; sleep 1; done
+}
+rr_cleanup() {
+  RR_LEFT="$(rr_pid 2>/dev/null || true)"
+  rr stop
+  [ -n "${RR_LEFT}" ] && kill "${RR_LEFT}" 2>/dev/null || true
+  rm -rf "${RR_HOME}"
+}
+trap rr_cleanup EXIT
+
+rr_trust yes
+RESTART_LIMIT_VALUE="$(sed -n 's/^RESTART_LIMIT=\([0-9][0-9]*\)$/\1/p' "${CLAUDE_REMOTE}")"
+[ -n "${RESTART_LIMIT_VALUE}" ] || fail "立て直しの上限（RESTART_LIMIT）が定数で置かれていません（Issue #212 / 174）"
+
+# 173 落ちたら立て直し、落ちたことが状態に残る。
+rr start
+RR_FIRST="$(rr_pid)"
+rr_alive "${RR_FIRST}" || fail "偽の claude で繋げませんでした。検査の前提が崩れています（Issue #212）"
+[ -f "${RR_WANT}" ] || fail "「繋ぐ」を押しても、繋いでおきたいことを覚えていません（Issue #212 / 173）"
+rr_crash
+rr ensure
+RR_SECOND="$(rr_pid)"
+if ! rr_alive "${RR_SECOND}" || [ "${RR_SECOND}" = "${RR_FIRST}" ]; then
+  fail "落ちたセッションを ensure が立て直していません（Issue #212 / 173）"
+fi
+[ "$(rr_event)" = "restored" ] \
+  || fail "立て直したのに、落ちたことを状態に残していません（event=$(rr_event)。Issue #212 / 173）"
+ok "落ちたら立て直し、落ちたことが状態に残る"
+
+# 174 短時間に何度も落ちるなら、立て直しをやめる。押せば再開する。
+#
+# ここまでで1回立て直している。上限まで立て直し、次の1回で止まることを見る。
+RR_ROUND=2
+while [ "${RR_ROUND}" -le "${RESTART_LIMIT_VALUE}" ]; do
+  rr_crash
+  rr ensure
+  rr_alive "$(rr_pid)" || fail "上限（${RESTART_LIMIT_VALUE}回）より前に立て直しをやめています（${RR_ROUND}回目。Issue #212 / 174）"
+  RR_ROUND=$((RR_ROUND + 1))
+done
+rr_crash
+rr ensure
+if rr_alive "$(rr_pid)" || [ "$(rr_state)" != "halted" ]; then
+  fail "何度も落ちているのに立て直し続けています（state=$(rr_state)。Issue #212 / 174）"
+fi
+rr ensure
+rr_alive "$(rr_pid)" && fail "止めたあとの ensure が、また立てています（Issue #212 / 174）"
+rr start
+if ! rr_alive "$(rr_pid)" || [ "$(rr_state)" != "online" ] || [ -n "$(rr_event)" ]; then
+  fail "止まった立て直しを「繋ぐ」で再開できません（state=$(rr_state)。Issue #212 / 174）"
+fi
+ok "何度も落ちるなら ${RESTART_LIMIT_VALUE} 回で止まり、「繋ぐ」で再開する"
+
+# 171 「止める」を押したものは、立て直さない。
+rr stop
+[ -f "${RR_WANT}" ] && fail "「止める」を押しても、繋いでおきたいことを忘れていません（Issue #212 / 171）"
+rr ensure
+if rr_alive "$(rr_pid)" || [ "$(rr_state)" = "online" ]; then
+  fail "止めたセッションを ensure が勝手に立て直しています（Issue #212 / 171）"
+fi
+# 止めている途中に ensure が走っても戻さないよう、希望は kill より先に消す。
+STOP_BODY="$(awk '/^do_stop\(\)/ { inside = 1 } inside { print } inside && /^}/ { exit }' "${CLAUDE_REMOTE}")"
+WANT_RM_AT="$(printf '%s\n' "${STOP_BODY}" | grep -n 'rm -f "${WANT}"' | head -1 | cut -d: -f1)"
+KILL_AT="$(printf '%s\n' "${STOP_BODY}" | grep -n 'kill "${PID}"' | head -1 | cut -d: -f1)"
+if [ -z "${WANT_RM_AT}" ] || [ -z "${KILL_AT}" ] || [ "${WANT_RM_AT}" -gt "${KILL_AT}" ]; then
+  fail "止めるときに、希望を消す前にセッションを落としています（Issue #212 / 171）"
+fi
+ok "止めたものは立て直さない"
+
+# 177 落ちてから次の ensure までの間は「落ちました」と言う。止めたあとは言わない。
+#
+# 「まだ繋いでいません」のままだと、一度も繋いでいないように読める。
+rr start
+rr_crash
+rr status
+[ "$(rr_state)" = "crashed" ] \
+  || fail "落ちたのに、状態が「落ちました」になっていません（state=$(rr_state)。Issue #212 / 177）"
+rr stop
+[ "$(rr_state)" = "crashed" ] && fail "止めたあとも「落ちました」と言っています（Issue #212 / 177）"
+ok "落ちてから立て直すまでの間は「落ちました」と言う"
+
+# 172 未信頼のフォルダでは、ensure は何もしない（ターミナルも開かない）。
+#
+# 実際に走らせて「立たない」ことを見る。ターミナルを開かないことは、走らせると
+# 本当に開いてしまうので、ensure の中身に開く口（osascript・do_start）が無いことと、
+# 信頼の確認が立てる行より前にあることで見る。
+rr_trust no
+mkdir -p "${RR_STATE_DIR}"
+: >"${RR_WANT}"
+rr ensure
+if rr_alive "$(rr_pid)" || [ "$(rr_state)" != "untrusted" ]; then
+  fail "未信頼のフォルダで ensure がセッションを立てています（state=$(rr_state)。Issue #212 / 172）"
+fi
+ENSURE_BODY="$(awk '/^do_ensure\(\)/ { inside = 1 } inside { print } inside && /^}/ { exit }' "${CLAUDE_REMOTE}" \
+  | grep -vE '^[[:space:]]*#')"
+[ -n "${ENSURE_BODY}" ] || fail "ensure が見つかりません（Issue #212 / 172）"
+if printf '%s\n' "${ENSURE_BODY}" | grep -nE 'osascript|do_start|claude\.json'; then
+  fail "ensure からターミナルを開くか、信頼に触れています。確認は人が踏むものです（Issue #212 / 172）"
+fi
+ENSURE_TRUST_AT="$(printf '%s\n' "${ENSURE_BODY}" | grep -n 'trusted)" != "yes"' | head -1 | cut -d: -f1)"
+ENSURE_LAUNCH_AT="$(printf '%s\n' "${ENSURE_BODY}" | grep -n 'launch_session' | head -1 | cut -d: -f1)"
+if [ -z "${ENSURE_TRUST_AT}" ] || [ -z "${ENSURE_LAUNCH_AT}" ] || [ "${ENSURE_TRUST_AT}" -gt "${ENSURE_LAUNCH_AT}" ]; then
+  fail "ensure が信頼を確かめる前に立てています（Issue #212 / 172）"
+fi
+ok "未信頼のフォルダでは ensure は何もしない"
+
+rr_cleanup
+trap - EXIT
+
+# 175 希望の置き場所が画面とスクリプトで揃い、起動時と巡回の両方から呼んでいる。
+#
+# 置き場所が食い違うと、画面は「希望なし」と読んで ensure を一度も呼ばない。
+# 何も落ちないので誰も気づけない（155 と同じ形）。
+SWIFT_WANT="$(sed -n 's/.*claudeRemoteWantPath = "\\(homeDir)\/\(.*\)"$/\1/p' "${ROOT}/Sources/main.swift")"
+SCRIPT_WANT="Library/Application Support/Mulmo Control/claude-remote-want"
+grep -q 'STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"' "${CLAUDE_REMOTE}" \
+  && grep -q 'WANT="${STATE_DIR}/claude-remote-want"' "${CLAUDE_REMOTE}" \
+  || fail "スクリプト側の希望の置き場所が読めません（Issue #212 / 175）"
+[ "${SWIFT_WANT}" = "${SCRIPT_WANT}" ] \
+  || fail "希望の置き場所が画面（${SWIFT_WANT:-なし}）とスクリプトで違います（Issue #212 / 175）"
+INIT_BODY="$(awk '/^    init\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${INIT_BODY}" | grep -q 'ensureClaudeRemoteIfDue(force: true)' \
+  || fail "アプリの起動時に立て直していません。再起動のあと戻りません（Issue #212 / 175）"
+REFRESH_BODY="$(awk '/^    func refresh\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${REFRESH_BODY}" | grep -q 'ensureClaudeRemoteIfDue()' \
+  || fail "巡回から立て直していません。外出先で落ちたら戻りません（Issue #212 / 175）"
+grep -q 'tool("mulmo-claude-remote")) ensure' "${ROOT}/Sources/main.swift" \
+  || fail "軽い確認から ensure を呼んでいません（Issue #212 / 175）"
+# 希望が無い人のためにシェルを起こさない（#38）。ファイルを見てから呼ぶ。
+grep -q 'FileManager.default.fileExists(atPath: claudeRemoteWantPath)' "${ROOT}/Sources/main.swift" \
+  || fail "希望の有無を見ずに ensure を起こしています。巡回のたびにシェルが立ちます（Issue #38 / #212 / 175）"
+ok "希望の置き場所が揃い、起動時と巡回から立て直す"
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────

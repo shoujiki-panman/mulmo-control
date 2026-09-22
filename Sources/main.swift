@@ -129,6 +129,10 @@ private let remoteHostPath = "\(logDir)/remote-host.json"
 // いたので、MulmoClaude 側が切れていても「使えます」と表示していた。
 private let mcRemoteHostPath = "\(logDir)/remote-host-mulmoclaude.json"
 private let claudeRemotePath = "\(logDir)/claude-remote.json"
+/// 「繋いでおきたい」の控え（Issue #212）。書くのは `mulmo-claude-remote`
+/// の start、消すのは stop。画面はあるかどうかを見るだけ（無ければ ensure を
+/// 呼ぶためにシェルを起こさない）。
+private let claudeRemoteWantPath = "\(homeDir)/Library/Application Support/Mulmo Control/claude-remote-want"
 private let codexRemotePath = "\(logDir)/codex-remote.json"
 private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
@@ -617,6 +621,9 @@ final class ControlModel: ObservableObject {
         requestNotificationPermission()
         refresh()
         checkUpdatesSilentlyIfNeeded(force: true)
+        // Mac を再起動したあと、スマホ連携（Claude Code）を立て直すのはここ
+        // （Issue #212）。ログイン時に起動していないと、ここが走らない。
+        ensureClaudeRemoteIfDue(force: true)
         scheduleTimer()
     }
 
@@ -651,8 +658,8 @@ final class ControlModel: ObservableObject {
         let command = """
         \(tool("mulmo-check-remote-host"))
         \(tool("mulmo-check-claude-login"))
-        \(tool("mulmo-claude-remote")) status
         \(tool("mulmo-codex-remote")) status
+        \(tool("mulmo-claude-remote")) ensure
         """
         Task.detached { [weak self] in
             let process = Process()
@@ -789,6 +796,7 @@ final class ControlModel: ObservableObject {
         mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
         claudeRemote = readAgentRemote(claudeRemotePath)
         codexRemote = readAgentRemote(codexRemotePath)
+        ensureClaudeRemoteIfDue()
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -921,6 +929,40 @@ final class ControlModel: ObservableObject {
     /// ので、ここに来るのは URL があるときだけ。
     func openClaudeRemote() {
         openURL(claudeRemote.openURL)
+    }
+
+    /// 自動で立て直しに行く間隔（Issue #212）。
+    ///
+    /// 巡回（閉じている間 60 秒）のたびにシェルを起こすと #38 に戻るので、
+    /// 5分に1回だけ。外出先で落ちても、長くて5分で戻る。「繋いでおきたい」が
+    /// 無い人はファイルを1つ見るだけで、シェルは起こさない。
+    /// スクリプト側の連鎖止め（30分に3回）は、この間隔を前提に決めてある。
+    private static let claudeRemoteEnsureInterval: TimeInterval = 300
+    private var lastClaudeRemoteEnsure = Date.distantPast
+    private var claudeRemoteEnsuring = false
+
+    /// 「繋いでおきたい」のに消えていたら立て直す。立てるかどうかの判断は
+    /// すべてスクリプト（`ensure`）が持つ。ここは呼ぶ間隔だけ。
+    private func ensureClaudeRemoteIfDue(force: Bool = false) {
+        guard !claudeRemoteEnsuring,
+              FileManager.default.fileExists(atPath: claudeRemoteWantPath) else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastClaudeRemoteEnsure) >= Self.claudeRemoteEnsureInterval else { return }
+        lastClaudeRemoteEnsure = now
+        claudeRemoteEnsuring = true
+        let command = "\(tool("mulmo-claude-remote")) ensure"
+        Task.detached { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            try? process.run()
+            process.waitUntilExit()
+            await MainActor.run {
+                guard let self else { return }
+                self.claudeRemoteEnsuring = false
+                self.claudeRemote = readAgentRemote(claudeRemotePath)
+            }
+        }
     }
 
     func startCodexRemote() {
@@ -2818,6 +2860,14 @@ struct SetupPanel: View {
                     extraTitle: agentRemoteCanStop(model.claudeRemote) ? "止める" : nil,
                     extraAction: model.stopClaudeRemote
                 )
+                // 自動で繋ぎ直したこと・止めたこと（Issue #212）。
+                ForEach(claudeRemoteNotes(model.claudeRemote, launchAtLogin: model.launchAtLogin), id: \.self) { note in
+                    Text(note)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 SetupRow(
                     title: "Codex",
                     detail: model.codexRemote.detail,

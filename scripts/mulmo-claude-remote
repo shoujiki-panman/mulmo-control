@@ -3,7 +3,11 @@ set -u
 
 # 「スマホ連携（Claude Code）」を繋ぐ / 止める / 見る（Issue #160）。
 #
-#   使い方: mulmo-claude-remote start|stop|status
+#   使い方: mulmo-claude-remote start|stop|status|ensure
+#
+# ensure は「繋いでおきたい」と言われているのに消えていたら立て直す（Issue #212）。
+# Mac の再起動や異常終了で消えても、外出先のスマホから繋がる状態を保つため。
+# 押すのは人（start）、戻すのは機械（ensure）。**止めたもの（stop）は戻さない。**
 #
 # Claude Code のリモートは **セッション1つ＝フォルダ1つ**で、Codex のような
 # デーモン1つの形が無い（実測 2.1.251）。だから既定のフォルダを1つ決めて、
@@ -30,7 +34,32 @@ URL_FILE="${LOG_DIR}/claude-remote.url"
 FIFO="${LOG_DIR}/claude-remote.pipe"
 SETTLE=8
 
-mkdir -p "${LOG_DIR}"
+# 「繋いでおきたい」の控えと、立て直しの記録（Issue #212）。
+# 設定と同じ置き場所に置く（ログを消しても希望は消えないように）。
+STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
+WANT="${STATE_DIR}/claude-remote-want"
+RESTARTS="${STATE_DIR}/claude-remote-restarts"
+EVENT="${STATE_DIR}/claude-remote-event.json"
+# 立てる処理を1本にする錠。「繋ぐ」を押した直後（まだ控えが無い数秒）に
+# 定期確認の ensure が走ると、2本立ってしまう。空のフォルダで取るので、
+# 作れた1本だけが立てに行ける。
+LOCK="${STATE_DIR}/claude-remote.lock"
+# 錠を置き忘れたとき（強制終了など）に奪ってよい古さ（分）。立てるのは
+# SETTLE 秒で終わるので、1分残っている錠は持ち主が居ない。
+LOCK_STALE_MIN=1
+
+# 立て直しの連鎖を止める線: RESTART_WINDOW 秒の間に RESTART_LIMIT 回立て直したら、
+# それ以上は立て直さずに止める。
+#
+# 根拠: ensure はアプリの起動時と、5分おきの定期確認から呼ばれる。再起動や
+# たまの異常終了なら30分に1回で済む。**3回目が来るのは、立てても立てても
+# すぐ落ちる形**（ログイン切れ・claude 側の不具合など）で、5分おきなら30分で
+# 6回立て直すことになる。1回ごとに claude.ai 側に新しいセッションが1つ増え、
+# 最大 SETTLE 秒待つので、放っておくとスマホの一覧が捨てたセッションで埋まる。
+RESTART_LIMIT=3
+RESTART_WINDOW=1800
+
+mkdir -p "${LOG_DIR}" "${STATE_DIR}"
 
 # 設定は shell として実行せず、許可したキーの値だけを読む（Issue #67）。
 DIR="$("${SCRIPT_DIR}/mulmo-config-get" MULMO_CONTROL_CLAUDE_REMOTE_DIR)"
@@ -52,8 +81,93 @@ if isinstance(pid, int):
         os.kill(pid, 0)
     except OSError:
         raise SystemExit
+    # 再起動のあとは、控えた番号が別のプロセスに使い回されていることがある。
+    # 番号だけで「生きている」と読むと、立て直すべきときに立て直さない
+    # （しかも stop がその別人を落とす）。自分が立てた形かまで見る（Issue #212）。
+    import subprocess
+    try:
+        command = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "command="],
+                                 capture_output=True, text=True).stdout
+    except OSError:
+        raise SystemExit
+    if "--remote-control" not in command:
+        raise SystemExit
     print(pid)
 '
+}
+
+# 控えに pid があるのに、そのプロセスが居ない（＝落ちた・再起動で消えた）か。
+dead_pid() {
+  STATE="${STATE}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["STATE"], encoding="utf-8") as handle:
+        pid = (json.load(handle) or {}).get("pid")
+except (OSError, ValueError):
+    raise SystemExit
+if isinstance(pid, int):
+    print(pid)
+'
+}
+
+wanted() { [ -f "${WANT}" ]; }
+
+# 何が起きたかを控える（落ちたので繋ぎ直した / 繋ぎ直せなかった / 止めた）。
+note_event() {
+  EVENT_NAME="$1" EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os, datetime
+now = datetime.datetime.now()
+with open(os.environ["EVENT"], "w", encoding="utf-8") as handle:
+    json.dump({"event": os.environ["EVENT_NAME"],
+               "at": "%d/%d %d:%02d" % (now.month, now.day, now.hour, now.minute)},
+              handle, ensure_ascii=False)
+'
+}
+
+event_name() {
+  EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["EVENT"], encoding="utf-8") as handle:
+        print((json.load(handle) or {}).get("event") or "")
+except (OSError, ValueError):
+    pass
+'
+}
+
+# 窓の中で何回立て直したか。数えるついでに、窓から外れた古い記録を捨てる。
+recent_restarts() {
+  RESTARTS="${RESTARTS}" WINDOW="${RESTART_WINDOW}" /usr/bin/python3 -c '
+import os, time
+path = os.environ["RESTARTS"]
+cutoff = time.time() - int(os.environ["WINDOW"])
+try:
+    with open(path, encoding="utf-8") as handle:
+        stamps = [float(line) for line in handle if line.strip()]
+except (OSError, ValueError):
+    stamps = []
+stamps = [stamp for stamp in stamps if stamp >= cutoff]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("".join("%d\n" % stamp for stamp in stamps))
+print(len(stamps))
+'
+}
+
+forget_history() {
+  /bin/rm -f "${RESTARTS}" "${EVENT}"
+}
+
+try_lock() {
+  /bin/mkdir "${LOCK}" 2>/dev/null && return 0
+  if [ -n "$(/usr/bin/find "${LOCK}" -maxdepth 0 -mmin +"${LOCK_STALE_MIN}" 2>/dev/null)" ]; then
+    /bin/rmdir "${LOCK}" 2>/dev/null
+    /bin/mkdir "${LOCK}" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+release_lock() {
+  /bin/rmdir "${LOCK}" 2>/dev/null || true
 }
 
 trusted() {
@@ -75,7 +189,7 @@ for path, item in projects.items():
 
 write_status() {
   STATE_NAME="$1" DETAIL="$2" DIR="${DIR}" URL_FILE="${URL_FILE}" OUT="${OUT}" \
-    /usr/bin/python3 -c '
+    WANT="${WANT}" EVENT="${EVENT}" /usr/bin/python3 -c '
 import json, os, datetime
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 try:
@@ -86,9 +200,19 @@ except OSError:
 # 入口の形をしていないものは出さない（画面の切れ端が混じるのを防ぐ）
 if not url.startswith("https://claude.ai/code/session_"):
     url = ""
+# 自動の繋ぎ直しで何が起きたか（Issue #212）。言葉にするのは画面側
+# （StatusDisplay.swift の claudeRemoteNote）。ここは事実だけを書く。
+try:
+    with open(os.environ["EVENT"], encoding="utf-8") as handle:
+        event = json.load(handle) or {}
+except (OSError, ValueError):
+    event = {}
 with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
     json.dump({"checkedAt": now, "state": os.environ["STATE_NAME"],
-               "detail": os.environ["DETAIL"], "dir": os.environ["DIR"], "url": url},
+               "detail": os.environ["DETAIL"], "dir": os.environ["DIR"], "url": url,
+               "want": os.path.exists(os.environ["WANT"]),
+               "event": str(event.get("event") or ""),
+               "eventAt": str(event.get("at") or "")},
               handle, ensure_ascii=False, indent=2)
 '
 }
@@ -111,10 +235,25 @@ do_status() {
     write_status "untrusted" "初回は確認が要ります"
     return 0
   fi
+  if wanted && [ "$(event_name)" = "halted" ]; then
+    write_status "halted" "何度も落ちました"
+    return 0
+  fi
+  # 繋いでおきたいのに、控えた pid が居ない（落ちた・再起動で消えた）。次の
+  # ensure が立て直すまでの間に出る。「まだ繋いでいません」は、一度も繋いで
+  # いないように読める（Issue #212 / 177）。
+  if wanted && [ -n "$(dead_pid)" ]; then
+    write_status "crashed" "落ちました"
+    return 0
+  fi
   write_status "offline" "まだ繋いでいません"
 }
 
 do_stop() {
+  # 止めたものは戻さない。希望を先に消す（止めている途中に ensure が
+  # 走っても立て直さないように）。
+  /bin/rm -f "${WANT}"
+  forget_history
   PID="$(live_pid)"
   if [ -z "${PID}" ]; then
     /bin/rm -f "${STATE}" "${URL_FILE}"
@@ -137,6 +276,17 @@ do_stop() {
 }
 
 do_start() {
+  # 押したのは人。「繋いでおきたい」を覚え、止まっていた立て直しも再開する。
+  : >"${WANT}"
+  forget_history
+  # ensure が立てている最中なら、終わるのを待つ（そのあと生きていれば引き返す）。
+  WAITED=0
+  until try_lock; do
+    [ "${WAITED}" -ge 15 ] && break
+    sleep 1
+    WAITED=$((WAITED + 1))
+  done
+  trap release_lock EXIT
   if [ -n "$(live_pid)" ]; then
     echo "スマホ連携（Claude Code）はすでに繋がっています" | tee -a "${LOG}"
     do_status
@@ -168,6 +318,13 @@ end run' "${DIR}" "${CLAUDE}" >/dev/null 2>&1 || true
     return 2
   fi
 
+  launch_session "${CLAUDE}"
+}
+
+# セッションを切り離して立てる。**信頼済みを確かめてから呼ぶこと**
+# （do_start / do_ensure の両方が、呼ぶ前に確かめている）。
+launch_session() {
+  CLAUDE="$1"
   echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] start requested (${DIR})" >>"${LOG}"
   /bin/rm -f "${URL_FILE}" "${FIFO}"
 
@@ -217,9 +374,71 @@ with open(os.environ["STATE"], "w", encoding="utf-8") as handle:
   do_status
 }
 
+# 繋いでおきたいのに消えていたら、立て直す（Issue #212）。
+#
+# 立てるのは、希望あり・生きていない・止まっていない・claude がある・
+# フォルダがある・**信頼済み**のときだけ。未信頼なら何もしない —
+# 信頼確認は人が踏むもので、ここからターミナルを開いたり ~/.claude.json を
+# 書いたりはしない（116）。
+do_ensure() {
+  if ! wanted; then
+    do_status
+    return 0
+  fi
+  if [ -n "$(live_pid)" ]; then
+    do_status
+    return 0
+  fi
+  if [ "$(event_name)" = "halted" ]; then
+    do_status
+    return 0
+  fi
+  CLAUDE="$(command -v claude || true)"
+  if [ -z "${CLAUDE}" ] || [ ! -d "${DIR}" ]; then
+    do_status
+    return 0
+  fi
+  if [ "$(trusted)" != "yes" ]; then
+    do_status
+    return 0
+  fi
+  # 「繋ぐ」を押した直後や、別の ensure が立てている最中なら何もしない。
+  if ! try_lock; then
+    do_status
+    return 0
+  fi
+  trap release_lock EXIT
+  if [ -n "$(live_pid)" ]; then
+    do_status
+    return 0
+  fi
+  # 前回の控えが残っていれば「落ちた」。無ければ（繋ぐを押したが立たなかった
+  # など）ただの繋ぎ直し。どちらも数に入れる — 立たないものを回し続けないため。
+  CRASHED="$(dead_pid)"
+  if [ "$(recent_restarts)" -ge "${RESTART_LIMIT}" ]; then
+    echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] auto-restore halted (${RESTART_LIMIT} in ${RESTART_WINDOW}s)" >>"${LOG}"
+    note_event "halted"
+    /bin/rm -f "${STATE}" "${URL_FILE}"
+    do_status
+    return 0
+  fi
+  /bin/date '+%s' >>"${RESTARTS}"
+  /bin/rm -f "${STATE}"
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] auto-restore (previous pid ${CRASHED:-none})" >>"${LOG}"
+  if ! launch_session "${CLAUDE}"; then
+    note_event "failed"
+  elif [ -n "${CRASHED}" ]; then
+    note_event "restored"
+  else
+    note_event "started"
+  fi
+  do_status
+}
+
 case "${1:-status}" in
   start)  do_start ;;
   stop)   do_stop ;;
   status) do_status ;;
-  *)      echo "使い方: mulmo-claude-remote start|stop|status" >&2; exit 1 ;;
+  ensure) do_ensure ;;
+  *)      echo "使い方: mulmo-claude-remote start|stop|status|ensure" >&2; exit 1 ;;
 esac
