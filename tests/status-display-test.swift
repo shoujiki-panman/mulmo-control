@@ -71,7 +71,8 @@ private struct AgentCase {
 /// 状態 × 入口の有無。表を手で並べず、軸から組み立てる。1行消すと落ちる。
 private func agentCases() -> [AgentCase] {
     var built: [AgentCase] = []
-    for state in ["online", "taken", "offline", "untrusted", "error", "no-cli", "no-dir"] {
+    // halted = 何度も落ちたので自動の繋ぎ直しを止めた（Issue #212）
+    for state in ["online", "taken", "offline", "untrusted", "error", "no-cli", "no-dir", "halted"] {
         for hasURL in [true, false] {
             let button: String?
             // taken = 別のアプリが枠を取っている。押しても弾かれるだけなので出さない
@@ -89,13 +90,59 @@ private func agentCases() -> [AgentCase] {
                 state: state, hasURL: hasURL, expectedButton: button,
                 expectedCodexButton: codexButton,
                 expectedOK: state == "online" || state == "taken",
-                expectedCanStop: state == "online" || state == "error"
+                // halted は動いていないが「繋いでおきたい」を覚えている。
+                // 取り下げる口が無いと、止まった表示のまま消せない。
+                expectedCanStop: state == "online" || state == "error" || state == "halted"
             ))
         }
     }
     return built
 }
 
+
+/// Claude Code の行の下に出す知らせ（Issue #212）。
+///
+/// 判断に効く入力は4つ: 繋いでおきたいか / 最後に起きたこと / 状態（未信頼か）/
+/// ログイン時に起動するか。意味のある組み合わせを並べる。
+private struct NoteCase {
+    let title: String
+    let state: String
+    let want: Bool?
+    let event: String?
+    let launchAtLogin: Bool
+    let expected: [String]
+}
+
+private let loginHint = "Mac を再起動すると切れたままになります。戻すには上の「Mulmo Control を自動で起動」をオンに"
+
+private let noteCases: [NoteCase] = [
+    NoteCase(title: "止めた人には何も言わない（落ちた記録が残っていても）",
+             state: "offline", want: false, event: "restored", launchAtLogin: false, expected: []),
+    NoteCase(title: "古い版が書いた控え（want が無い）には何も言わない",
+             state: "online", want: nil, event: nil, launchAtLogin: false, expected: []),
+    NoteCase(title: "繋いだまま何も起きていない",
+             state: "online", want: true, event: "", launchAtLogin: true, expected: []),
+    NoteCase(title: "落ちたので繋ぎ直した",
+             state: "online", want: true, event: "restored", launchAtLogin: true,
+             expected: ["落ちたので 9/23 14:05 に繋ぎ直しました"]),
+    NoteCase(title: "控えが無いところから自動で繋いだ",
+             state: "online", want: true, event: "started", launchAtLogin: true,
+             expected: ["9/23 14:05 に自動で繋ぎました"]),
+    NoteCase(title: "繋ぎ直そうとしたが立たなかった",
+             state: "offline", want: true, event: "failed", launchAtLogin: true,
+             expected: ["9/23 14:05 に繋ぎ直そうとしましたが、立ち上がりませんでした"]),
+    NoteCase(title: "何度も落ちたので止めた",
+             state: "halted", want: true, event: "halted", launchAtLogin: true,
+             expected: ["何度も落ちるので、自動の繋ぎ直しを止めました（9/23 14:05）。「繋ぐ」で再開します"]),
+    NoteCase(title: "未信頼のフォルダは自動では踏まない",
+             state: "untrusted", want: true, event: nil, launchAtLogin: true,
+             expected: ["初回の確認が済むまで、自動では繋ぎ直しません"]),
+    NoteCase(title: "ログイン時に起動しないなら、再起動後は戻らないと言う",
+             state: "online", want: true, event: nil, launchAtLogin: false, expected: [loginHint]),
+    NoteCase(title: "落ちた記録とログインの注意は両方出す",
+             state: "online", want: true, event: "restored", launchAtLogin: false,
+             expected: ["落ちたので 9/23 14:05 に繋ぎ直しました", loginHint]),
+]
 
 /// 「前回の更新」のあらまし（Issue #183）。記録の形ごとに、行に出る1行を見る。
 private struct DigestCase {
@@ -238,8 +285,8 @@ struct StatusDisplayTest {
         }
         // ③ エージェントのスマホ連携（Issue #160）
         let agents = agentCases()
-        if agents.count != 14 {
-            FileHandle.standardError.write(Data("エージェント連携の組み合わせが14通りありません\n".utf8))
+        if agents.count != 16 {
+            FileHandle.standardError.write(Data("エージェント連携の組み合わせが16通りありません\n".utf8))
             failures += 1
         }
         for item in agents {
@@ -272,7 +319,22 @@ struct StatusDisplayTest {
             }
         }
 
-        // ④ 「前回の更新」のあらまし（Issue #183）
+        // ④ 自動の繋ぎ直しの知らせ（Issue #212）
+        for item in noteCases {
+            let status = AgentRemote(
+                state: item.state, detail: "", url: nil, pairCode: nil,
+                want: item.want, event: item.event,
+                eventAt: item.event == nil ? nil : "9/23 14:05"
+            )
+            let notes = claudeRemoteNotes(status, launchAtLogin: item.launchAtLogin)
+            if notes != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  \(item.title): 知らせの期待 \(item.expected) / 実際 \(notes)\n".utf8))
+            }
+        }
+
+        // ⑤ 「前回の更新」のあらまし（Issue #183）
         for item in digestCases {
             let digest = lastUpdateDigest(item.report)
             if digest.headline != item.headline {
@@ -291,6 +353,6 @@ struct StatusDisplayTest {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
     }
 }

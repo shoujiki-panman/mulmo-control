@@ -49,10 +49,13 @@ struct RemoteHostStatus: Decodable {
 /// 入口の URL が出る。Codex は **Mac に1つのデーモン**で、URL は無く、代わりに
 /// ペアリングコードで端末を繋ぐ。違うのはそこだけなので、状態は1つの形で持つ。
 struct AgentRemote: Decodable {
-    /// online / taken / offline / untrusted / error / no-cli / no-dir
+    /// online / taken / offline / untrusted / error / no-cli / no-dir / halted
     ///
     /// taken = 別のアプリが枠を取っている（Issue #164）。繋がってはいるので
     /// 使えるが、こちらから繋ぐ先は無い。
+    ///
+    /// halted = 何度も落ちたので、自動の繋ぎ直しを止めた（Issue #212）。
+    /// Claude Code 側だけ。「繋ぐ」を押せば再開する。
     let state: String
     /// 画面に出す説明。作るのはスクリプト側（スマホ連携の2行と同じやり方）。
     let detail: String
@@ -60,6 +63,15 @@ struct AgentRemote: Decodable {
     let url: String?
     /// Codex 側だけ。短命なペアリングコード。
     let pairCode: String?
+    /// Claude Code 側だけ（Issue #212）。「繋いでおきたい」と言われているか。
+    /// 押したのは人で、止めるまで Mulmo Control が立て直し続ける。
+    var want: Bool? = nil
+    /// 自動の繋ぎ直しで最後に起きたこと。restored（落ちたので繋ぎ直した）/
+    /// started（控えが無いところから繋いだ）/ failed（立ち上がらなかった）/
+    /// halted（何度も落ちたので止めた）/ 空。
+    var event: String? = nil
+    /// その時刻（`9/23 14:05`）。書くのはスクリプト側。
+    var eventAt: String? = nil
 
     /// Optional にしてあるのは、片方にしか無い項目だから。非 Optional にすると
     /// 項目が1つ足りないだけで復号ごと失敗し、画面が「未確認」に落ちる。
@@ -95,8 +107,48 @@ func codexButtonTitle(_ status: AgentRemote) -> String? {
 }
 
 /// 止める口を出してよいか。動いているものにしか出さない。
+///
+/// halted（自動の繋ぎ直しを止めた）にも出す。動いてはいないが、**「繋いで
+/// おきたい」はまだ覚えている**ので、それを取り下げる口が要る（Issue #212）。
 func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
-    status.state == "online" || status.state == "error"
+    status.state == "online" || status.state == "error" || status.state == "halted"
+}
+
+/// Claude Code の行の下に出す知らせ（Issue #212）。
+///
+/// 自動で繋ぎ直したことは、**言わなければ誰にも分からない**。スマホから
+/// 繋がっているように見えても、それが1時間前に落ちて立て直した2本目なのか、
+/// ずっと同じ1本なのかは、画面に出さない限り区別がつかない。
+///
+/// 行の説明は12文字まで（131）なので、ここは行の下に別に出す。
+/// 「繋いでおきたい」と言われていないときは何も出さない（止めた人に、
+/// 止めたものの話をしない）。
+func claudeRemoteNotes(_ status: AgentRemote, launchAtLogin: Bool) -> [String] {
+    guard status.want == true else { return [] }
+    var notes: [String] = []
+    let at = status.eventAt ?? ""
+    switch status.event ?? "" {
+    case "restored":
+        notes.append("落ちたので \(at) に繋ぎ直しました")
+    case "started":
+        notes.append("\(at) に自動で繋ぎました")
+    case "failed":
+        notes.append("\(at) に繋ぎ直そうとしましたが、立ち上がりませんでした")
+    case "halted":
+        notes.append("何度も落ちるので、自動の繋ぎ直しを止めました（\(at)）。「繋ぐ」で再開します")
+    default:
+        break
+    }
+    // 信頼確認は人が踏むもの。自動では踏まないので、踏むまで戻らないと言う。
+    if status.state == "untrusted" {
+        notes.append("初回の確認が済むまで、自動では繋ぎ直しません")
+    }
+    // 再起動のあと立て直すのは Mulmo Control 自身。ログイン時に起動して
+    // いなければ、立て直す者が居ない。
+    if !launchAtLogin {
+        notes.append("Mac を再起動すると切れたままになります。戻すには上の「Mulmo Control を自動で起動」をオンに")
+    }
+    return notes
 }
 
 /// 使える状態か。`taken` は他所が繋いでいるが、スマホからは使える。
