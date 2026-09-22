@@ -49,13 +49,16 @@ struct RemoteHostStatus: Decodable {
 /// 入口の URL が出る。Codex は **Mac に1つのデーモン**で、URL は無く、代わりに
 /// ペアリングコードで端末を繋ぐ。違うのはそこだけなので、状態は1つの形で持つ。
 struct AgentRemote: Decodable {
-    /// online / taken / offline / untrusted / error / no-cli / no-dir / halted
+    /// online / taken / offline / untrusted / error / no-cli / no-dir / halted / crashed
     ///
     /// taken = 別のアプリが枠を取っている（Issue #164）。繋がってはいるので
     /// 使えるが、こちらから繋ぐ先は無い。
     ///
     /// halted = 何度も落ちたので、自動の繋ぎ直しを止めた（Issue #212）。
     /// Claude Code 側だけ。「繋ぐ」を押せば再開する。
+    ///
+    /// crashed = 繋いでおきたいのに落ちていて、次の自動の繋ぎ直しを待っている
+    /// （Issue #212 / 177）。
     let state: String
     /// 画面に出す説明。作るのはスクリプト側（スマホ連携の2行と同じやり方）。
     let detail: String
@@ -108,10 +111,11 @@ func codexButtonTitle(_ status: AgentRemote) -> String? {
 
 /// 止める口を出してよいか。動いているものにしか出さない。
 ///
-/// halted（自動の繋ぎ直しを止めた）にも出す。動いてはいないが、**「繋いで
-/// おきたい」はまだ覚えている**ので、それを取り下げる口が要る（Issue #212）。
+/// halted（自動の繋ぎ直しを止めた）と crashed（落ちて繋ぎ直し待ち）にも出す。
+/// 動いてはいないが、**「繋いでおきたい」はまだ覚えている**ので、それを
+/// 取り下げる口が要る（Issue #212）。
 func agentRemoteCanStop(_ status: AgentRemote) -> Bool {
-    status.state == "online" || status.state == "error" || status.state == "halted"
+    ["online", "error", "halted", "crashed"].contains(status.state)
 }
 
 /// Claude Code の行の下に出す知らせ（Issue #212）。
@@ -127,7 +131,11 @@ func claudeRemoteNotes(_ status: AgentRemote, launchAtLogin: Bool) -> [String] {
     guard status.want == true else { return [] }
     var notes: [String] = []
     let at = status.eventAt ?? ""
-    switch status.event ?? "" {
+    // 落ちて繋ぎ直し待ち。前回の記録（「繋ぎ直しました」）は今の話ではないので出さない。
+    let event = status.state == "crashed" ? "crashed" : (status.event ?? "")
+    switch event {
+    case "crashed":
+        notes.append("落ちました。自動で繋ぎ直します")
     case "restored":
         notes.append("落ちたので \(at) に繋ぎ直しました")
     case "started":

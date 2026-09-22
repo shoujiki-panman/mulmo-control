@@ -72,7 +72,8 @@ private struct AgentCase {
 private func agentCases() -> [AgentCase] {
     var built: [AgentCase] = []
     // halted = 何度も落ちたので自動の繋ぎ直しを止めた（Issue #212）
-    for state in ["online", "taken", "offline", "untrusted", "error", "no-cli", "no-dir", "halted"] {
+    // crashed = 落ちて、次の自動の繋ぎ直しを待っている（Issue #212 / 177）
+    for state in ["online", "taken", "offline", "untrusted", "error", "no-cli", "no-dir", "halted", "crashed"] {
         for hasURL in [true, false] {
             let button: String?
             // taken = 別のアプリが枠を取っている。押しても弾かれるだけなので出さない
@@ -90,9 +91,9 @@ private func agentCases() -> [AgentCase] {
                 state: state, hasURL: hasURL, expectedButton: button,
                 expectedCodexButton: codexButton,
                 expectedOK: state == "online" || state == "taken",
-                // halted は動いていないが「繋いでおきたい」を覚えている。
+                // halted / crashed は動いていないが「繋いでおきたい」を覚えている。
                 // 取り下げる口が無いと、止まった表示のまま消せない。
-                expectedCanStop: state == "online" || state == "error" || state == "halted"
+                expectedCanStop: ["online", "error", "halted", "crashed"].contains(state)
             ))
         }
     }
@@ -134,6 +135,9 @@ private let noteCases: [NoteCase] = [
     NoteCase(title: "何度も落ちたので止めた",
              state: "halted", want: true, event: "halted", launchAtLogin: true,
              expected: ["何度も落ちるので、自動の繋ぎ直しを止めました（9/23 14:05）。「繋ぐ」で再開します"]),
+    NoteCase(title: "落ちて繋ぎ直し待ち（前回の「繋ぎ直しました」は出さない）",
+             state: "crashed", want: true, event: "restored", launchAtLogin: true,
+             expected: ["落ちました。自動で繋ぎ直します"]),
     NoteCase(title: "未信頼のフォルダは自動では踏まない",
              state: "untrusted", want: true, event: nil, launchAtLogin: true,
              expected: ["初回の確認が済むまで、自動では繋ぎ直しません"]),
@@ -285,8 +289,8 @@ struct StatusDisplayTest {
         }
         // ③ エージェントのスマホ連携（Issue #160）
         let agents = agentCases()
-        if agents.count != 16 {
-            FileHandle.standardError.write(Data("エージェント連携の組み合わせが16通りありません\n".utf8))
+        if agents.count != 18 {
+            FileHandle.standardError.write(Data("エージェント連携の組み合わせが18通りありません\n".utf8))
             failures += 1
         }
         for item in agents {

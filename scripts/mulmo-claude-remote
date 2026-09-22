@@ -239,6 +239,13 @@ do_status() {
     write_status "halted" "何度も落ちました"
     return 0
   fi
+  # 繋いでおきたいのに、控えた pid が居ない（落ちた・再起動で消えた）。次の
+  # ensure が立て直すまでの間に出る。「まだ繋いでいません」は、一度も繋いで
+  # いないように読める（Issue #212 / 177）。
+  if wanted && [ -n "$(dead_pid)" ]; then
+    write_status "crashed" "落ちました"
+    return 0
+  fi
   write_status "offline" "まだ繋いでいません"
 }
 
