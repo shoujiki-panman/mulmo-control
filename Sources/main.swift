@@ -134,6 +134,13 @@ private let claudeRemotePath = "\(logDir)/claude-remote.json"
 /// 呼ぶためにシェルを起こさない）。
 private let claudeRemoteWantPath = "\(homeDir)/Library/Application Support/Mulmo Control/claude-remote-want"
 private let codexRemotePath = "\(logDir)/codex-remote.json"
+/// リレーの状態（Issue #214）。書くのは `mulmo-relay`（`relay doctor --json` を畳んだもの）。
+private let relayStatusPath = "\(logDir)/relay.json"
+/// `relay` コマンドの在り処の候補。`mulmo-relay` の PATH と同じ並び。
+/// 画面はここにあるかを見るだけで、無い人のためにシェルを起こさない（#38）。
+/// シェルに渡す文字列ではなくファイルを見るだけのパスなので、`bin()`（引用符つき）は
+/// 使わず、パスとして繋ぐ（#32 の検査が見ているのは埋め込み）。
+private let relayCandidates = [(localBin as NSString).appendingPathComponent("relay"), "/usr/local/bin/relay", "/opt/homebrew/bin/relay"]
 private let lastUpdateReportPath = "\(logDir)/mulmo-control-last-update.txt"
 /// 更新スクリプトが「なぜ版が変わらなかったか」を書き置く場所。
 /// 以前は「ログを見てください」で終わっていて、利用者には何も分からなかった（Issue #46）。
@@ -551,6 +558,9 @@ final class ControlModel: ObservableObject {
     @Published var mcRemoteHost = readRemoteHostStatus(mcRemoteHostPath)
     @Published var claudeRemote = readAgentRemote(claudeRemotePath)
     @Published var codexRemote = readAgentRemote(codexRemotePath)
+    /// `relay` がある人にだけ、リレーの行を出す（Issue #214）。
+    @Published var relayInstalled = relayCommandExists()
+    @Published var relay = readRelayStatus(relayStatusPath)
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
@@ -624,6 +634,8 @@ final class ControlModel: ObservableObject {
         // Mac を再起動したあと、スマホ連携（Claude Code）を立て直すのはここ
         // （Issue #212）。ログイン時に起動していないと、ここが走らない。
         ensureClaudeRemoteIfDue(force: true)
+        // トンネルや受け口が再起動のあと止まっていたら、ここで起こす（Issue #214）。
+        ensureRelayIfDue(force: true)
         scheduleTimer()
     }
 
@@ -639,6 +651,8 @@ final class ControlModel: ObservableObject {
         if open {
             refresh()
             refreshLightChecks()
+            // 開いたときは最新を見せる。間隔は待たない（見ている人がいる）。
+            ensureRelayIfDue(force: true)
         }
     }
 
@@ -797,6 +811,9 @@ final class ControlModel: ObservableObject {
         claudeRemote = readAgentRemote(claudeRemotePath)
         codexRemote = readAgentRemote(codexRemotePath)
         ensureClaudeRemoteIfDue()
+        relayInstalled = relayCommandExists()
+        relay = readRelayStatus(relayStatusPath)
+        ensureRelayIfDue()
         notifyIfNeeded(for: updates.items)
         notifySelfUpdateIfNeeded(selfUpdate)
         notifyClaudeLoginIfNeeded(claudeLogin)
@@ -963,6 +980,43 @@ final class ControlModel: ObservableObject {
                 self.claudeRemote = readAgentRemote(claudeRemotePath)
             }
         }
+    }
+
+    /// リレーを見に行く間隔（Issue #214）。
+    ///
+    /// `relay doctor` は node を1本立て、外への到達も1回確かめる。巡回（閉じて
+    /// いる間 60 秒）のたびに走らせると #38 に戻るので、5分に1回だけ。止まっても
+    /// 長くて5分で起こす。スクリプト側の連鎖止め（30分に3回）はこの間隔が前提。
+    private static let relayEnsureInterval: TimeInterval = 300
+    private var lastRelayEnsure = Date.distantPast
+    private var relayEnsuring = false
+
+    /// 落ちていたら起こす。起こすかどうかの判断はすべてスクリプト（`ensure`）と
+    /// `relay doctor` が持つ。ここは呼ぶ間隔だけ。
+    private func ensureRelayIfDue(force: Bool = false) {
+        guard !relayEnsuring, relayInstalled else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastRelayEnsure) >= Self.relayEnsureInterval else { return }
+        lastRelayEnsure = now
+        relayEnsuring = true
+        let command = "\(tool("mulmo-relay")) ensure"
+        Task.detached { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            try? process.run()
+            process.waitUntilExit()
+            await MainActor.run {
+                guard let self else { return }
+                self.relayEnsuring = false
+                self.relay = readRelayStatus(relayStatusPath)
+            }
+        }
+    }
+
+    /// 「直す」「確かめる」「再開」。押したのは人なので、止めていた自動の修理も再開する。
+    func fixRelay() {
+        run("\(tool("mulmo-relay")) fix", label: "リレーを確かめ直しています")
     }
 
     func startCodexRemote() {
@@ -2886,6 +2940,23 @@ struct SetupPanel: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // リレー（Issue #214）。relay コマンドがある人にだけ出す。
+                if model.relayInstalled {
+                    SetupRow(
+                        title: "リレー",
+                        detail: model.relay.detail,
+                        ok: relayOK(model.relay),
+                        buttonTitle: relayButtonTitle(model.relay),
+                        action: model.fixRelay
+                    )
+                    ForEach(relayNotes(model.relay, now: Date().timeIntervalSince1970), id: \.self) { note in
+                        Text(note)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             Hairline()
                 .padding(.vertical, 2)
@@ -3550,6 +3621,20 @@ func readAgentRemote(_ path: String) -> AgentRemote {
         return AgentRemote(state: "unknown", detail: "未確認", url: nil, pairCode: nil)
     }
     return status
+}
+
+/// リレーの状態を読む（Issue #214）。書き置きが無い・壊れているときは「未確認」に落とす。
+func readRelayStatus(_ path: String) -> RelayStatus {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let status = try? JSONDecoder().decode(RelayStatus.self, from: data) else {
+        return RelayStatus(state: "unknown", detail: "未確認")
+    }
+    return status
+}
+
+/// `relay` コマンドがあるか。ファイルを見るだけで、シェルは起こさない。
+func relayCommandExists() -> Bool {
+    relayCandidates.contains { FileManager.default.isExecutableFile(atPath: $0) }
 }
 
 func readClaudeLoginStatus() -> ClaudeLoginStatus {

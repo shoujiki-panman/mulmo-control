@@ -1865,7 +1865,7 @@ ok "ペアリングコードはログに残さない"
 # （`接続がエラーで…で確認が要ります` を実際に出した。#156 と同じ形）。
 #
 # 長さは目分量ではなく数えて止める。ここを通る文はすべてスクリプトが書く。
-DETAIL_LONG="$(AGENT_SCRIPTS="${CLAUDE_REMOTE} ${CODEX_REMOTE}" /usr/bin/python3 -c '
+DETAIL_LONG="$(AGENT_SCRIPTS="${CLAUDE_REMOTE} ${CODEX_REMOTE} ${ROOT}/scripts/mulmo-relay" /usr/bin/python3 -c '
 import os, re, sys
 limit = 12
 bad = []
@@ -2110,6 +2110,183 @@ grep -q 'tool("mulmo-claude-remote")) ensure' "${ROOT}/Sources/main.swift" \
 grep -q 'FileManager.default.fileExists(atPath: claudeRemoteWantPath)' "${ROOT}/Sources/main.swift" \
   || fail "希望の有無を見ずに ensure を起こしています。巡回のたびにシェルが立ちます（Issue #38 / #212 / 175）"
 ok "希望の置き場所が揃い、起動時と巡回から立て直す"
+
+
+# ── リレー（Issue #214）──────────────────────────────────────────
+# SECURITY.md の O 節（178〜184）。
+#
+# session-relay の常駐（受け口と Cloudflare Tunnel）が落ちていたら起こす。
+# **ここも綴りではなく、本物の `mulmo-relay` を偽の HOME と偽の relay で実際に
+# 走らせて見る。** 起こすかどうかは、落ちている項目・回数・止めたかの組み合わせで
+# 決まり、grep では組み合わせを見られないため。
+#
+# 偽の relay は `doctor --json [--fix]` にだけ答える。世界の状態をファイルで持ち、
+# 呼ばれた引数を控える。HOME の中に空白を入れてある（#32）。
+step "リレー"
+
+RELAY_SCRIPT="${ROOT}/scripts/mulmo-relay"
+[ -x "${RELAY_SCRIPT}" ] || fail "scripts/mulmo-relay がありません（Issue #214）"
+RL_HOME="$(mktemp -d "${TMPDIR:-/tmp}/mulmo relay XXXXXX")"
+RL_OUT="${RL_HOME}/Library/Logs/Mulmo Control/relay.json"
+RL_WORLD="${RL_HOME}/world"
+RL_CALLS="${RL_HOME}/calls"
+RL_FAKE="${RL_HOME}/bin dir/relay"
+mkdir -p "${RL_HOME}/bin dir"
+cat >"${RL_FAKE}" <<'FAKE'
+#!/usr/bin/python3
+# 偽の relay。world の1行目が tunnel の状態（up / down / missing / flap）、
+# 2行目が登録（ok / bad）。flap は --fix で一度戻るが、次に見るとまた落ちている。
+import json, os, sys
+home = os.environ["RL_HOME"]
+with open(os.path.join(home, "calls"), "a") as handle:
+    handle.write(" ".join(sys.argv[1:]) + "\n")
+with open(os.path.join(home, "world")) as handle:
+    tunnel, mcp = (handle.read().split() + ["up", "ok"])[:2]
+fixes = []
+if "--fix" in sys.argv and tunnel in ("down", "flap"):
+    fixes.append({"label": "example.tunnel", "reasons": ["tunnel-agent", "tunnel-reach"],
+                  "action": "kickstart", "ok": True, "at": "2026-09-24T00:00:00Z"})
+    if tunnel == "down":
+        tunnel = "up"
+        with open(os.path.join(home, "world"), "w") as handle:
+            handle.write("up %s\n" % mcp)
+    else:
+        tunnel = "up"  # この1回だけ戻って見える
+agent = {"up": ("ok", True), "down": ("down", False), "flap": ("down", False), "missing": ("missing", False)}[tunnel]
+checks = [
+    {"id": "claude-mcp", "name": "Claude CodeのMCP登録", "ok": mcp == "ok", "state": "ok" if mcp == "ok" else "missing", "detail": "", "hint": ""},
+    {"id": "tunnel-agent", "name": "トンネルの常駐（cloudflared）", "ok": agent[1], "state": agent[0], "detail": "", "hint": ""},
+]
+report = {"ok": all(c["ok"] for c in checks), "checkedAt": "", "checks": checks, "fixes": fixes}
+print(json.dumps(report, ensure_ascii=False))
+sys.exit(0 if report["ok"] else 1)
+FAKE
+chmod +x "${RL_FAKE}"
+
+rl() {
+  env -u MULMO_STATE_DIR HOME="${RL_HOME}" RL_HOME="${RL_HOME}" MULMO_RELAY="${RL_RELAY:-${RL_FAKE}}" \
+    "${RELAY_SCRIPT}" "$@" >/dev/null 2>&1 || true
+}
+rl_world() { print "$1 ${2:-ok}" >"${RL_WORLD}"; : >"${RL_CALLS}"; }
+rl_field() {
+  /usr/bin/python3 -c 'import json, sys
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2])
+except (OSError, ValueError):
+    value = None
+print("" if value is None else (" ".join(value) if isinstance(value, list) else value))' "${RL_OUT}" "$1"
+}
+rl_fixed() { grep -c -- '--fix' "${RL_CALLS}" 2>/dev/null || true; }
+trap 'rm -rf "${RL_HOME}"' EXIT
+
+# 178 relay が無い人には何もしない（行も出さない）。
+RL_RELAY="${RL_HOME}/nowhere/relay" rl ensure
+[ "$(rl_field state)" = "no-cli" ] || fail "relay が無いのに、無いと書いていません（state=$(rl_field state)。Issue #214 / 178）"
+grep -q 'if model.relayInstalled {' "${ROOT}/Sources/main.swift" \
+  || fail "relay が無い人にもリレーの行を出しています（Issue #214 / 178）"
+ENSURE_RELAY_BODY="$(awk '/private func ensureRelayIfDue/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${ENSURE_RELAY_BODY}" | grep -q 'guard !relayEnsuring, relayInstalled else { return }' \
+  || fail "relay が無い人のためにシェルを起こしています（Issue #38 / #214 / 178）"
+# 画面が探す場所と、スクリプトの PATH が揃っている。食い違うと、行は出るのに
+# スクリプトは「無い」と言う（または逆）。
+SWIFT_RELAY_DIRS="$(sed -n 's/^private let relayCandidates = \[\(.*\)\]$/\1/p' "${ROOT}/Sources/main.swift" \
+  | sed -e 's/(localBin as NSString)\.appendingPathComponent("relay")/~\/.local\/bin/' -e 's/\/relay"//g' -e 's/"//g' -e 's/, / /g')"
+SCRIPT_RELAY_DIRS="$(sed -n 's/^PATH="\${HOME}\/\.local\/bin:\([^:]*\):\([^:]*\):.*/~\/.local\/bin \1 \2/p' "${RELAY_SCRIPT}")"
+[ -n "${SWIFT_RELAY_DIRS}" ] && [ "${SWIFT_RELAY_DIRS}" = "${SCRIPT_RELAY_DIRS}" ] \
+  || fail "relay を探す場所が画面（${SWIFT_RELAY_DIRS:-なし}）とスクリプト（${SCRIPT_RELAY_DIRS:-なし}）で違います（Issue #214 / 178）"
+ok "relay が無い人には何もしない"
+
+# 179 落ちていたら自動で起こし、何をしたかが状態に残る。
+rl_world down
+rl ensure
+[ "$(rl_fixed)" = "1" ] || fail "落ちているのに ensure が relay doctor --fix を呼んでいません（Issue #214 / 179）"
+[ "$(rl_field state)" = "ok" ] || fail "起こしたあとの状態が戻っていません（state=$(rl_field state)。Issue #214 / 179）"
+[ "$(rl_field event)" = "fixed" ] || fail "起こしたことを状態に残していません（event=$(rl_field event)。Issue #214 / 179）"
+rl_field eventReasons | grep -q 'tunnel-agent' \
+  || fail "何を起こしたか（理由の項目）を状態に残していません（Issue #214 / 179）"
+[ -n "$(rl_field eventAt)" ] || fail "いつ起こしたかを状態に残していません（Issue #214 / 179）"
+rl_world up
+rl ensure
+[ "$(rl_fixed)" = "0" ] || fail "通っているのに relay doctor --fix を呼んでいます（Issue #214 / 179）"
+ok "落ちていたら起こし、何をしたかが状態に残る"
+
+# 181 起こしても直らない失敗では --fix を呼ばない（回し続けない）。
+rl_world up bad
+rl ensure
+[ "$(rl_fixed)" = "0" ] || fail "登録漏れだけなのに relay doctor --fix を呼んでいます（Issue #214 / 181）"
+[ "$(rl_field state)" = "warn" ] || fail "起こしても直らない失敗を warn にしていません（state=$(rl_field state)。Issue #214 / 181）"
+rl_world missing
+rl ensure
+[ "$(rl_fixed)" = "0" ] || fail "LaunchAgent が無い（起こす先が無い）のに --fix を呼んでいます（Issue #214 / 181）"
+ok "起こしても直らない失敗では --fix を呼ばない"
+
+# 180 短時間に何度も起こす羽目になるなら、自動をやめる。「直す」で再開する。
+FIX_LIMIT_VALUE="$(sed -n 's/^FIX_LIMIT=\([0-9][0-9]*\)$/\1/p' "${RELAY_SCRIPT}")"
+[ -n "${FIX_LIMIT_VALUE}" ] || fail "自動の修理の上限（FIX_LIMIT）が定数で置かれていません（Issue #214 / 180）"
+# 179 で1回起こした記録が窓の中に残っているので、数える前に捨てる。
+rm -rf "${RL_HOME}/Library/Application Support/Mulmo Control"
+rl_world flap
+RL_ROUND=1
+while [ "${RL_ROUND}" -le "${FIX_LIMIT_VALUE}" ]; do
+  rl ensure
+  RL_ROUND=$((RL_ROUND + 1))
+done
+[ "$(rl_fixed)" = "${FIX_LIMIT_VALUE}" ] \
+  || fail "上限（${FIX_LIMIT_VALUE}回）まで起こしていません（$(rl_fixed)回。Issue #214 / 180）"
+rl ensure
+rl ensure
+[ "$(rl_fixed)" = "${FIX_LIMIT_VALUE}" ] \
+  || fail "何度も落ちているのに起こし続けています（$(rl_fixed)回。Issue #214 / 180）"
+[ "$(rl_field state)" = "halted" ] || fail "自動をやめたことを状態に出していません（state=$(rl_field state)。Issue #214 / 180）"
+rl fix
+[ "$(rl_fixed)" = "$((FIX_LIMIT_VALUE + 1))" ] || fail "「直す」を押しても relay doctor --fix を呼んでいません（Issue #214 / 180）"
+[ "$(rl_field event)" = "halted" ] && fail "「直す」を押しても、自動をやめたままです（Issue #214 / 180）"
+rl ensure
+[ "$(rl_fixed)" = "$((FIX_LIMIT_VALUE + 2))" ] || fail "「直す」のあと、自動の修理が再開していません（Issue #214 / 180）"
+ok "何度も落ちるなら ${FIX_LIMIT_VALUE} 回でやめ、「直す」で再開する"
+
+# 184 `relay doctor --json` を知らない古い relay でも、行が壊れない。
+#
+# 古い relay は --json を読み飛ばして文字で答える。そこで「確かめられません」＋
+# 「確かめる」にすると、押しても同じ答えが返るだけのボタンになる。
+RL_OLD="${RL_HOME}/old dir/relay"
+mkdir -p "${RL_HOME}/old dir"
+printf '#!/bin/zsh\nprint "✅ 投函口（127.0.0.1:8788）"\nprint "ぜんぶ通っています"\n' >"${RL_OLD}"
+chmod +x "${RL_OLD}"
+RL_RELAY="${RL_OLD}" rl ensure
+[ "$(rl_field state)" = "old" ] || fail "古い relay の答えを old にしていません（state=$(rl_field state)。Issue #214 / 184）"
+RL_RELAY="${RL_OLD}" rl fix
+[ "$(rl_field state)" = "old" ] || fail "古い relay で「直す」を押すと、行が壊れます（state=$(rl_field state)。Issue #214 / 184）"
+ok "古い relay でも行が壊れない"
+
+rm -rf "${RL_HOME}"
+trap - EXIT
+
+# 182 リレーの知らせとボタンが、状態ごとに対応表どおり出る。
+#
+# 対応表は「状態と表示の対応」が実際に走らせている。ここでは、その表が検査から
+# 消えていないことと、画面がその1本を通っていることを見る（133・176 と同じ形）。
+printf '%s\n' "${DISPLAY_OUT}" | grep -q 'リレーの行' \
+  || fail "リレーの行の対応表を検査で走らせていません（Issue #214 / 182）"
+for RL_CALL in 'relayOK(model.relay)' 'relayButtonTitle(model.relay)' 'relayNotes(model.relay, now:'; do
+  grep -qF "${RL_CALL}" "${ROOT}/Sources/main.swift" \
+    || fail "リレーの行が対応表（${RL_CALL}）を通っていません（Issue #214 / 182）"
+done
+ok "リレーの知らせとボタンは対応表が決める"
+
+# 183 起動時と巡回とパネルを開いたときに ensure を呼び、書き置きの場所が揃っている。
+INIT_BODY="$(awk '/^    init\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${INIT_BODY}" | grep -q 'ensureRelayIfDue(force: true)' \
+  || fail "アプリの起動時にリレーを見ていません。再起動のあと止まったままです（Issue #214 / 183）"
+REFRESH_BODY="$(awk '/^    func refresh\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${REFRESH_BODY}" | grep -q 'ensureRelayIfDue()' \
+  || fail "巡回からリレーを見ていません。外出先で止まったら戻りません（Issue #214 / 183）"
+grep -q 'tool("mulmo-relay")) ensure' "${ROOT}/Sources/main.swift" \
+  || fail "リレーの ensure をアプリの中の写しから呼んでいません（Issue #32 / #214 / 183）"
+grep -q 'private let relayStatusPath = "\\(logDir)/relay.json"' "${ROOT}/Sources/main.swift" \
+  && grep -q 'OUT="${LOG_DIR}/relay.json"' "${RELAY_SCRIPT}" \
+  || fail "リレーの書き置きの場所が画面とスクリプトで違います（Issue #214 / 183）"
+ok "起動時・巡回・パネルを開いたときにリレーを見る"
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
