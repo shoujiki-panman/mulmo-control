@@ -49,7 +49,11 @@ DOCTOR_TIMEOUT=90
 
 # 直せる項目（relay doctor の id）。登録漏れなどは起こしても直らないので、
 # ここに無い項目が落ちているだけなら --fix は呼ばない（回し続けない）。
-FIXABLE="deposit tunnel-agent tunnel-reach"
+#
+# tunnel-ready は接続の本数（cloudflared の /ready）。常駐は動いているのに接続だけ
+# 0本の形を捕まえる（Issue #216）。未確認（本数を決められない）は ok 扱いで届くので、
+# 下の state == "down" の条件で起こさない。
+FIXABLE="deposit tunnel-agent tunnel-ready tunnel-reach"
 
 mkdir -p "${LOG_DIR}" "${STATE_DIR}"
 

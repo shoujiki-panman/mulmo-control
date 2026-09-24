@@ -2113,7 +2113,7 @@ ok "希望の置き場所が揃い、起動時と巡回から立て直す"
 
 
 # ── リレー（Issue #214）──────────────────────────────────────────
-# SECURITY.md の O 節（178〜184）。
+# SECURITY.md の O 節（178〜186）。
 #
 # session-relay の常駐（受け口と Cloudflare Tunnel）が落ちていたら起こす。
 # **ここも綴りではなく、本物の `mulmo-relay` を偽の HOME と偽の relay で実際に
@@ -2134,8 +2134,10 @@ RL_FAKE="${RL_HOME}/bin dir/relay"
 mkdir -p "${RL_HOME}/bin dir"
 cat >"${RL_FAKE}" <<'FAKE'
 #!/usr/bin/python3
-# 偽の relay。world の1行目が tunnel の状態（up / down / missing / flap）、
+# 偽の relay。world の1行目が tunnel の状態（up / down / missing / flap / noconn / noready）、
 # 2行目が登録（ok / bad）。flap は --fix で一度戻るが、次に見るとまた落ちている。
+# noconn は常駐は動いているのに接続が0本（tunnel-ready が down）、noready は接続の
+# 本数を確かめられない（tunnel-ready が未確認＝ ok 扱い）。
 import json, os, sys
 home = os.environ["RL_HOME"]
 with open(os.path.join(home, "calls"), "a") as handle:
@@ -2143,19 +2145,23 @@ with open(os.path.join(home, "calls"), "a") as handle:
 with open(os.path.join(home, "world")) as handle:
     tunnel, mcp = (handle.read().split() + ["up", "ok"])[:2]
 fixes = []
-if "--fix" in sys.argv and tunnel in ("down", "flap"):
-    fixes.append({"label": "example.tunnel", "reasons": ["tunnel-agent", "tunnel-reach"],
+if "--fix" in sys.argv and tunnel in ("down", "flap", "noconn"):
+    reasons = ["tunnel-ready"] if tunnel == "noconn" else ["tunnel-agent", "tunnel-reach"]
+    fixes.append({"label": "example.tunnel", "reasons": reasons,
                   "action": "kickstart", "ok": True, "at": "2026-09-24T00:00:00Z"})
-    if tunnel == "down":
+    if tunnel in ("down", "noconn"):
         tunnel = "up"
         with open(os.path.join(home, "world"), "w") as handle:
             handle.write("up %s\n" % mcp)
     else:
         tunnel = "up"  # この1回だけ戻って見える
-agent = {"up": ("ok", True), "down": ("down", False), "flap": ("down", False), "missing": ("missing", False)}[tunnel]
+agent = {"up": ("ok", True), "down": ("down", False), "flap": ("down", False), "missing": ("missing", False),
+         "noconn": ("ok", True), "noready": ("ok", True)}[tunnel]
+ready = {"noconn": ("down", False), "noready": ("unknown", True)}.get(tunnel, ("ok", True))
 checks = [
     {"id": "claude-mcp", "name": "Claude CodeのMCP登録", "ok": mcp == "ok", "state": "ok" if mcp == "ok" else "missing", "detail": "", "hint": ""},
     {"id": "tunnel-agent", "name": "トンネルの常駐（cloudflared）", "ok": agent[1], "state": agent[0], "detail": "", "hint": ""},
+    {"id": "tunnel-ready", "name": "トンネルの接続（cloudflared）", "ok": ready[1], "state": ready[0], "detail": "", "hint": ""},
 ]
 report = {"ok": all(c["ok"] for c in checks), "checkedAt": "", "checks": checks, "fixes": fixes}
 print(json.dumps(report, ensure_ascii=False))
@@ -2219,6 +2225,30 @@ rl_world missing
 rl ensure
 [ "$(rl_fixed)" = "0" ] || fail "LaunchAgent が無い（起こす先が無い）のに --fix を呼んでいます（Issue #214 / 181）"
 ok "起こしても直らない失敗では --fix を呼ばない"
+
+# 185 常駐は動いているのに接続だけ0本（tunnel-ready が down）でも、起こす（Issue #216）。
+#
+# 常駐は running、外からは 401 が返るので、他の項目は全部通っている。直せる項目の
+# 一覧に tunnel-ready が無いと「起こしても直らない失敗」と読み、一番捕まえたい形で
+# 起こさない。
+rm -rf "${RL_HOME}/Library/Application Support/Mulmo Control"
+rl_world noconn
+rl ensure
+[ "$(rl_fixed)" = "1" ] || fail "接続が0本なのに relay doctor --fix を呼んでいません（Issue #216 / 185）"
+[ "$(rl_field state)" = "ok" ] || fail "接続0本から起こしたあとの状態が戻っていません（state=$(rl_field state)。Issue #216 / 185）"
+rl_field eventReasons | grep -q 'tunnel-ready' \
+  || fail "接続0本で起こしたことを状態に残していません（Issue #216 / 185）"
+ok "接続だけ落ちていても起こす"
+
+# 186 接続の本数を確かめられない（未確認）ときは起こさない（Issue #216）。
+#
+# 未確認は「落ちている」ではない。別の cloudflared を拾わないよう relay 側が
+# 決められなかっただけなので、kickstart で繋がっている接続を切り直さない。
+rl_world noready
+rl ensure
+[ "$(rl_fixed)" = "0" ] || fail "接続の本数が未確認なだけで relay doctor --fix を呼んでいます（Issue #216 / 186）"
+[ "$(rl_field state)" = "ok" ] || fail "接続の本数が未確認なだけで、通っていないと言っています（state=$(rl_field state)。Issue #216 / 186）"
+ok "接続の本数が未確認なだけでは起こさない"
 
 # 180 短時間に何度も起こす羽目になるなら、自動をやめる。「直す」で再開する。
 FIX_LIMIT_VALUE="$(sed -n 's/^FIX_LIMIT=\([0-9][0-9]*\)$/\1/p' "${RELAY_SCRIPT}")"
