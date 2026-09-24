@@ -67,6 +67,48 @@ fail() {
 
 "${SCRIPT_DIR}/mulmoclaude-stop" >>"${LOG}" 2>&1 || true
 
+# 依存のロックファイル。ぶつかったら更新後（HEAD）の側を採ってよい。
+# 後段の yarn install が作り直すので、どちらの形でも最後は同じところに着く
+# （Issue #218）。場所はリポジトリの直下だけ。下の階層のロックは
+# yarn install が作り直すとは限らないので、ここに入れない。
+LOCKFILES=(yarn.lock package-lock.json pnpm-lock.yaml)
+
+# 未解決のファイルがロックファイルだけなら、HEAD の側にそろえて 0 を返す。
+# ロック以外が1つでも残っていれば、何も触らずに 1 を返す。本人の変更を
+# 黙って片側に寄せないため（Issue #218）。
+# 呼んだあと、そろえたロックは LOCKS_TAKEN、残ったものは UNMERGED_OTHERS に入る。
+take_head_lockfiles() {
+  local f
+  local -a locks others
+  for f in ${(f)"$(/usr/bin/git -c core.quotePath=false diff --name-only --diff-filter=U 2>/dev/null)"}; do
+    if (( ${LOCKFILES[(Ie)${f}]} )); then locks+=("${f}"); else others+=("${f}"); fi
+  done
+  LOCKS_TAKEN="${locks[*]}"
+  UNMERGED_OTHERS="${others[*]}"
+  [ ${#others} = 0 ] || return 1
+  [ ${#locks} = 0 ] && return 0
+  /usr/bin/git checkout HEAD -- "${locks[@]}" >>"${LOG}" 2>&1 && return 0
+  # そろえられなかったロックは、残ったものとして名前を出す。
+  UNMERGED_OTHERS="${LOCKS_TAKEN}"
+  LOCKS_TAKEN=""
+  return 1
+}
+
+# 前回の更新でぶつかったまま残ったファイルがあると、下の git stash push が
+# `could not write index` / `needs merge` で落ち、「退避できなかった」とだけ
+# 言って止まる。直さない限り毎回そうなる。実際、stash pop が yarn.lock の
+# 1行でぶつかった次の日から、更新が4回続けてそこで止まった（Issue #218）。
+# 理由からは何がぶつかっているのか分からず、抜けるにはターミナルが要った。
+#
+# ロックだけなら退避の前にそろえて続ける。ロック以外は本人の変更なので
+# 触らず、名前を出して止まる。
+if ! take_head_lockfiles; then
+  fail "MulmoClaude: 前回の更新でぶつかったままのファイルがあるので、更新を中止しました: ${UNMERGED_OTHERS}"
+fi
+if [ -n "${LOCKS_TAKEN}" ]; then
+  echo "MulmoClaude: 前回の更新でぶつかったままだった ${LOCKS_TAKEN} を、更新後の形にそろえてから続けます" | tee -a "${LOG}"
+fi
+
 # MulmoClaude は普通に使っているだけで CLAUDE.md や .claude/settings.json が
 # 書き換わる。放っておくと git pull が必ず止まるので、退避はこちらで面倒を見る。
 # ターミナルを開かせないのがこのアプリの役目なので、ここで git stash を求めない。
@@ -95,6 +137,13 @@ restore_stash() {
   STASHED=0
   if /usr/bin/git stash pop >>"${LOG}" 2>&1; then
     echo "MulmoClaude: 退避した変更を戻しました" | tee -a "${LOG}"
+    return 0
+  fi
+  # ぶつかったのがロックファイルだけなら、更新後の側を採って先へ進む。
+  # 止めると、未解決のロックが残って次の更新が退避から落ちる（Issue #218）。
+  # stash pop はぶつかると stash を消さないので、前の中身はそこに残る。
+  if take_head_lockfiles && [ -n "${LOCKS_TAKEN}" ]; then
+    echo "MulmoClaude: ${LOCKS_TAKEN} はぶつかったので更新後の形を採りました（前の中身は git stash list に残しています）" | tee -a "${LOG}"
     return 0
   fi
   UNMERGED="$(/usr/bin/git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
