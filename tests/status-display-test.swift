@@ -148,6 +148,65 @@ private let noteCases: [NoteCase] = [
              expected: ["落ちたので 9/23 14:05 に繋ぎ直しました", loginHint]),
 ]
 
+/// リレーの行（Issue #214）。判断に効く入力は: 状態 / 最後に起きたこと /
+/// その古さ / 落ちている項目。意味のある組み合わせを並べる。
+private struct RelayCase {
+    let title: String
+    let state: String
+    let event: String?
+    let reasons: [String]
+    let ageHours: Double
+    let failing: [String]
+    let expectedOK: Bool
+    let expectedButton: String?
+    let expectedNotes: [String]
+}
+
+private let tunnelDown = "トンネルの常駐（cloudflared）"
+
+private let relayCases: [RelayCase] = [
+    RelayCase(title: "通っていて何も起きていない", state: "ok", event: "", reasons: [], ageHours: 0,
+              failing: [], expectedOK: true, expectedButton: nil, expectedNotes: []),
+    RelayCase(title: "トンネルを起こして戻った", state: "ok", event: "fixed",
+              reasons: ["tunnel-agent", "tunnel-reach"], ageHours: 1, failing: [],
+              expectedOK: true, expectedButton: nil,
+              expectedNotes: ["トンネルが止まっていたので 9/24 1:40 に起こしました"]),
+    RelayCase(title: "受け口とトンネルを両方起こした", state: "ok", event: "fixed",
+              reasons: ["deposit", "tunnel-agent"], ageHours: 1, failing: [],
+              expectedOK: true, expectedButton: nil,
+              expectedNotes: ["受け口とトンネルが止まっていたので 9/24 1:40 に起こしました"]),
+    RelayCase(title: "受け口だけ起こした", state: "ok", event: "fixed", reasons: ["deposit"], ageHours: 1,
+              failing: [], expectedOK: true, expectedButton: nil,
+              expectedNotes: ["受け口が止まっていたので 9/24 1:40 に起こしました"]),
+    RelayCase(title: "1日より前に起こした話は引っ込める", state: "ok", event: "fixed",
+              reasons: ["tunnel-agent"], ageHours: 25, failing: [],
+              expectedOK: true, expectedButton: nil, expectedNotes: []),
+    RelayCase(title: "起こしたが戻らなかった", state: "down", event: "failed", reasons: ["tunnel-agent"],
+              ageHours: 0, failing: [tunnelDown], expectedOK: false, expectedButton: "直す",
+              expectedNotes: ["9/24 1:40 にトンネルを起こそうとしましたが、戻りませんでした", "要確認: \(tunnelDown)"]),
+    RelayCase(title: "止まっていて、まだ起こしていない", state: "down", event: "", reasons: [], ageHours: 0,
+              failing: [tunnelDown], expectedOK: false, expectedButton: "直す",
+              expectedNotes: ["要確認: \(tunnelDown)"]),
+    RelayCase(title: "何度も止まるので自動の修理をやめた", state: "halted", event: "halted", reasons: [],
+              ageHours: 0, failing: [tunnelDown], expectedOK: false, expectedButton: "直す",
+              expectedNotes: ["何度も止まるので、自動で起こすのをやめました（9/24 1:40）。「直す」で再開します",
+                              "要確認: \(tunnelDown)"]),
+    RelayCase(title: "やめたまま、いまは通っている（再開の口を出す）", state: "ok", event: "halted", reasons: [],
+              ageHours: 30, failing: [], expectedOK: true, expectedButton: "再開",
+              expectedNotes: ["自動で起こすのは止めています（9/24 1:40 から）。「再開」で戻します"]),
+    RelayCase(title: "起こしても直らない失敗にはボタンを出さず、直し方の場所を言う", state: "warn", event: "",
+              reasons: [], ageHours: 0, failing: ["Claude CodeのMCP登録"], expectedOK: false,
+              expectedButton: nil,
+              expectedNotes: ["要確認: Claude CodeのMCP登録", "ターミナルで relay doctor を実行すると、直し方が出ます"]),
+    RelayCase(title: "relay doctor が読めない", state: "error", event: "", reasons: [], ageHours: 0,
+              failing: [], expectedOK: false, expectedButton: "確かめる", expectedNotes: []),
+    RelayCase(title: "--json を知らない古い relay は、ボタンを出さず更新を促す", state: "old", event: "",
+              reasons: [], ageHours: 0, failing: [], expectedOK: false, expectedButton: nil,
+              expectedNotes: ["relay を新しくすると、ここで状態を見て直せます（relay doctor --json が要ります）"]),
+    RelayCase(title: "書き置きが無い", state: "unknown", event: nil, reasons: [], ageHours: 0,
+              failing: [], expectedOK: false, expectedButton: "確かめる", expectedNotes: []),
+]
+
 /// 「前回の更新」のあらまし（Issue #183）。記録の形ごとに、行に出る1行を見る。
 private struct DigestCase {
     let title: String
@@ -338,6 +397,24 @@ struct StatusDisplayTest {
             }
         }
 
+        // ⑥ リレーの行（Issue #214）
+        let relayNow: Double = 1_790_000_000
+        for item in relayCases {
+            let status = RelayStatus(
+                state: item.state, detail: "", failing: item.failing, event: item.event,
+                eventAt: item.event == nil ? nil : "9/24 1:40",
+                eventEpoch: relayNow - item.ageHours * 3600, eventReasons: item.reasons
+            )
+            let ok = relayOK(status)
+            let button = relayButtonTitle(status)
+            let notes = relayNotes(status, now: relayNow)
+            if ok != item.expectedOK || button != item.expectedButton || notes != item.expectedNotes {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  リレー \(item.title): 期待 \(item.expectedOK)/\(show(item.expectedButton))/\(item.expectedNotes) / 実際 \(ok)/\(show(button))/\(notes)\n".utf8))
+            }
+        }
+
         // ⑤ 「前回の更新」のあらまし（Issue #183）
         for item in digestCases {
             let digest = lastUpdateDigest(item.report)
@@ -357,6 +434,6 @@ struct StatusDisplayTest {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
     }
 }

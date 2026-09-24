@@ -1,0 +1,315 @@
+#!/bin/zsh
+set -u
+
+# 「リレー」の行（Issue #214）。session-relay（`relay` コマンド）の常駐を見て、
+# 落ちていたら起こす。
+#
+#   使い方: mulmo-relay status|ensure|fix
+#
+#   status  `relay doctor --json` を読んで、画面用の状態を書くだけ
+#   ensure  落ちていたら `relay doctor --fix` で起こす（アプリの起動時・巡回から呼ぶ）
+#   fix     「直す」ボタン。止めていた自動の修理も再開する
+#
+# 見る・直すの中身は relay 側（`relay doctor`）が持つ。ここは呼ぶ回数と、
+# 何をしたかの控えだけ。**relay が無い人には何もしない**（行も出ない）。
+#
+# relay の投函口は、受け口（`relay mcp-deposit-http`）と Cloudflare Tunnel の
+# 2つの常駐で成り立つ。Tunnel が exit 0 で止まり、KeepAlive があるのに launchd が
+# 起こさなかったことが実際にある。止まっている間、スマホからは預けられないが、
+# Mac 側では誰も気づけない。
+
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG_DIR="${HOME}/Library/Logs/Mulmo Control"
+LOG="${LOG_DIR}/relay.log"
+OUT="${LOG_DIR}/relay.json"
+REPORT="${LOG_DIR}/relay-doctor.json"
+
+STATE_DIR="${MULMO_STATE_DIR:-${HOME}/Library/Application Support/Mulmo Control}"
+FIXES="${STATE_DIR}/relay-fixes"
+EVENT="${STATE_DIR}/relay-event.json"
+# 修理を1本にする錠。起動時と巡回が重なったときに、2本で kickstart しない。
+LOCK="${STATE_DIR}/relay.lock"
+# 置き忘れた錠を奪ってよい古さ（分）。`relay doctor --fix` は確かめ直しを含めても
+# 1分かからない（relay 側の上限が30秒）。2分残っている錠は持ち主が居ない。
+LOCK_STALE_MIN=2
+
+# 自動の修理の連鎖を止める線: FIX_WINDOW 秒の間に FIX_LIMIT 回起こしたら、
+# それ以上は起こさずに止める（#212 の RESTART_LIMIT と同じ考え方）。
+#
+# 根拠: ensure はアプリの起動時と、5分おきの巡回から呼ばれる。たまに止まる
+# だけなら30分に1回で済む。**3回目が来るのは、起こしても起こしてもすぐ落ちる形**
+# （資格情報の失効・設定の壊れ・回線）で、起こし続けても直らない。kickstart は
+# 繋がっている接続も切り直すので、回し続けると預けている途中の会話を落とす。
+FIX_LIMIT=3
+FIX_WINDOW=1800
+
+# relay doctor を待つ上限（秒）。--fix は起こしたあと最大30秒確かめ直すので、
+# それに外への到達（8秒）と node の立ち上がりを足して余裕を持たせる。
+DOCTOR_TIMEOUT=90
+
+# 直せる項目（relay doctor の id）。登録漏れなどは起こしても直らないので、
+# ここに無い項目が落ちているだけなら --fix は呼ばない（回し続けない）。
+FIXABLE="deposit tunnel-agent tunnel-reach"
+
+mkdir -p "${LOG_DIR}" "${STATE_DIR}"
+
+# 検査から差し替えられるように、場所は MULMO_RELAY で渡せる。
+relay_bin() {
+  if [ -n "${MULMO_RELAY:-}" ]; then
+    [ -x "${MULMO_RELAY}" ] && print -r -- "${MULMO_RELAY}"
+    return 0
+  fi
+  command -v relay 2>/dev/null || true
+}
+
+# relay doctor を走らせて、結果を REPORT に置く。読めなければ REPORT を消して、
+# 1（走らない・時間切れ）か 2（答えたが JSON ではない＝ --json を知らない古い relay）。
+run_doctor() {
+  RELAY="$1" MODE="$2" REPORT="${REPORT}" TIMEOUT="${DOCTOR_TIMEOUT}" /usr/bin/python3 -c '
+import json, os, subprocess
+args = [os.environ["RELAY"], "doctor", "--json"] + (["--fix"] if os.environ["MODE"] == "fix" else [])
+try:
+    done = subprocess.run(args, capture_output=True, text=True, timeout=int(os.environ["TIMEOUT"]))
+except (OSError, subprocess.TimeoutExpired):
+    done = None
+try:
+    if done is None:
+        raise OSError("走らない")
+    report = json.loads(done.stdout)
+    if not isinstance(report, dict) or not isinstance(report.get("checks"), list):
+        raise ValueError("形が違う")
+except (OSError, ValueError):
+    try:
+        os.remove(os.environ["REPORT"])
+    except OSError:
+        pass
+    raise SystemExit(2 if done is not None and done.stdout.strip() else 1)
+with open(os.environ["REPORT"], "w", encoding="utf-8") as handle:
+    json.dump(report, handle, ensure_ascii=False)
+'
+}
+
+# REPORT の中身を1語で。ok / fixable（起こせば直るかもしれない）/ other（起こしても直らない）
+#
+# トンネルの生死は tunnel-agent（launchctl の状態）で見る。外からの到達
+# （tunnel-reach）は、Cloudflare Access を前に置いた構成だと**トンネルが止まって
+# いても 401 が返る**（relay 側で実測）ので、通っていることの根拠にはならない。
+# 落ちている（530 など）と言ったときだけ、起こす理由として使う。
+report_verdict() {
+  REPORT="${REPORT}" FIXABLE="${FIXABLE}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["REPORT"], encoding="utf-8") as handle:
+        report = json.load(handle)
+except (OSError, ValueError):
+    raise SystemExit
+fixable = set(os.environ["FIXABLE"].split())
+bad = [c for c in report.get("checks", []) if isinstance(c, dict) and not c.get("ok")]
+if not bad:
+    print("ok")
+elif any(c.get("id") in fixable and c.get("state") == "down" for c in bad):
+    print("fixable")
+else:
+    print("other")
+'
+}
+
+# 直したことを控える。何を（理由の id）・いつ・うまくいったか。
+note_fix_event() {
+  REPORT="${REPORT}" EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os, time, datetime
+try:
+    with open(os.environ["REPORT"], encoding="utf-8") as handle:
+        report = json.load(handle)
+except (OSError, ValueError):
+    report = {}
+fixes = [f for f in report.get("fixes", []) if isinstance(f, dict)]
+if not fixes:
+    raise SystemExit
+reasons = sorted({str(r) for f in fixes for r in (f.get("reasons") or [])})
+# 戻ったかは、起こした理由の項目だけで決める（登録漏れなど、起こしても直らない
+# 項目が残っていても「起こした分は戻った」と言えるように）。
+after = {c.get("id"): bool(c.get("ok")) for c in report.get("checks", []) if isinstance(c, dict)}
+healed = all(after.get(reason, True) for reason in reasons)
+now = datetime.datetime.now()
+with open(os.environ["EVENT"], "w", encoding="utf-8") as handle:
+    json.dump({"event": "fixed" if healed else "failed", "reasons": reasons,
+               "at": "%d/%d %d:%02d" % (now.month, now.day, now.hour, now.minute),
+               "epoch": int(time.time())}, handle, ensure_ascii=False)
+'
+}
+
+note_halted() {
+  EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os, time, datetime
+now = datetime.datetime.now()
+with open(os.environ["EVENT"], "w", encoding="utf-8") as handle:
+    json.dump({"event": "halted", "reasons": [],
+               "at": "%d/%d %d:%02d" % (now.month, now.day, now.hour, now.minute),
+               "epoch": int(time.time())}, handle, ensure_ascii=False)
+'
+}
+
+event_name() {
+  EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os
+try:
+    with open(os.environ["EVENT"], encoding="utf-8") as handle:
+        print((json.load(handle) or {}).get("event") or "")
+except (OSError, ValueError):
+    pass
+'
+}
+
+# 窓の中で何回起こしたか。数えるついでに、窓から外れた古い記録を捨てる。
+recent_fixes() {
+  FIXES="${FIXES}" WINDOW="${FIX_WINDOW}" /usr/bin/python3 -c '
+import os, time
+path = os.environ["FIXES"]
+cutoff = time.time() - int(os.environ["WINDOW"])
+try:
+    with open(path, encoding="utf-8") as handle:
+        stamps = [float(line) for line in handle if line.strip()]
+except (OSError, ValueError):
+    stamps = []
+stamps = [stamp for stamp in stamps if stamp >= cutoff]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("".join("%d\n" % stamp for stamp in stamps))
+print(len(stamps))
+'
+}
+
+forget_history() {
+  /bin/rm -f "${FIXES}" "${EVENT}"
+}
+
+try_lock() {
+  /bin/mkdir "${LOCK}" 2>/dev/null && return 0
+  if [ -n "$(/usr/bin/find "${LOCK}" -maxdepth 0 -mmin +"${LOCK_STALE_MIN}" 2>/dev/null)" ]; then
+    /bin/rmdir "${LOCK}" 2>/dev/null
+    /bin/mkdir "${LOCK}" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+release_lock() {
+  /bin/rmdir "${LOCK}" 2>/dev/null || true
+}
+
+# 画面用の状態を書く。落ちている項目の名前は relay doctor の name をそのまま渡す
+# （言葉にするのは画面側の StatusDisplay.swift の relayNotes）。
+write_status() {
+  STATE_NAME="$1" DETAIL="$2" OUT="${OUT}" REPORT="${REPORT}" EVENT="${EVENT}" /usr/bin/python3 -c '
+import json, os, datetime
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle) or {}
+    except (OSError, ValueError):
+        return {}
+report = load(os.environ["REPORT"]) if os.environ["STATE_NAME"] not in ("no-cli", "error", "old") else {}
+event = load(os.environ["EVENT"])
+failing = [str(c.get("name") or c.get("id") or "") for c in report.get("checks", [])
+           if isinstance(c, dict) and not c.get("ok")]
+with open(os.environ["OUT"], "w", encoding="utf-8") as handle:
+    json.dump({"checkedAt": now, "state": os.environ["STATE_NAME"],
+               "detail": os.environ["DETAIL"], "failing": failing,
+               "event": str(event.get("event") or ""),
+               "eventAt": str(event.get("at") or ""),
+               "eventEpoch": float(event.get("epoch") or 0),
+               "eventReasons": [str(r) for r in (event.get("reasons") or [])]},
+              handle, ensure_ascii=False, indent=2)
+'
+}
+
+# REPORT を読んで状態を書く（run_doctor の後に呼ぶ）。
+write_from_report() {
+  case "$(report_verdict)" in
+    ok) write_status "ok" "通っています" ;;
+    fixable)
+      if [ "$(event_name)" = "halted" ]; then
+        write_status "halted" "何度も止まりました"
+      else
+        write_status "down" "止まっています"
+      fi
+      ;;
+    other) write_status "warn" "要確認があります" ;;
+    *) write_status "error" "確かめられません" ;;
+  esac
+}
+
+# run_doctor が失敗したときの書き置き。古い relay は「更新が要る」、それ以外は「確かめられない」。
+write_doctor_failure() {
+  if [ "$1" = "2" ]; then
+    write_status "old" "更新が要ります"
+  else
+    write_status "error" "確かめられません"
+  fi
+}
+
+do_status() {
+  RELAY="$(relay_bin)"
+  if [ -z "${RELAY}" ]; then
+    write_status "no-cli" ""
+    return 0
+  fi
+  run_doctor "${RELAY}" check || { write_doctor_failure $?; return 0; }
+  write_from_report
+}
+
+# 落ちていたら起こす。起こすのは、relay がある・直せる項目が落ちている・
+# 止めていない・回数が上限に届いていない、のときだけ。
+do_ensure() {
+  RELAY="$(relay_bin)"
+  if [ -z "${RELAY}" ]; then
+    write_status "no-cli" ""
+    return 0
+  fi
+  run_doctor "${RELAY}" check || { write_doctor_failure $?; return 0; }
+  if [ "$(report_verdict)" != "fixable" ] || [ "$(event_name)" = "halted" ]; then
+    write_from_report
+    return 0
+  fi
+  if ! try_lock; then
+    write_from_report
+    return 0
+  fi
+  trap release_lock EXIT
+  if [ "$(recent_fixes)" -ge "${FIX_LIMIT}" ]; then
+    echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] auto-fix halted (${FIX_LIMIT} in ${FIX_WINDOW}s)" >>"${LOG}"
+    note_halted
+    write_from_report
+    return 0
+  fi
+  /bin/date '+%s' >>"${FIXES}"
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] auto-fix" >>"${LOG}"
+  fix_and_write "${RELAY}"
+}
+
+fix_and_write() {
+  run_doctor "$1" fix || { write_doctor_failure $?; return 0; }
+  note_fix_event
+  write_from_report
+}
+
+# 「直す」ボタン。押したのは人なので、止めていた自動の修理も再開する。
+do_fix() {
+  forget_history
+  RELAY="$(relay_bin)"
+  if [ -z "${RELAY}" ]; then
+    write_status "no-cli" ""
+    echo "relay が見つかりません"
+    return 1
+  fi
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] fix requested" >>"${LOG}"
+  fix_and_write "${RELAY}"
+  echo "リレーを確かめ直しました"
+}
+
+case "${1:-status}" in
+  status) do_status ;;
+  ensure) do_ensure ;;
+  fix)    do_fix ;;
+  *)      echo "使い方: mulmo-relay status|ensure|fix" >&2; exit 1 ;;
+esac

@@ -248,3 +248,108 @@ private func isTimeStamp(_ line: String) -> Bool {
     guard day.count == 2, time.count == 2 else { return false }
     return (day + time).allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
 }
+
+// MARK: - リレー（Issue #214）
+
+/// session-relay（`relay` コマンド）の状態。書くのは `scripts/mulmo-relay`、
+/// 中身は `relay doctor --json` を読んで畳んだもの。
+///
+/// state: ok / down（起こせば直るかもしれない）/ warn（起こしても直らない失敗）/
+/// halted（何度も止まるので自動の修理をやめた）/ error（relay doctor が読めない）/
+/// old（`relay doctor --json` を知らない古い relay）/ no-cli / unknown（書き置きが無い）
+///
+/// トンネルの生死は relay doctor の tunnel-agent（launchctl の状態）で決まっている。
+/// 外からの到達の 401 は、Cloudflare Access が前にいるとトンネルが止まっていても
+/// 返る（relay 側で実測）ので、この行は「届いている」を緑の根拠にしない。
+/// 緑は relay doctor の全項目が通ったときだけ（`ok`）。
+struct RelayStatus: Decodable {
+    let state: String
+    let detail: String
+    /// 落ちている項目の名前（relay doctor の name をそのまま）。
+    var failing: [String]? = nil
+    /// 最後に起きたこと。fixed（起こして戻った）/ failed（起こしたが戻らない）/
+    /// halted（自動の修理をやめた）/ 空。
+    var event: String? = nil
+    /// その時刻（`9/24 1:40`）。書くのはスクリプト側。
+    var eventAt: String? = nil
+    /// 同じ時刻の UNIX 秒。知らせを古くなったら引っ込めるために使う。
+    var eventEpoch: Double? = nil
+    /// 起こした理由の項目（relay doctor の id）。
+    var eventReasons: [String]? = nil
+}
+
+/// 「起こしました」を出しておく長さ（秒）。
+///
+/// 1日。朝に見たとき「夜中にトンネルが止まって、起こしてある」が分かる長さで、
+/// かつ翌日まで持ち越すと、今の話か前の話か分からなくなる。
+let relayNoteLifetime: Double = 24 * 60 * 60
+
+/// 行の左の印を緑にしてよいか。
+func relayOK(_ status: RelayStatus) -> Bool {
+    status.state == "ok"
+}
+
+/// 行のボタン。直せるものにだけ「直す」を出す。起こしても直らない失敗（warn）には
+/// 出さない（押して何も変わらないボタンになる）。
+func relayButtonTitle(_ status: RelayStatus) -> String? {
+    switch status.state {
+    case "down", "halted":
+        return "直す"
+    case "error", "unknown":
+        return "確かめる"
+    case "ok":
+        // 通っていても、自動の修理を止めたままなら再開する口が要る。
+        return status.event == "halted" ? "再開" : nil
+    default:
+        return nil
+    }
+}
+
+/// 起こした理由の項目を、人に通じる言葉に。
+func relayWhat(_ reasons: [String]) -> String {
+    let deposit = reasons.contains("deposit")
+    let tunnel = reasons.contains { $0.hasPrefix("tunnel") }
+    switch (deposit, tunnel) {
+    case (true, true): return "受け口とトンネル"
+    case (true, false): return "受け口"
+    case (false, true): return "トンネル"
+    default: return "リレー"
+    }
+}
+
+/// リレーの行の下に出す知らせ。
+///
+/// 自動で起こしたことは、**言わなければ誰にも分からない**（#212 と同じ）。
+/// 止まっていた間スマホから預けられなかったことも、起こしたあとでは見えない。
+func relayNotes(_ status: RelayStatus, now: Double) -> [String] {
+    var notes: [String] = []
+    let at = status.eventAt ?? ""
+    let fresh = now - (status.eventEpoch ?? 0) < relayNoteLifetime
+    let what = relayWhat(status.eventReasons ?? [])
+    switch (status.event ?? "", status.state) {
+    case ("halted", "ok"):
+        notes.append("自動で起こすのは止めています（\(at) から）。「再開」で戻します")
+    case (_, "halted"):
+        notes.append("何度も止まるので、自動で起こすのをやめました（\(at)）。「直す」で再開します")
+    case ("fixed", _) where fresh:
+        notes.append("\(what)が止まっていたので \(at) に起こしました")
+    case ("failed", _) where fresh:
+        notes.append("\(at) に\(what)を起こそうとしましたが、戻りませんでした")
+    default:
+        break
+    }
+    let failing = status.failing ?? []
+    if !relayOK(status), !failing.isEmpty {
+        notes.append("要確認: " + failing.joined(separator: "、"))
+    }
+    // 古い relay は --json を知らない。押しても何も変わらないのでボタンは出さず、
+    // 更新すれば見られることだけ言う。
+    if status.state == "old" {
+        notes.append("relay を新しくすると、ここで状態を見て直せます（relay doctor --json が要ります）")
+    }
+    // 登録漏れなどは、ここから起こしても直らない。直し方は relay 自身が言う。
+    if status.state == "warn" {
+        notes.append("ターミナルで relay doctor を実行すると、直し方が出ます")
+    }
+    return notes
+}
