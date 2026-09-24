@@ -2594,6 +2594,105 @@ grep -q '壊れたまま' "${SBX_REASONS}" 2>/dev/null ||
   fail "壊れたことを画面に出せる形で残していません（Issue #66）"
 ok "退避を戻せずに壊れたら、止まって理由を残す"
 
+# 187〜189 ぶつかったまま残ったファイルで、更新が毎回止まらないようにする
+# （Issue #218）。stash pop が yarn.lock の1行でぶつかって未解決のまま残り、
+# 以後の更新は冒頭の git stash push が `needs merge` で落ちて、4回続けて
+# 「退避できなかった」とだけ言って止まった。何がぶつかっているのかは
+# 画面から分からず、抜けるにはターミナルが要った。
+#
+# 理由と更新ログはここまでの行が溜まっているので、走らせた後に増えた分だけを見る。
+SBX_LOG="${SBX_HOME}/Library/Logs/Mulmo Control/mulmoclaude-update.log"
+sbx_mark() {
+  SBX_REASONS_AT="$(wc -l < "${SBX_REASONS}" | tr -d ' ')"
+  SBX_LOG_AT="$(wc -l < "${SBX_LOG}" | tr -d ' ')"
+}
+sbx_new_reasons() { tail -n "+$((SBX_REASONS_AT + 1))" "${SBX_REASONS}"; }
+sbx_new_log() { tail -n "+$((SBX_LOG_AT + 1))" "${SBX_LOG}"; }
+sbx_unmerged() { /usr/bin/git -C "${SBX_WORK}" diff --name-only --diff-filter=U 2>/dev/null; }
+
+# 189 ロック以外が未解決なら、名前を出して止まり、そのファイルには触らない。
+# 本人の変更を黙って片側に寄せない。上の #66 の検査が、ちょうど CLAUDE.md が
+# 未解決のまま残った形を作っているので、そのまま使う。
+[ "$(sbx_unmerged)" = "CLAUDE.md" ] || fail "ロック以外のぶつかりを再現できていません（この検査自体が無効・189）"
+SBX_BEFORE_SUM="$(shasum < "${SBX_WORK}/CLAUDE.md")"
+SBX_STASHES="$(sbx_git -C "${SBX_WORK}" stash list | wc -l | tr -d ' ')"
+sbx_mark
+sbx_update
+[ "${SBX_RC}" != "0" ] || fail "ロック以外がぶつかったままなのに、成功として終わりました（189）"
+sbx_new_reasons | grep -q 'ぶつかったままのファイルがあるので、更新を中止しました: CLAUDE.md' ||
+  fail "ぶつかったまま残っているファイルの名前を、理由に出していません（189）"
+[ "$(shasum < "${SBX_WORK}/CLAUDE.md")" = "${SBX_BEFORE_SUM}" ] ||
+  fail "ぶつかったままの CLAUDE.md を書き換えました。本人の変更を黙って捨てています（189）"
+[ "$(sbx_unmerged)" = "CLAUDE.md" ] || fail "ぶつかったままの CLAUDE.md を勝手に解決しました（189）"
+[ "$(sbx_git -C "${SBX_WORK}" stash list | wc -l | tr -d ' ')" = "${SBX_STASHES}" ] ||
+  fail "退避したものを消しました（189）"
+ok "ロック以外がぶつかったままなら、名前を出して止まり、触らない"
+
+sbx_git -C "${SBX_WORK}" reset -q --hard origin/main
+sbx_git -C "${SBX_WORK}" stash clear
+sbx_git -C "${SBX_WORK}" clean -qfd
+
+# 187 退避を戻すときにロックファイルだけがぶつかったら、更新後の側を採って
+# 先へ進む。ロックは後段の yarn install が作り直す。前の中身は stash に残す。
+# ぶつからない本人の変更（CLAUDE.md）は、そのまま戻っていなければならない。
+#
+# yarn.lock の中身はコメントだけにしてある。yarn 1 はコメントを読めるので、
+# この後の yarn install がロックの形で落ちない。
+printf '# yarn lockfile v1\n\n# base\n' > "${SBX}/up/yarn.lock"
+sbx_git -C "${SBX}/up" pull -q --ff-only
+sbx_git -C "${SBX}/up" add -A
+sbx_git -C "${SBX}/up" commit -qm lock-base
+sbx_git -C "${SBX}/up" push -q origin main
+sbx_git -C "${SBX_WORK}" pull -q --ff-only
+printf '# yarn lockfile v1\n\n# upstream side\n' > "${SBX}/up/yarn.lock"
+sbx_git -C "${SBX}/up" commit -qam lock-upstream
+sbx_git -C "${SBX}/up" push -q origin main
+printf '# yarn lockfile v1\n\n# local side\n' > "${SBX_WORK}/yarn.lock"
+printf 'dirty\n' >> "${SBX_WORK}/CLAUDE.md"
+sbx_mark
+sbx_update
+sbx_new_log | grep -q 'yarn.lock はぶつかったので更新後の形を採りました' ||
+  fail "ロックファイルだけのぶつかりを、更新後の側で解いていません（187）"
+[ -z "$(sbx_unmerged)" ] || fail "ロックファイルだけのぶつかりが、未解決のまま残っています（187）"
+! sbx_new_reasons | grep -q '中止\|壊れたまま\|できませんでした' ||
+  fail "ロックファイルだけのぶつかりで、更新を止めました（187）: $(sbx_new_reasons)"
+! grep -q '^<<<<<<<' "${SBX_WORK}/yarn.lock" || fail "yarn.lock にコンフリクトマーカーが残っています（187）"
+grep -q '^dirty$' "${SBX_WORK}/CLAUDE.md" || fail "ぶつからなかった本人の変更が戻っていません（187）"
+[ -n "$(sbx_git -C "${SBX_WORK}" stash list)" ] || fail "ロックの前の中身ごと、退避を消しました（187）"
+ok "ロックファイルだけがぶつかったら、更新後の側を採って先へ進む"
+
+sbx_git -C "${SBX_WORK}" reset -q --hard origin/main
+sbx_git -C "${SBX_WORK}" stash clear
+sbx_git -C "${SBX_WORK}" clean -qfd
+
+# 188 前回の更新で未解決のまま残ったロックファイルがあっても、更新が通る。
+# 187 が入る前に壊れた Mac はこの形のまま止まっている。スクリプトを通さずに
+# git で同じ形（stash pop が yarn.lock でぶつかった後）を作る。
+printf '# yarn lockfile v1\n\n# local b\n' > "${SBX_WORK}/yarn.lock"
+sbx_git -C "${SBX_WORK}" stash push -q
+sbx_git -C "${SBX}/up" pull -q --ff-only
+printf '# yarn lockfile v1\n\n# upstream b\n' > "${SBX}/up/yarn.lock"
+sbx_git -C "${SBX}/up" commit -qam lock-upstream-b
+sbx_git -C "${SBX}/up" push -q origin main
+sbx_git -C "${SBX_WORK}" pull -q --ff-only
+sbx_git -C "${SBX_WORK}" stash pop >/dev/null 2>&1 || true
+[ "$(sbx_unmerged)" = "yarn.lock" ] || fail "未解決の yarn.lock を再現できていません（この検査自体が無効・188）"
+# 更新が本当に通ったかは、上流の次のコミットまで進んだかで見る。
+printf 'next\n' > "${SBX}/up/notes.txt"
+sbx_git -C "${SBX}/up" add -A
+sbx_git -C "${SBX}/up" commit -qm next
+sbx_git -C "${SBX}/up" push -q origin main
+sbx_mark
+sbx_update
+! sbx_new_reasons | grep -q '中止\|壊れたまま\|できませんでした' ||
+  fail "未解決の yarn.lock が残っていると、更新が止まります（188）: $(sbx_new_reasons)"
+sbx_new_log | grep -q 'ぶつかったままだった yarn.lock を、更新後の形にそろえてから続けます' ||
+  fail "未解決の yarn.lock をそろえたことを言っていません（188）"
+[ -z "$(sbx_unmerged)" ] || fail "未解決の yarn.lock が残ったままです（188）"
+[ "$(sbx_git -C "${SBX_WORK}" rev-parse HEAD)" = "$(sbx_git -C "${SBX}/up" rev-parse HEAD)" ] ||
+  fail "未解決の yarn.lock が残っていると、上流の更新が届きません（188）"
+ok "前回ぶつかったままのロックファイルが残っていても、更新が通る"
+
 # 083 理由はタブ区切りで書く。アプリはこれを分解して画面に並べるので、
 # 区切りが崩れると理由が丸ごと出なくなる。ここまでで何行か溜まっている。
 /usr/bin/python3 -c '
