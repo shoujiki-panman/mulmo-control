@@ -2169,9 +2169,14 @@ sys.exit(0 if report["ok"] else 1)
 FAKE
 chmod +x "${RL_FAKE}"
 
+# 見張りの切り替え（Issue #220）。既定はオフなので、178〜186 はオンにして走らせる。
+# 置き場所は状態のフォルダの外（下の検査は状態のフォルダを丸ごと消して数え直す）。
+RL_WATCH="${RL_HOME}/watch dir/relay-watch"
+mkdir -p "${RL_HOME}/watch dir"
+print on >"${RL_WATCH}"
 rl() {
   env -u MULMO_STATE_DIR HOME="${RL_HOME}" RL_HOME="${RL_HOME}" MULMO_RELAY="${RL_RELAY:-${RL_FAKE}}" \
-    "${RELAY_SCRIPT}" "$@" >/dev/null 2>&1 || true
+    MULMO_RELAY_WATCH_FILE="${RL_WATCH}" "${RELAY_SCRIPT}" "$@" >/dev/null 2>&1 || true
 }
 rl_world() { print "$1 ${2:-ok}" >"${RL_WORLD}"; : >"${RL_CALLS}"; }
 rl_field() {
@@ -2191,7 +2196,7 @@ RL_RELAY="${RL_HOME}/nowhere/relay" rl ensure
 grep -q 'if model.relayInstalled {' "${ROOT}/Sources/main.swift" \
   || fail "relay が無い人にもリレーの行を出しています（Issue #214 / 178）"
 ENSURE_RELAY_BODY="$(awk '/private func ensureRelayIfDue/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${ENSURE_RELAY_BODY}" | grep -q 'guard !relayEnsuring, relayInstalled else { return }' \
+printf '%s\n' "${ENSURE_RELAY_BODY}" | grep -qE 'guard !relayEnsuring, relayInstalled(,| else)' \
   || fail "relay が無い人のためにシェルを起こしています（Issue #38 / #214 / 178）"
 # 画面が探す場所と、スクリプトの PATH が揃っている。食い違うと、行は出るのに
 # スクリプトは「無い」と言う（または逆）。
@@ -2289,6 +2294,49 @@ RL_RELAY="${RL_OLD}" rl fix
 [ "$(rl_field state)" = "old" ] || fail "古い relay で「直す」を押すと、行が壊れます（state=$(rl_field state)。Issue #214 / 184）"
 ok "古い relay でも行が壊れない"
 
+# 190 見張りをオンにしていない人（既定）には、何も走らせない（Issue #220）。
+#
+# 見張りは relay がある人に常に回っていて、5分おきに relay doctor が node を
+# 1本立てていた。頼んでいない人の行には「止まっています」「直す」しか出ず、
+# 何の行なのか分からなかった（1.0.78 を入れた人の声）。
+#
+# スクリプト: 切り替えが無い・知らない語なら、落ちている世界でも relay を1回も
+# 呼ばず、状態も書かない（本物の mulmo-relay を走らせて見る）。
+rm -rf "${RL_HOME}/Library"
+for RL_WORD in "" "yes"; do
+  if [ -z "${RL_WORD}" ]; then rm -f "${RL_WATCH}"; else print "${RL_WORD}" >"${RL_WATCH}"; fi
+  for RL_MODE in ensure status fix; do
+    rl_world down
+    rl "${RL_MODE}"
+    [ -s "${RL_CALLS}" ] \
+      && fail "見張りがオフ（${RL_WORD:-無い}）なのに ${RL_MODE} が relay を呼んでいます（Issue #220 / 190）"
+    [ -e "${RL_OUT}" ] \
+      && fail "見張りがオフ（${RL_WORD:-無い}）なのに ${RL_MODE} が状態を書いています（Issue #220 / 190）"
+  done
+done
+print on >"${RL_WATCH}"
+rl_world down
+rl ensure
+[ "$(rl_fixed)" = "1" ] || fail "見張りをオンに戻しても起こしていません（Issue #220 / 190）"
+# 画面: ensure も「直す」も、シェルを起こす前に切り替えを見る。呼ぶ口はこの2つだけ。
+printf '%s\n' "${ENSURE_RELAY_BODY}" | grep -q 'guard !relayEnsuring, relayInstalled, relayOn else { return }' \
+  || fail "見張りがオフでも ensure でシェルを起こしています（Issue #38 / #220 / 190）"
+FIX_RELAY_BODY="$(awk '/    func fixRelay\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${FIX_RELAY_BODY}" | sed -n '2p' | grep -q 'guard relayOn else { return }' \
+  || fail "見張りがオフでも「直す」でシェルを起こせます（Issue #220 / 190）"
+RL_CALLERS="$(grep -c 'tool("mulmo-relay"))' "${ROOT}/Sources/main.swift")"
+[ "${RL_CALLERS}" = "2" ] \
+  || fail "mulmo-relay を呼ぶ口が ensure と「直す」の2つではありません（${RL_CALLERS}箇所。切り替えを見ない口が増えます。Issue #220 / 190）"
+# 既定はオフ: 画面は on の1語のときだけオンと読み、置き場所はスクリプトと同じ。
+grep -q 'static let filePath = "\\(homeDir)/Library/Application Support/Mulmo Control/relay-watch"' "${ROOT}/Sources/main.swift" \
+  && grep -q 'WATCH_FILE="${MULMO_RELAY_WATCH_FILE:-${HOME}/Library/Application Support/Mulmo Control/relay-watch}"' "${RELAY_SCRIPT}" \
+  || fail "見張りの切り替えの置き場所が画面とスクリプトで違います（Issue #220 / 190）"
+RELAY_WATCH_BODY="$(awk '/^enum RelayWatch \{/ { inside = 1 } inside { print } inside && /^\}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${RELAY_WATCH_BODY}" | grep -q 'return word == "on"' \
+  && printf '%s\n' "${RELAY_WATCH_BODY}" | grep -q 'else { return false }' \
+  || fail "画面が、切り替えが無いときや知らない語をオンと読みます。既定はオフです（Issue #220 / 190）"
+ok "見張りがオフ（既定）なら relay を1回も呼ばない"
+
 rm -rf "${RL_HOME}"
 trap - EXIT
 
@@ -2298,11 +2346,26 @@ trap - EXIT
 # 消えていないことと、画面がその1本を通っていることを見る（133・176 と同じ形）。
 printf '%s\n' "${DISPLAY_OUT}" | grep -q 'リレーの行' \
   || fail "リレーの行の対応表を検査で走らせていません（Issue #214 / 182）"
-for RL_CALL in 'relayOK(model.relay)' 'relayButtonTitle(model.relay)' 'relayNotes(model.relay, now:'; do
+for RL_CALL in 'relayRow(on: model.relayOn, status: model.relay, now:' 'relayLine.buttonTitle' 'relayLine.notes'; do
   grep -qF "${RL_CALL}" "${ROOT}/Sources/main.swift" \
     || fail "リレーの行が対応表（${RL_CALL}）を通っていません（Issue #214 / 182）"
 done
 ok "リレーの知らせとボタンは対応表が決める"
+
+# 191 オフの行は「オフ」「オン」と何をするものかだけ。オンで今の表示に「やめる」（Issue #220）。
+#
+# 表は「状態と表示の対応」が実際に走らせている（オフのまま古い「止まっています」が
+# 残っていても直すを出さない、を含む）。ここでは表が検査から消えていないことと、
+# 押す口が切り替えに繋がっていることを見る。
+printf '%s\n' "${DISPLAY_OUT}" | grep -q 'リレーのオン／オフ' \
+  || fail "リレーのオン／オフを検査で走らせていません（Issue #220 / 191）"
+grep -q 'action: model.relayOn ? model.fixRelay : { model.setRelayOn(true) }' "${ROOT}/Sources/main.swift" \
+  && grep -q 'extraAction: { model.setRelayOn(false) }' "${ROOT}/Sources/main.swift" \
+  || fail "リレーの行の「オン」「やめる」が切り替えに繋がっていません（Issue #220 / 191）"
+SET_RELAY_BODY="$(awk '/    func setRelayOn\(/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${SET_RELAY_BODY}" | grep -q 'writeRelayWatch(on)' \
+  || fail "切り替えを置き場所に書いていません。スクリプトはオフのままです（Issue #220 / 191）"
+ok "リレーの行はオフなら何をするものかだけ、オンで見張りの表示"
 
 # 183 起動時と巡回とパネルを開いたときに ensure を呼び、書き置きの場所が揃っている。
 INIT_BODY="$(awk '/^    init\(\) \{/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"

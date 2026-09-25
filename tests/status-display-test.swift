@@ -207,6 +207,40 @@ private let relayCases: [RelayCase] = [
               failing: [], expectedOK: false, expectedButton: "確かめる", expectedNotes: []),
 ]
 
+/// リレーの行のオン／オフ（Issue #220）。オフのときは書き置きがどうであれ
+/// 「オフ」「オン」と何をするものかだけ。オンのときは上の表のとおりに「やめる」が付く。
+private struct RelayToggleCase {
+    let title: String
+    let on: Bool
+    let state: String
+    let failing: [String]
+    let expected: RelayRow
+}
+
+private let relayOffRow = RelayRow(detail: "オフ", ok: false, idle: true, buttonTitle: "オン",
+                                   extraTitle: nil, notes: [relayOffNote])
+
+private let relayToggleCases: [RelayToggleCase] = [
+    RelayToggleCase(title: "既定（オフ）で書き置きが無い", on: false, state: "unknown", failing: [],
+                    expected: relayOffRow),
+    RelayToggleCase(title: "オフにしたあと、オンだった頃の「止まっています」が残っていても直すを出さない",
+                    on: false, state: "down", failing: [tunnelDown], expected: relayOffRow),
+    RelayToggleCase(title: "オフにしたあと、通っていた書き置きが残っていても緑にしない",
+                    on: false, state: "ok", failing: [], expected: relayOffRow),
+    RelayToggleCase(title: "オンで通っている", on: true, state: "ok", failing: [],
+                    expected: RelayRow(detail: "通っています", ok: true, idle: false, buttonTitle: nil,
+                                       extraTitle: "やめる", notes: [])),
+    RelayToggleCase(title: "オンで止まっている", on: true, state: "down", failing: [tunnelDown],
+                    expected: RelayRow(detail: "止まっています", ok: false, idle: false, buttonTitle: "直す",
+                                       extraTitle: "やめる", notes: ["要確認: \(tunnelDown)"])),
+    RelayToggleCase(title: "オンにした直後で、まだ一度も見ていない", on: true, state: "unknown", failing: [],
+                    expected: RelayRow(detail: "未確認", ok: false, idle: false, buttonTitle: "確かめる",
+                                       extraTitle: "やめる", notes: [])),
+]
+
+/// 行の説明に使える長さ（check.sh の 131 と同じ）。超えると真ん中が潰れる。
+private let rowDetailLimit = 12
+
 /// 「前回の更新」のあらまし（Issue #183）。記録の形ごとに、行に出る1行を見る。
 private struct DigestCase {
     let title: String
@@ -413,6 +447,29 @@ struct StatusDisplayTest {
                 FileHandle.standardError.write(Data(
                     "  リレー \(item.title): 期待 \(item.expectedOK)/\(show(item.expectedButton))/\(item.expectedNotes) / 実際 \(ok)/\(show(button))/\(notes)\n".utf8))
             }
+            // オンの行は、この表の3本をそのまま通して「やめる」を足したもの（Issue #220）。
+            let row = relayRow(on: true, status: status, now: relayNow)
+            if row.ok != ok || row.buttonTitle != button || row.notes != notes || row.extraTitle != "やめる" || row.idle {
+                failures += 1
+                FileHandle.standardError.write(Data("  リレー（オン）\(item.title): 行が表と食い違っています \(row)\n".utf8))
+            }
+        }
+
+        // ⑦ リレーの行のオン／オフ（Issue #220）
+        for item in relayToggleCases {
+            let detail = ["ok": "通っています", "down": "止まっています"][item.state] ?? "未確認"
+            let status = RelayStatus(state: item.state, detail: detail, failing: item.failing)
+            let row = relayRow(on: item.on, status: status, now: relayNow)
+            if row != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  リレー \(item.title): 期待 \(item.expected) / 実際 \(row)\n".utf8))
+            }
+            if row.detail.count > rowDetailLimit {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  リレー \(item.title): 行の説明が長すぎます（\(row.detail.count)文字）\n".utf8))
+            }
         }
 
         // ⑤ 「前回の更新」のあらまし（Issue #183）
@@ -434,6 +491,6 @@ struct StatusDisplayTest {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
     }
 }
