@@ -1,0 +1,55 @@
+#!/bin/zsh
+set -u
+
+# session-relay を「追加」タブから入れる（Issue #222）。
+#
+#   mulmo-relay-install <入れ先> <リンクを置く場所>
+#
+# 1. ほかの追加ツールと同じく mulmo-npm-install で <入れ先> に入れ、
+#    <リンクを置く場所>/relay にリンクを張る（環境タブのリレーの行はそこを見る）。
+# 2. 続けて `relay install` で、Claude Code と Codex に MCP とスキルを登録する。
+#    入れただけでは「続きから」が効かないので、ここまでで1回の「インストール」。
+#
+# どちらかが失敗したら、そこで止めて理由を最後の行に書く（画面はその行を出す）。
+# `relay install` は登録に失敗しても 0 で終わる（`×` の行を出すだけ）ので、
+# その判断は画面側（StatusDisplay.swift の relayInstallOutcome）が出力を読んで行う。
+#
+# npm は MULMO_NPM、relay は MULMO_RELAY で差し替えられる（検査で偽物を渡すため）。
+
+PREFIX="${1:-}"
+LINK_DIR="${2:-}"
+if [ -z "${PREFIX}" ] || [ -z "${LINK_DIR}" ]; then
+  echo "使い方: mulmo-relay-install <入れ先> <リンクを置く場所>" >&2
+  exit 2
+fi
+
+# relay install は `which claude` / `which codex` で登録先を探す。アプリから
+# 呼ばれると PATH が細いことがあるので、claude / codex がよく居る場所を足す。
+PATH="${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
+export PATH
+
+PACKAGE="@shoujiki-panman/session-relay"
+HERE="${0:A:h}"
+
+/bin/mkdir -p "${PREFIX}" "${LINK_DIR}" /private/tmp/npm-cache-mulmo-control
+if ! "${HERE}/mulmo-npm-install" "${PREFIX}" "${PACKAGE}@latest"; then
+  echo "session-relay を入れられませんでした（npm install が失敗）" >&2
+  exit 1
+fi
+
+BIN_PATH="${PREFIX}/node_modules/.bin/relay"
+if [ ! -x "${BIN_PATH}" ]; then
+  echo "session-relay を入れましたが relay コマンドが見つかりません" >&2
+  exit 1
+fi
+/bin/ln -sf "${BIN_PATH}" "${LINK_DIR}/relay"
+
+RELAY="${MULMO_RELAY:-${LINK_DIR}/relay}"
+echo "relay install（Claude Code と Codex への登録）"
+"${RELAY}" install
+RC=$?
+if [ "${RC}" -ne 0 ]; then
+  echo "relay install が失敗しました（終了コード ${RC}）" >&2
+  exit 1
+fi
+exit 0

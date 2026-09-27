@@ -2337,6 +2337,36 @@ printf '%s\n' "${RELAY_WATCH_BODY}" | grep -q 'return word == "on"' \
   || fail "画面が、切り替えが無いときや知らない語をオンと読みます。既定はオフです（Issue #220 / 190）"
 ok "見張りがオフ（既定）なら relay を1回も呼ばない"
 
+# 193 トンネル（Cloudflare）を作っていない人がオンにしても、行を赤・橙にしない（Issue #222）。
+#
+# 「追加」から relay を入れた人の多くはトンネルを作っていない。relay doctor（0.4.0）は
+# そのときトンネルを「未設定」（state=unconfigured・ok=true）で返し、失敗にしない。
+# こちらが state だけ見て「ok 以外は要確認」と読むと、頼んでもいない Cloudflare の
+# 設定を求める橙の行になる。本物の relay の答えと同じ形（投函口あり・トンネル未設定）
+# を返す偽物で見る。
+RL_NOTUNNEL="${RL_HOME}/no tunnel dir/relay"
+mkdir -p "${RL_HOME}/no tunnel dir"
+cat >"${RL_NOTUNNEL}" <<'FAKE'
+#!/bin/zsh
+print -r -- "$*" >>"${RL_HOME}/calls"
+print -r -- '{"ok": true, "checkedAt": "", "fixes": [], "checks": [
+ {"id": "claude-mcp", "name": "Claude CodeのMCP登録", "ok": true, "state": "ok", "detail": "", "hint": ""},
+ {"id": "deposit", "name": "投函口（127.0.0.1:8788）", "ok": true, "state": "ok", "detail": "", "hint": ""},
+ {"id": "tunnel", "name": "Cloudflare Tunnel", "ok": true, "state": "unconfigured", "detail": "~/.cloudflared/config.yml が無い", "hint": ""}]}'
+FAKE
+chmod +x "${RL_NOTUNNEL}"
+rm -rf "${RL_HOME}/Library/Application Support/Mulmo Control"
+: >"${RL_CALLS}"
+RL_RELAY="${RL_NOTUNNEL}" rl ensure
+[ "$(rl_field state)" = "ok" ] \
+  || fail "トンネルを作っていない人の行を、通っていないと言っています（state=$(rl_field state)。未設定は ok 扱い。Issue #222 / 193）"
+[ -z "$(rl_field failing)" ] \
+  || fail "トンネルが未設定なだけで「要確認」に載せています（$(rl_field failing)。Issue #222 / 193）"
+[ "$(rl_fixed)" = "0" ] || fail "トンネルが未設定なだけで relay doctor --fix を呼んでいます（Issue #222 / 193）"
+RL_RELAY="${RL_NOTUNNEL}" rl fix
+[ "$(rl_field state)" = "ok" ] || fail "トンネルが未設定の人が「直す」を押すと、通っていないと言います（Issue #222 / 193）"
+ok "トンネルを作っていない人の行を、赤・橙にしない"
+
 rm -rf "${RL_HOME}"
 trap - EXIT
 
@@ -2380,6 +2410,130 @@ grep -q 'private let relayStatusPath = "\\(logDir)/relay.json"' "${ROOT}/Sources
   && grep -q 'OUT="${LOG_DIR}/relay.json"' "${RELAY_SCRIPT}" \
   || fail "リレーの書き置きの場所が画面とスクリプトで違います（Issue #214 / 183）"
 ok "起動時・巡回・パネルを開いたときにリレーを見る"
+
+# 192 「追加」タブから session-relay を入れると、npm のあと relay install まで走り、
+# どちらの失敗も画面に理由が出る（Issue #222）。
+#
+# リレーの行は relay がある人にしか出ない。入れ方がターミナルの `npm install -g` と
+# `relay install` だけだと、作者以外には出ない行になる。本物の npm は使わない
+# （利用者の環境を変える）。偽の npm と偽の relay で、本物の mulmo-relay-install を走らせる。
+RELAY_INSTALL="${ROOT}/scripts/mulmo-relay-install"
+[ -x "${RELAY_INSTALL}" ] || fail "scripts/mulmo-relay-install がありません（Issue #222 / 192）"
+RI_TMP="$(mktemp -d "${TMPDIR:-/tmp}/mulmo relay install XXXXXX")"
+trap 'rm -rf "${RI_TMP}"' EXIT
+RI_HOME="${RI_TMP}/home it's"
+RI_PREFIX="${RI_HOME}/.local/share/mulmo-family"
+RI_BIN="${RI_HOME}/.local/bin"
+RI_CALLS="${RI_TMP}/calls"
+RI_NPM="${RI_TMP}/fake bin/npm"
+mkdir -p "${RI_HOME}" "${RI_TMP}/fake bin"
+# 偽の npm: `install --prefix <入れ先> <名前@版>` を受けて、relay の実体と .bin のリンクを置く。
+# FAKE_NPM=fail なら 404 で落ちる（404 は待たずに止まるので検査が遅くならない）。
+cat >"${RI_NPM}" <<'FAKE'
+#!/bin/zsh
+print -r -- "npm $*" >>"${RI_CALLS}"
+if [ "${FAKE_NPM:-ok}" = "fail" ]; then
+  print -r -- "npm error code E404"
+  print -r -- "npm error 404 Not Found - GET https://registry.npmjs.org/nope"
+  exit 1
+fi
+prefix="$3"
+pkg="${prefix}/node_modules/@shoujiki-panman/session-relay"
+mkdir -p "${pkg}/bin" "${prefix}/node_modules/.bin"
+cat >"${pkg}/bin/relay.js" <<'RELAY'
+#!/bin/zsh
+print -r -- "relay $*" >>"${RI_CALLS}"
+print -r -- "✓  Claude Code: MCPに relay を登録"
+exit "${FAKE_RELAY_RC:-0}"
+RELAY
+chmod +x "${pkg}/bin/relay.js"
+ln -sf "../@shoujiki-panman/session-relay/bin/relay.js" "${prefix}/node_modules/.bin/relay"
+print -r -- "added 1 package"
+FAKE
+chmod +x "${RI_NPM}"
+ri() {
+  RI_OUT="$(env HOME="${RI_HOME}" RI_CALLS="${RI_CALLS}" MULMO_NPM="${RI_NPM}" MULMO_NPM_CACHE="${RI_TMP}/cache" \
+    MULMO_NPM_RETRY_WAIT=0 "${RELAY_INSTALL}" "${RI_PREFIX}" "${RI_BIN}" 2>&1)"
+}
+ri_reset() { rm -rf "${RI_PREFIX}" "${RI_BIN}"; : >"${RI_CALLS}"; }
+
+ri_reset
+RI_RC=0; ri || RI_RC=$?
+[ "${RI_RC}" = "0" ] || { printf '%s\n' "${RI_OUT}"; fail "session-relay の入れ方が、うまくいく世界で失敗しています（Issue #222 / 192）"; }
+[ "$(readlink "${RI_BIN}/relay")" = "${RI_PREFIX}/node_modules/.bin/relay" ] \
+  || fail "入れた relay を ~/.local/bin に繋いでいません。リレーの行が出ません（Issue #222 / 192）"
+grep -q '^npm install --prefix .* @shoujiki-panman/session-relay@latest$' "${RI_CALLS}" \
+  || fail "session-relay を追加ツールと同じ入れ方（入れ先に npm install）で入れていません（Issue #222 / 192）"
+[ "$(grep -c '^relay install$' "${RI_CALLS}")" = "1" ] \
+  || fail "入れたあと relay install（Claude Code と Codex への登録）を1回走らせていません（Issue #222 / 192）"
+
+ri_reset
+RI_RC=0; FAKE_NPM=fail ri || RI_RC=$?
+[ "${RI_RC}" != "0" ] || fail "npm が失敗したのに、入れたことにしています（Issue #222 / 192）"
+grep -q '^relay' "${RI_CALLS}" && fail "npm が失敗したのに relay を走らせています（Issue #222 / 192）"
+printf '%s\n' "${RI_OUT}" | tail -1 | grep -q 'npm install が失敗' \
+  || fail "npm が失敗した理由を最後の行に書いていません。画面に出ません（${RI_OUT##*$'\n'}。Issue #222 / 192）"
+
+ri_reset
+RI_RC=0; FAKE_RELAY_RC=3 ri || RI_RC=$?
+[ "${RI_RC}" != "0" ] || fail "relay install が失敗したのに、入れたことにしています（Issue #222 / 192）"
+printf '%s\n' "${RI_OUT}" | tail -1 | grep -q '終了コード 3' \
+  || fail "relay install が失敗した理由を最後の行に書いていません（${RI_OUT##*$'\n'}。Issue #222 / 192）"
+rm -rf "${RI_TMP}"
+trap - EXIT
+
+# 入れる先とリレーの行が見る先が同じ。食い違うと、入れたのに行が出ない。
+grep -qF 'tool("mulmo-relay-install")) "\(familyPrefix)" "\(localBin)"' "${ROOT}/Sources/main.swift" \
+  && grep -qF 'private let relayCandidates = [(localBin as NSString).appendingPathComponent("relay")' "${ROOT}/Sources/main.swift" \
+  || fail "session-relay を入れる先と、リレーの行が relay を探す先が違います（Issue #222 / 192）"
+# 名前は1つ。画面の一覧とスクリプトで食い違うと、別のものを入れる。
+grep -q 'packageName: "@shoujiki-panman/session-relay"' "${ROOT}/Sources/main.swift" \
+  && grep -q '^PACKAGE="@shoujiki-panman/session-relay"$' "${RELAY_INSTALL}" \
+  || fail "session-relay の npm の名前が、画面の一覧とスクリプトで違います（Issue #222 / 192）"
+# 押すとこのスクリプトに行き、結果は出力ごと対応表（relayInstallOutcome）が決める。
+# relay install は登録に失敗しても 0 で終わるので、終了コードだけ見ると「入れました」と言う。
+INSTALL_FAMILY_BODY="$(awk '/    func installFamily\(/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${INSTALL_FAMILY_BODY}" | grep -q 'if package.id == relayPackageID {' \
+  && printf '%s\n' "${INSTALL_FAMILY_BODY}" | grep -q 'installRelay(npmPath: npmPath)' \
+  || fail "「追加」の session-relay が relay install まで走る入れ方に繋がっていません（Issue #222 / 192）"
+INSTALL_RELAY_BODY="$(awk '/    private func installRelay\(/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${INSTALL_RELAY_BODY}" | grep -q 'relayInstallOutcome(succeeded: succeeded, log: log)' \
+  && printf '%s\n' "${INSTALL_RELAY_BODY}" | grep -q 'self.showMessage(title: outcome.title, text: outcome.text)' \
+  || fail "session-relay を入れた結果を、対応表を通して画面に出していません（Issue #222 / 192）"
+printf '%s\n' "${INSTALL_RELAY_BODY}" | grep -qE 'runThenOpenFile|\.command' \
+  && fail "session-relay を入れるのにターミナルを開いています（Issue #222 / 192）"
+RUN_BODY="$(awk '/    private func run\(_ command: String/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${RUN_BODY}" | grep -q 'completion?(succeeded)' \
+  || fail "run() が終わったことを呼び手に返していません。入れた結果を読めません（Issue #222 / 192）"
+printf '%s\n' "${DISPLAY_OUT}" | grep -q 'relay の入れ方' \
+  || fail "session-relay を入れた結果の対応表を検査で走らせていません（Issue #222 / 192）"
+# 「追加」の行の一言は、初めて見る人が読める長さ（行の説明と同じ 12 文字、131）。
+FAMILY_NOTE_LONG="$(/usr/bin/python3 -c '
+import re, sys
+bad = [n for n in re.findall(r"^\s*note: \"([^\"]*)\",$", open(sys.argv[1], encoding="utf-8").read(), re.M) if len(n) > 12]
+print("\n".join(bad))' "${ROOT}/Sources/main.swift")"
+[ -z "${FAMILY_NOTE_LONG}" ] || fail "「追加」の行の一言が長すぎます: ${FAMILY_NOTE_LONG}（12文字まで。Issue #222 / 131 / 192）"
+grep -q 'note: "会話を別のAIへ引き継ぐ",' "${ROOT}/Sources/main.swift" \
+  || fail "session-relay の行に、何をする道具かの一言がありません（Issue #222 / 192）"
+ok "「追加」から session-relay を入れると relay install まで走り、失敗は理由ごと画面に出る"
+
+# 194 一括更新が、よそで入れた relay をすり替えない（Issue #222）。
+#
+# 一括更新は npm で入れ直したあと ~/.local/bin/<コマンド> を張り直す。relay は
+# 開発中の checkout へのリンクや npm install -g で入れている人が居て、張り直すと
+# その人の relay がこちらの版に置き換わる。対応表は「状態と表示の対応」が走らせている。
+printf '%s\n' "${DISPLAY_OUT}" | grep -q '一括更新の対象' \
+  || fail "一括更新の対象の対応表を検査で走らせていません（Issue #222 / 194）"
+[ "$(grep -c 'familyPackages.filter { familyUpdatable($0) }' "${ROOT}/Sources/main.swift")" = "2" ] \
+  || fail "一括更新（追加ツール・まとめて）の両方が、よその relay を避ける判定を通っていません（Issue #222 / 194）"
+FAMILY_UPDATABLE_BODY="$(awk '/    private func familyUpdatable\(/ { inside = 1 } inside { print } inside && /^    \}/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${FAMILY_UPDATABLE_BODY}" | grep -q 'resolvingSymlinksInPath' \
+  && printf '%s\n' "${FAMILY_UPDATABLE_BODY}" | grep -q 'familyUpdateTarget(resolvedPath: path, prefix: familyPrefix' \
+  || fail "一括更新の判定が、リンクの先（実体の場所）を見ていません（Issue #222 / 194）"
+awk '/^    FamilyPackage\(/ { block = "" } { block = block $0 "\n" } /^    \),?$/ { if (block ~ /id: relayPackageID/) print block }' "${ROOT}/Sources/main.swift" \
+  | grep -q 'keepsForeignInstall: true' \
+  || fail "session-relay に、よその入れ方を守る印（keepsForeignInstall）がありません（Issue #222 / 194）"
+ok "一括更新は、よそで入れた relay をすり替えない"
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────

@@ -341,6 +341,124 @@ private let digestCases: [DigestCase] = [
     ),
 ]
 
+/// session-relay を入れた結果（Issue #222）。`relay install` の出力は本物の書式
+/// （`✓  ` / `×  ` / `-  ` で始まる行）で持つ。
+private struct RelayInstallCase {
+    let title: String
+    let succeeded: Bool
+    let log: String
+    let ok: Bool
+    let titleHas: String
+    let textHas: String
+}
+
+private let relayInstallCases: [RelayInstallCase] = [
+    RelayInstallCase(
+        title: "両方に登録できた",
+        succeeded: true,
+        log: """
+        added 12 packages in 3s
+        relay install（Claude Code と Codex への登録）
+        ✓  Claude Code: MCPに relay を登録
+        ✓  Claude Code: 「続きから」のスキルを置く
+        ✓  Codex: MCPに relay を登録
+        ✓  Codex: 「続きから」のスキルを置く
+        新しいセッションで「続きから」と言えば、前の会話を読み込みます
+        """,
+        ok: true, titleHas: "入れました", textHas: "続きから"
+    ),
+    RelayInstallCase(
+        title: "Codex が無いだけ（片方には登録できた）",
+        succeeded: true,
+        log: """
+        ✓  Claude Code: MCPに relay を登録
+        -  Claude Code: スキルは置いてある
+        -  Codex: 見つからないので飛ばす
+        """,
+        ok: true, titleHas: "入れました", textHas: "リレー"
+    ),
+    RelayInstallCase(
+        title: "登録済み（入れ直し）",
+        succeeded: true,
+        log: """
+        -  Claude Code: MCPは登録済み
+        -  Claude Code: スキルは置いてある
+        -  Codex: 見つからないので飛ばす
+        """,
+        ok: true, titleHas: "入れました", textHas: "続きから"
+    ),
+    RelayInstallCase(
+        title: "relay install が 0 で終わっても × があれば失敗",
+        succeeded: true,
+        log: """
+        ×  Claude Code: MCPに relay を登録（claude が失敗）
+        ✓  Claude Code: 「続きから」のスキルを置く
+        新しいセッションで「続きから」と言えば、前の会話を読み込みます
+        """,
+        ok: false, titleHas: "登録に失敗", textHas: "Claude Code: MCPに relay を登録（claude が失敗）"
+    ),
+    RelayInstallCase(
+        title: "Claude Code も Codex も無い",
+        succeeded: true,
+        log: """
+        -  Claude Code: 見つからないので飛ばす
+        -  Codex: 見つからないので飛ばす
+        """,
+        ok: false, titleHas: "登録先がありません", textHas: "relay install"
+    ),
+    RelayInstallCase(
+        title: "npm が失敗（最後の行が理由）",
+        succeeded: false,
+        log: """
+        npm error code E404
+        パッケージが見つかりません: @shoujiki-panman/session-relay@latest（名前が違うか、公開されていません）
+        session-relay を入れられませんでした（npm install が失敗）
+        """,
+        ok: false, titleHas: "入れられませんでした", textHas: "npm install が失敗"
+    ),
+    RelayInstallCase(
+        title: "relay install そのものが落ちた",
+        succeeded: false,
+        log: """
+        relay install（Claude Code と Codex への登録）
+        relay install が失敗しました（終了コード 3）
+        """,
+        ok: false, titleHas: "入れられませんでした", textHas: "終了コード 3"
+    ),
+    RelayInstallCase(
+        title: "出力が空でも黙らない",
+        succeeded: false,
+        log: "",
+        ok: false, titleHas: "入れられませんでした", textHas: "ログ"
+    ),
+]
+
+/// 一括更新で入れ直してよいか（Issue #222）。
+private struct UpdateTargetCase {
+    let title: String
+    let resolved: String?
+    let keepsForeign: Bool
+    let expected: Bool
+}
+
+private let familyPrefixForTest = "/Users/someone/.local/share/mulmo-family"
+private let updateTargetCases: [UpdateTargetCase] = [
+    UpdateTargetCase(title: "入っていない", resolved: nil, keepsForeign: false, expected: false),
+    UpdateTargetCase(title: "入っていない（relay）", resolved: nil, keepsForeign: true, expected: false),
+    UpdateTargetCase(title: "ほかの追加ツールはどこに入っていても更新する",
+                     resolved: "/opt/homebrew/bin/mulmocast", keepsForeign: false, expected: true),
+    UpdateTargetCase(title: "このアプリが入れた relay は更新する",
+                     resolved: familyPrefixForTest + "/node_modules/@shoujiki-panman/session-relay/bin/relay.js",
+                     keepsForeign: true, expected: true),
+    UpdateTargetCase(title: "開発中の checkout へのリンクはすり替えない",
+                     resolved: "/Users/someone/work/session-relay/bin/relay.js", keepsForeign: true, expected: false),
+    UpdateTargetCase(title: "npm install -g で入れた relay はすり替えない",
+                     resolved: "/opt/homebrew/lib/node_modules/@shoujiki-panman/session-relay/bin/relay.js",
+                     keepsForeign: true, expected: false),
+    UpdateTargetCase(title: "名前が前だけ同じ別の場所はすり替えない",
+                     resolved: familyPrefixForTest + "-old/node_modules/.bin/relay", keepsForeign: true, expected: false),
+]
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -487,10 +605,31 @@ struct StatusDisplayTest {
             }
         }
 
+        // ⑧ session-relay を入れた結果（Issue #222）
+        for item in relayInstallCases {
+            let outcome = relayInstallOutcome(succeeded: item.succeeded, log: item.log)
+            if outcome.ok != item.ok || !outcome.title.contains(item.titleHas) || !outcome.text.contains(item.textHas) {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  relay の入れ方 \(item.title): 期待 \(item.ok)/\(item.titleHas)/\(item.textHas) / 実際 \(outcome)\n".utf8))
+            }
+        }
+
+        // ⑨ 一括更新の対象（Issue #222）
+        for item in updateTargetCases {
+            let actual = familyUpdateTarget(resolvedPath: item.resolved, prefix: familyPrefixForTest,
+                                            keepsForeignInstall: item.keepsForeign)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  一括更新 \(item.title): 期待 \(item.expected) / 実際 \(actual)\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通りすべて一致")
     }
 }

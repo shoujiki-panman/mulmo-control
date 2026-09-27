@@ -483,6 +483,9 @@ struct FamilyPackage: Identifiable {
     let capability: String
     let useWhere: String
     var isInstallable = true
+    /// このアプリ以外で入れている人が居る物（Issue #222）。一括更新は、実体が
+    /// familyPrefix の中にあるときだけ入れ直す（よその relay をすり替えない）。
+    var keepsForeignInstall = false
 }
 
 struct NoticeMessage: Identifiable {
@@ -527,6 +530,18 @@ private let familyPackages = [
         note: "Slack連携",
         capability: "SlackとMulmoBridge/MulmoClaudeをつなぐための連携ツールです。",
         useWhere: "Slack Bot/App Tokenを設定した上で、Slack連携を動かす環境で使います。"
+    ),
+    // リレーの行（#214）は relay が入っている人にしか出ない。ここから入れられないと、
+    // 作者以外には出ない行になる（Issue #222）。入れたあと `relay install` まで走らせる。
+    FamilyPackage(
+        id: relayPackageID,
+        title: "session-relay",
+        packageName: "@shoujiki-panman/session-relay",
+        commandName: "relay",
+        note: "会話を別のAIへ引き継ぐ",
+        capability: "会話を、別のスレッドや別のAI（Codex など）にそのまま引き継ぐ道具です。",
+        useWhere: "Claude Code や Codex の新しいセッションで「続きから」と言うと、前の会話を読み込みます。",
+        keepsForeignInstall: true
     ),
     FamilyPackage(
         id: "create-plugin",
@@ -1150,6 +1165,10 @@ final class ControlModel: ObservableObject {
             showMessage(title: "npmが見つかりません", text: "先にNode.jsをインストールしてください。")
             return
         }
+        if package.id == relayPackageID {
+            installRelay(npmPath: npmPath)
+            return
+        }
         let prefix = familyPrefix
         let binPath = "\(prefix)/node_modules/.bin/\(package.commandName)"
         run("""
@@ -1158,8 +1177,31 @@ final class ControlModel: ObservableObject {
         if [ -x "\(binPath)" ]; then /bin/ln -sf "\(binPath)" "\(localBin)/\(package.commandName)"; fi
         """, label: "\(package.title)をインストール中")
     }
+    /// session-relay を入れて、Claude Code と Codex に登録する（Issue #222）。
+    ///
+    /// 入れ方はほかの追加ツールと同じ（`mulmo-npm-install` → `~/.local/bin` へリンク）。
+    /// 続く `relay install` は登録に失敗しても 0 で終わるので、結果は出力ごと
+    /// `relayInstallOutcome` に読ませ、失敗なら理由を知らせに出す。
+    private func installRelay(npmPath: String) {
+        let command = """
+        MULMO_NPM="\(npmPath)" \(tool("mulmo-relay-install")) "\(familyPrefix)" "\(localBin)"
+        """
+        run(command, label: "session-relayをインストール中") { succeeded in
+            let log = (try? String(contentsOfFile: actionLogPath, encoding: .utf8)) ?? ""
+            let outcome = relayInstallOutcome(succeeded: succeeded, log: log)
+            self.showMessage(title: outcome.title, text: outcome.text)
+            self.actionText = outcome.ok ? nil : outcome.title
+        }
+    }
+    /// 一括更新の対象。入っていて、よその入れ方をすり替えない物（Issue #222）。
+    private func familyUpdatable(_ package: FamilyPackage) -> Bool {
+        guard package.isInstallable else { return false }
+        let path = familyCommandPath(package).map { ($0 as NSString).resolvingSymlinksInPath }
+        return familyUpdateTarget(resolvedPath: path, prefix: familyPrefix,
+                                  keepsForeignInstall: package.keepsForeignInstall)
+    }
     func updateInstalledFamily() {
-        let packages = familyPackages.filter { $0.isInstallable && familyCommandPath($0) != nil }
+        let packages = familyPackages.filter { familyUpdatable($0) }
         guard !packages.isEmpty else {
             showMessage(title: "追加ツールは未導入です", text: "先に追加タブからインストールしてください。")
             return
@@ -1188,7 +1230,7 @@ final class ControlModel: ObservableObject {
             commands.append(tool("mulmoclaude-update-latest"))
             updatedIds.insert("mulmoclaude")
         }
-        let installedFamily = familyPackages.filter { $0.isInstallable && familyCommandPath($0) != nil }
+        let installedFamily = familyPackages.filter { familyUpdatable($0) }
         if let familyCommand = familyInstallCommand(for: installedFamily) {
             commands.append(familyCommand)
             updated = installedFamily
@@ -1366,7 +1408,8 @@ final class ControlModel: ObservableObject {
         return "\(prefix): \(detail)"
     }
 
-    private func run(_ command: String, label: String? = nil) {
+    private func run(_ command: String, label: String? = nil,
+                     completion: ((Bool) -> Void)? = nil) {
         actionText = label
         Task.detached {
             let process = Process()
@@ -1386,6 +1429,7 @@ final class ControlModel: ObservableObject {
                 // 動かなかったかは、更新後の実測値が知っている。
                 self.recordPendingUpdateReport()
                 self.actionText = succeeded ? nil : Self.failureText()
+                completion?(succeeded)
             }
         }
     }

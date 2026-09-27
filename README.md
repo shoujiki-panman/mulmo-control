@@ -15,13 +15,13 @@ MulmoTerminal / MulmoClaude をメニューバーから起動・停止・更新�
 - MulmoTerminal を開く / 起動 / 停止 / 再起動
 - MulmoClaude を開く / 起動 / 停止 / 再起動（連打しても二重に立ち上がりません）
 - MulmoClaude の Telegram ブリッジを起動・停止といっしょに面倒を見る（既定はオフ）
-- session-relay を入れている人は、スマホなどから預けた会話の受け口を見張り、止まっていたら起こす（既定はオフ）
+- session-relay（会話を、別のスレッドや別のAI（Codex など）にそのまま引き継ぐ道具）を「追加」から入れる。入れている人は、スマホなどから預けた会話の受け口を見張り、止まっていたら起こす（既定はオフ）
 - MulmoTerminal をログイン時に起動し、落ちたら再起動する LaunchAgent を設定
 - MulmoTerminal / MulmoClaude / Mulmo 系 npm パッケージの最新版確認
 - 更新があるとメニューバーアイコンで知らせる
 - Mulmo Control 自身の最新版確認と更新
 - 更新後に、公式 Changelog から短い新機能要約を表示
-- MulmoCast / MulmoCast Vision / MulmoBridge CLI / Slack Bridge の追加インストール
+- MulmoCast / MulmoCast Vision / MulmoBridge CLI / Slack Bridge / session-relay の追加インストール
 - ログ確認
 
 ## 対象
@@ -168,6 +168,12 @@ MulmoClaude 側に置いてください（この画面では扱いません）�
 MulmoCast など、周辺ツールを追加します。
 
 今の版では、追加ツールはこの画面から直接実行するのではなく、MulmoTerminal / MulmoClaude 側の作業から使う想定です。
+
+**session-relay**（会話を、別のスレッドや別のAI（Codex など）にそのまま引き継ぐ道具）もここから入れられます。`インストール` を押すと、npm で入れたあと `relay install` まで走り、Claude Code と Codex に登録します（ターミナルは開きません）。入れたあとは、Claude Code や Codex の新しいセッションで「続きから」と言うと、前の会話を読み込みます。
+
+- 入れられなかったとき・登録に失敗したとき（Claude Code も Codex も見つからないときを含む）は、理由を知らせに出します。登録だけやり直すときは、ターミナルで `relay install` を実行します
+- 入れると、環境タブの「スマホ連携」に `リレー` の行が出ます（最初はオフ。下の「環境」を参照）
+- ほかの方法で relay を入れている場合（`npm install -g` など）は、`まとめて更新` がそれを上書きしません
 
 ### 環境
 
