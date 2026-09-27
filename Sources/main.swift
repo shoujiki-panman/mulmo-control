@@ -48,10 +48,16 @@ let appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString
 /// 無いと MulmoTerminal が開けない、という形にはしない。
 func mulmoTerminalOpenURL(node: String?) -> String {
     guard GuideServer.isOn, let node else { return mtURL }
+    return startGuideProxy(node: node) ? GuideProxy.url : mtURL
+}
+
+/// 中継を立てる（既に答えていれば何もしない）。「開く」と、オンのあいだの見張り
+/// （`keepGuideProxy`・Issue #224）の2か所がここを通る。
+func startGuideProxy(node: String) -> Bool {
     // シェルに渡す文字列ではなく Process に渡す本物のパスなので、tool()（引用符つき）は
     // 使えない。文字列に埋めずに、パスとして繋ぐ（#32 の検査が見ているのは埋め込み）。
     let script = (toolsDir as NSString).appendingPathComponent("mulmoterminal-guide-proxy.mjs")
-    return GuideProxy.shared.ensure(node: node, script: script, upstreamPort: mtPort) ? GuideProxy.url : mtURL
+    return GuideProxy.shared.ensure(node: node, script: script, upstreamPort: mtPort)
 }
 
 private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
@@ -664,6 +670,59 @@ final class ControlModel: ObservableObject {
         guideServing = portIsOpen(Int(GuideProxy.port))
     }
 
+    /// 中継を立て直す間隔。node が無い・ポートを取れない Mac で、巡回のたびに
+    /// プロセスを起こし続けないための間（Issue #38 と同じ理由）。
+    private static let guideProxyRetryInterval: TimeInterval = 60
+    private var lastGuideProxyTry = Date.distantPast
+    private var guideProxyEnsuring = false
+    /// 中継を立てられなかった理由（Issue #224）。行に正直に書く。
+    @Published var guideProxyTrouble: String?
+
+    /// **ガイドがオンのあいだは中継を立てておく。落ちていたら立て直す**（Issue #224）。
+    ///
+    /// 以前は「開く」を押したときにだけ立てていた（#207）。アプリを起動し直した後や
+    /// 中継が落ちた後は、次に「開く」を押すまで止まったままで、いつもの窓から
+    /// 入った人には「ガイドが効かない」とだけ見えた。報告を受けた時点で、34599 は
+    /// 待ち受けているのに 34598 は動いていなかった。
+    ///
+    /// 立っているときは何もしない（`guideServing` を見るだけ）。巡回のたびに通信も
+    /// プロセスも増やさない。
+    func keepGuideProxy(force: Bool = false) {
+        guard GuideServer.isOn else {
+            GuideProxy.shared.stop()
+            guideProxyTrouble = nil
+            return
+        }
+        guard !guideServing, !guideProxyEnsuring else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastGuideProxyTry) >= Self.guideProxyRetryInterval else { return }
+        lastGuideProxyTry = now
+        guideProxyEnsuring = true
+        let known = nodePath
+        Task.detached { [weak self] in
+            // 閉じている間は nodePath を調べていない（#38）。無ければここで1回だけ引く。
+            let node = known ?? commandPath("node")
+            let ok = node.map { startGuideProxy(node: $0) } ?? false
+            await MainActor.run {
+                guard let self else { return }
+                self.guideProxyEnsuring = false
+                self.refreshGuideServing()
+                self.guideProxyTrouble = ok ? nil
+                    : (node == nil ? "node が見つからず、中継を立てられません" : "中継を立てられませんでした")
+            }
+        }
+    }
+
+    /// 画面ガイドの行の「オン」「やめる」。押した結果をすぐ中継に映す。
+    func guideToggled(_ on: Bool) {
+        if on {
+            keepGuideProxy(force: true)
+        } else {
+            keepGuideProxy()
+            refreshGuideServing()
+        }
+    }
+
     /// 開いている間の巡回間隔。画面の表示を追従させるための値。
     private static let activeInterval: TimeInterval = 5
     /// 閉じている間の巡回間隔。メニューバーのアイコン（起動状態・更新の有無）が
@@ -680,6 +739,7 @@ final class ControlModel: ObservableObject {
         ensureClaudeRemoteIfDue(force: true)
         // トンネルや受け口が再起動のあと止まっていたら、ここで起こす（Issue #214）。
         ensureRelayIfDue(force: true)
+        // ガイドの中継は、上の refresh() が keepGuideProxy を通して起動時に立てる（Issue #224）。
         scheduleTimer()
     }
 
@@ -828,6 +888,7 @@ final class ControlModel: ObservableObject {
         // 閉じている間はここまでで済ませる（Issue #38）。
         mtRunning = portIsOpen(mtPort)
         refreshGuideServing()
+        keepGuideProxy()
         // 起動より先に読む。ポートも URL もここから決まるので、古いモードの
         // まま判定すると「起動したのに停止中と出る」になる。
         mcMode = MulmoClaudeMode.current()
@@ -2595,7 +2656,15 @@ struct OperateView: View {
             // 押すだけ・見るだけの物は、器を1枚にまとめる（Issue #192）。
             // 1枚ずつ台紙を立てると、余白と間隔だけで 120pt を超えていた。
             SettingsGroup {
-                SettingsRow(showsSeparator: false) { GuideToggleRow(serving: model.guideServing) }
+                SettingsRow(showsSeparator: false) {
+                    GuideToggleRow(
+                        serving: model.guideServing,
+                        trouble: model.guideProxyTrouble,
+                        directURL: mtURL,
+                        openAction: model.openMT,
+                        changed: model.guideToggled
+                    )
+                }
                 if model.mcInstalled {
                     SettingsRow { TelegramToggleRow(model: model) }
                 }
