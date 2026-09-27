@@ -71,9 +71,12 @@ final class GuideServer {
 /// 入れない方針だった。中継の中身と門番は scripts/mulmoterminal-guide-proxy.mjs が
 /// 持つ。ここは立てる・生きているかを見る・止めるだけ。
 ///
-/// **「開く」を押したときにだけ立てる。** ガイドを使わない人の Mac に、常駐の
-/// プロセスを1本増やさない。立てられなければ呼ぶ側は直接開く（中継が無いと
-/// MulmoTerminal が開けない、という形にはしない）。
+/// **ガイドがオンのあいだだけ立てておく**（Issue #224。ControlModel.keepGuideProxy）。
+/// 最初は「開く」を押したときにだけ立てていたが、アプリを起動し直すと次に「開く」を
+/// 押すまで止まったままで、いつもの窓から入った人には「効かない」とだけ見えた。
+/// オフにしている人の Mac には、常駐のプロセスを1本も増やさない。
+/// 立てられなければ呼ぶ側は直接開く（中継が無いと MulmoTerminal が開けない、
+/// という形にはしない）。
 final class GuideProxy: @unchecked Sendable {
     static let shared = GuideProxy()
     /// 中継の待ち受け。**scripts/mulmoterminal-guide-proxy.mjs の既定と揃える**（check.sh が見ている）。
@@ -150,19 +153,35 @@ struct GuideToggleRow: View {
     /// 「開く」で新しい窓が増えるので、前から開いていた窓を見たまま「出ない」と
     /// 読めてしまう。実際そうなった。
     let serving: Bool
+    /// 中継を立てられなかった理由。あれば、それをそのまま書く（Issue #224）。
+    let trouble: String?
+    /// いつもの（中継を通らない）MulmoTerminal のアドレス。**そこには出ない**ことを書く。
+    let directURL: String
+    /// 「開く」。ガイドがオンなら中継の窓を開く（ControlModel.openMT）。
+    let openAction: () -> Void
+    /// 「オン」「やめる」を押したあと。中継を立てる・止めるをすぐ映す。
+    let changed: (Bool) -> Void
     @AppStorage(GuideServer.defaultsKey) private var on: Bool = true
+
+    /// 中継のアドレスは 127.0.0.1、いつもの窓は localhost。**名前が違うと別の窓だと
+    /// 気づける**ので、書き方をそろえずにそのまま出す。
+    private var directHost: String {
+        directURL.replacingOccurrences(of: "http://", with: "")
+    }
 
     private var detail: String {
         if !on { return "オフ（元の英語ツールチップに戻ります）" }
-        return serving
-            ? "127.0.0.1:\(GuideProxy.port) の画面で出ています"
-            : "「開く」から開いた画面で、日本語の説明が出ます"
+        if serving {
+            return "127.0.0.1:\(GuideProxy.port) の窓で出ます\n\(directHost) の窓には出ません"
+        }
+        if let trouble { return trouble }
+        return "中継を立てています（\(directHost) の窓には出ません）"
     }
 
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(on ? Palette.ok : Palette.secondaryText)
+                .fill(on ? (serving ? Palette.ok : Palette.warn) : Palette.secondaryText)
                 .frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 2) {
                 Text("MulmoTerminal 画面ガイド")
@@ -171,16 +190,31 @@ struct GuideToggleRow: View {
                 Text(detail)
                     .font(AppFont.small)
                     .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button(on ? "やめる" : "オン") { on.toggle() }
-                .buttonStyle(.plain)
-                .font(AppFont.action)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .background(on ? Palette.secondaryText : Palette.accent, in: Capsule())
+            if on {
+                // ガイド付きの窓を開く口を、行そのものに置く（Issue #224）。
+                // 運用タブの上の「開く」と同じ動き。
+                Button("開く", action: openAction)
+                    .buttonStyle(.plain)
+                    .font(AppFont.action)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(Palette.accent, in: Capsule())
+            }
+            Button(on ? "やめる" : "オン") {
+                on.toggle()
+                changed(on)
+            }
+            .buttonStyle(.plain)
+            .font(AppFont.action)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(on ? Palette.secondaryText : Palette.accent, in: Capsule())
         }
     }
 }

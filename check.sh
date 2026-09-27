@@ -1274,6 +1274,72 @@ printf '%s\n' "${OPEN_MT}" | grep -q 'noticeWhichWindow' \
   || fail "「開く」が、どの窓を見ればいいかを知らせていません（209）"
 ok "ガイドがどこで出ているかが、行と知らせの両方から分かる"
 
+# 195 説明は全部「何をするか・どんな時に使うか」の2段で、吹き出しをはみ出させない
+# 長さ。当てる印が、入っている MulmoTerminal の配布物に実在する（Issue #224）。
+#
+# 1段だけの説明は「何をするか」は分かっても**いつ押すのか**が分からない、と言われた。
+# 印は上流が変えると黙って外れるだけなので、配布物を読んで突き合わせる。
+# MulmoTerminal が入っていない Mac（CI）では印の段だけ飛ばし、そう書く。
+GUIDE_TEXT_TEST="${ROOT}/tests/guide-text-test.mjs"
+[ -f "${GUIDE_TEXT_TEST}" ] || fail "画面ガイドの説明の検査がありません（224）"
+GUIDE_TEXT_OUT=""
+GUIDE_TEXT_RC=0
+GUIDE_TEXT_OUT="$(node "${GUIDE_TEXT_TEST}" 2>&1)" || GUIDE_TEXT_RC=$?
+if [ "${GUIDE_TEXT_RC}" != "0" ]; then
+  printf '%s\n' "${GUIDE_TEXT_OUT}"
+  fail "画面ガイドの説明が2段になっていないか、長すぎるか、MulmoTerminal に無い印に当てています（224）"
+fi
+ok "${GUIDE_TEXT_OUT}"
+
+# 196 ガイドがオンのあいだは中継を立てておき、落ちたら立て直す。オフなら止める。
+# 「開く」は中継を立てる同じ1本を通る（Issue #224）。
+#
+# 以前は「開く」を押したときにだけ立てていた。アプリを起動し直すと次に押すまで
+# 止まったままで、報告の時点で 34599 は動いているのに 34598 は動いていなかった。
+KEEP_FN="$(awk '/    func keepGuideProxy\(/,/^    }$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+[ -n "${KEEP_FN}" ] || fail "ガイドの中継を立てておく見張りがありません（224）"
+REFRESH_FN="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+printf '%s\n' "${REFRESH_FN}" | grep -q 'keepGuideProxy()' \
+  || fail "巡回が中継を見ていません。落ちたまま、次に「開く」を押すまで戻りません（224）"
+printf '%s\n' "${KEEP_FN}" | grep -q 'guard GuideServer.isOn else' \
+  || fail "見張りがガイドのオン／オフを見ていません（224）"
+printf '%s\n' "${KEEP_FN}" | grep -q 'GuideProxy.shared.stop()' \
+  || fail "ガイドをオフにしても中継が残ります。使わない人の Mac に常駐が増えます（224）"
+# 立っているときは何もしない。巡回のたびにプロセスを起こすと電池を食う（#38）。
+printf '%s\n' "${KEEP_FN}" | grep -q 'guard !guideServing' \
+  || fail "中継が立っているのに、巡回のたびに立て直そうとします（224 / 38）"
+printf '%s\n' "${KEEP_FN}" | grep -q 'guideProxyRetryInterval' \
+  || fail "中継を立てられない Mac で、巡回のたびにプロセスを起こし続けます（224 / 38）"
+printf '%s\n' "${KEEP_FN}" | grep -q 'startGuideProxy(' \
+  || fail "見張りが、「開く」と別の立て方をしています（224）"
+printf '%s\n' "${OPEN_FN}" | grep -q 'startGuideProxy(' \
+  || fail "「開く」が、見張りと別の立て方をしています（224）"
+ok "ガイドがオンのあいだ中継を立てておき、落ちたら立て直す。「開く」も同じ1本を通る"
+
+# 197 ガイドの行が、いつもの窓には出ないことと立てられなかった理由を書き、
+# ガイド付きの窓を開く口を持つ（Issue #224）。
+# 中継が立っているときの文で見る。「立てています」の文にも同じ言い回しがあるので、
+# 語だけで探すと、肝心の文を消しても通る（壊して試したら通った）。
+printf '%s\n' "${GUIDE_ROW}" | grep -qF 'の窓で出ます\n\(directHost) の窓には出ません' \
+  || fail "ガイドの行が、中継の窓で出ているときに、いつもの窓には出ないことを書いていません（224）"
+printf '%s\n' "${GUIDE_ROW}" | grep -q 'if let trouble' \
+  || fail "ガイドの行が、中継を立てられなかった理由を書いていません（224）"
+printf '%s\n' "${GUIDE_ROW}" | grep -q 'Button("開く", action: openAction)' \
+  || fail "ガイドの行に、ガイド付きの窓を開く口がありません（224）"
+# 運用タブには MulmoTerminal 本体の「開く」（ServicePanel）も同じ綴りで居るので、
+# ガイドの行を組んでいる所だけを切り出して見る。
+GUIDE_USE="$(printf '%s\n' "${OPERATE}" | awk '/GuideToggleRow\(/,/^[[:space:]]*\)$/')"
+[ -n "${GUIDE_USE}" ] || fail "運用タブにガイドの行が見つかりません（224）"
+printf '%s\n' "${GUIDE_USE}" | grep -q 'openAction: model.openMT' \
+  || fail "ガイドの行の「開く」が、中継を開く openMT に繋がっていません（224）"
+printf '%s\n' "${GUIDE_USE}" | grep -q 'directURL: mtURL' \
+  || fail "ガイドの行に、いつもの窓のアドレスを渡していません（224）"
+printf '%s\n' "${GUIDE_USE}" | grep -q 'changed: model.guideToggled' \
+  || fail "ガイドの「オン」「やめる」が、中継を立てる・止めるに繋がっていません（224）"
+ok "ガイドの行が、出ない窓と止まった理由を書き、ガイド付きの窓を開ける"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
