@@ -20,6 +20,9 @@
 //      ブラウザではないもの）はブラウザの攻撃経路ではないので通す
 // 2. **ループバックだけで待ち受ける。** LAN に開くと同じネットワークの誰でも入れる。
 // 3. **触るのは HTML だけ。** API・WebSocket・SSE は1バイトも書き換えずに通す。
+//    Skill メニューの一覧（`/api/skills`）だけは、流しながら**横で写しを読む**
+//    （英語の説明を裏で訳すため・Issue #226。詳しくは mulmoterminal-guide-skill-ja.mjs）。
+//    写しを読むだけで、画面へ返すものは変えない。
 //
 // check.sh はこの中継を偽の MulmoTerminal に当てて**実際に走らせ**、よそのサイトを
 // 名乗る要求が断られることまで見ている。
@@ -28,12 +31,14 @@
 //   GUIDE_LISTEN          待ち受けるポート（既定 34598。Swift の GuideProxy.port と揃える）
 //   GUIDE_UPSTREAM_PORT   MulmoTerminal のポート（必須。既定は持たない・Issue #7）
 //   GUIDE_JS              差し込むスクリプト（既定は同梱の ../guide/mulmoterminal-guide.js）
+//   GUIDE_CLAUDE          説明を訳させる claude（既定はよくある置き場所を探す・Issue #226）
 
 import http from "node:http";
 import net from "node:net";
 import zlib from "node:zlib";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createTranslator } from "./mulmoterminal-guide-skill-ja.mjs";
 
 const LOOPBACK = "127.0.0.1";
 const LISTEN = Number(process.env.GUIDE_LISTEN ?? 34598);
@@ -48,6 +53,11 @@ if (!Number.isInteger(UPSTREAM_PORT) || UPSTREAM_PORT <= 0) {
 const GUIDE_JS = process.env.GUIDE_JS ?? fileURLToPath(new URL("../guide/mulmoterminal-guide.js", import.meta.url));
 const GUIDE_PATH = "/__mulmo-guide.js";
 const TAG = `<script src="${GUIDE_PATH}" defer></script>`;
+/** 英語だったスキルの説明の訳（原文 → 訳）を返す口。ガイドが吹き出しに使う（Issue #226）。 */
+const SKILL_JA_PATH = "/__mulmo-guide/skill-ja";
+/** 写しを読む一覧。MulmoTerminal の Skill メニューがここから説明を取っている。 */
+const SKILLS_API = "/api/skills";
+const translator = createTranslator();
 
 // ── 門番 ─────────────────────────────────────────────────────
 
@@ -105,6 +115,25 @@ function serveGuide(res) {
   res.end(body);
 }
 
+function serveSkillJa(res) {
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(JSON.stringify({ translations: translator.table() }));
+}
+
+/** 流しながら写しを取り、終わったら訳す係に渡す。流す中身には触らない。 */
+function teeSkills(upRes) {
+  const chunks = [];
+  upRes.on("data", (chunk) => chunks.push(chunk));
+  upRes.on("end", () => {
+    try {
+      const body = JSON.parse(decode(Buffer.concat(chunks), upRes.headers["content-encoding"]).toString("utf8"));
+      translator.observe(body?.skills);
+    } catch {
+      // 読めなければ訳さないだけ。画面には原文が出る。
+    }
+  });
+}
+
 function sendRewrittenHtml(upRes, res) {
   const chunks = [];
   upRes.on("data", (chunk) => chunks.push(chunk));
@@ -139,6 +168,10 @@ const server = http.createServer((req, res) => {
     serveGuide(res);
     return;
   }
+  if (req.url === SKILL_JA_PATH) {
+    serveSkillJa(res);
+    return;
+  }
   const wantsHtml = (req.headers.accept ?? "").includes("text/html");
   const headers = upstreamHeaders(req.headers);
   if (wantsHtml) headers["accept-encoding"] = "identity";
@@ -146,6 +179,8 @@ const server = http.createServer((req, res) => {
     { host: LOOPBACK, port: UPSTREAM_PORT, method: req.method, path: req.url, headers },
     (upRes) => {
       if (!(upRes.headers["content-type"] ?? "").includes("text/html")) {
+        const isSkills = (req.url ?? "").split("?")[0] === SKILLS_API && upRes.statusCode === 200;
+        if (isSkills) teeSkills(upRes);
         res.writeHead(upRes.statusCode ?? 502, upRes.headers);
         upRes.pipe(res);
         return;

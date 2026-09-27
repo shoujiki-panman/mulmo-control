@@ -1340,6 +1340,54 @@ printf '%s\n' "${GUIDE_USE}" | grep -q 'changed: model.guideToggled' \
   || fail "ガイドの「オン」「やめる」が、中継を立てる・止めるに繋がっていません（224）"
 ok "ガイドの行が、出ない窓と止まった理由を書き、ガイド付きの窓を開ける"
 
+# 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
+#
+# 同梱スキル（mulmoterminal-*）はガイドの表の日本語（2段）、本人やプロジェクトの
+# スキルはその場の説明を1〜2文に畳んで出す。表の中身・配布物との突き合わせ・畳み方は
+# 195 と同じ検査（tests/guide-text-test.mjs）が見ている。ここでは画面の側の配線を見る。
+# - 説明を引く入口（explain）が、まず Skill メニューを見ること
+# - 項目の説明を、預かっている title（mtgTitle）からも読むこと。吹き出しを出した瞬間に
+#   title を預かるので、これが無いと2回目のマウスの動きで説明が消える
+# - Skill メニューを、開くボタンの title で見分けること。Run のメニューも同じ形の項目を
+#   持ち、そちらの title はコマンドそのもの。見分けないとコマンドを説明として出す
+printf '%s\n' "${GUIDE_TEXT_OUT}" | grep -qE '同梱スキル [0-9]+ 本すべてに日本語あり|入っていないので' \
+  || fail "画面ガイドの検査が、同梱スキルの日本語を見ていません（226）"
+GUIDE_EXPLAIN="$(awk '/  function explain\(el\) \{/,/^  }$/' "${GUIDE_JS}" | grep -vE '^[[:space:]]*//')"
+printf '%s\n' "${GUIDE_EXPLAIN}" | grep -q 'explainSkill(el)' \
+  || fail "画面ガイドが Skill メニューの項目に説明を出していません（226）"
+grep -vE '^[[:space:]]*//' "${GUIDE_JS}" | grep -q 'getAttribute("title") ?? node.dataset.mtgTitle' \
+  || fail "Skill の説明を、預かっている title から読んでいません。2回目の動きで説明が消えます（226）"
+GUIDE_SKILL_FN="$(awk '/  function explainSkill\(el\) \{/,/^  }$/' "${GUIDE_JS}" | grep -vE '^[[:space:]]*//')"
+printf '%s\n' "${GUIDE_SKILL_FN}" | grep -q '!isSkillButton(opener)' \
+  || fail "Skill メニューを開くボタンで見分けていません。Run のメニューのコマンドを説明として出します（226）"
+ok "Skill メニューの項目とボタンに説明を出す（同梱は日本語の2段・それ以外はその場の説明を畳む）"
+
+# 199 英語だったスキルの説明を、この Mac の Claude Code に一度だけ訳させて控える（Issue #226）。
+# 200 中継は Skill の一覧を1バイトも変えずに流し、訳を返す口は門番を通り、パスを返さない。
+#
+# 偽の claude と、本物の中継（偽の HOME・偽の MulmoTerminal）で走らせる。
+# 英語の判定は本人の Mac の japanese-guard（Stop フック）と同じ閾値。英語でないもの・
+# 同梱スキルは訳させない。失敗・時間切れ・英語のままの返事は捨てて原文を出す。控えが
+# あれば呼ばない。1つの窓で訳させる本数に上限がある。渡すのは説明の文だけ。
+SKILL_JA_TEST="${ROOT}/tests/guide-skill-ja-test.mjs"
+[ -f "${SKILL_JA_TEST}" ] || fail "スキルの説明の訳の検査がありません（226）"
+SKILL_JA_OUT=""
+SKILL_JA_RC=0
+SKILL_JA_OUT="$(node "${SKILL_JA_TEST}" 2>&1)" || SKILL_JA_RC=$?
+if [ "${SKILL_JA_RC}" != "0" ]; then
+  printf '%s\n' "${SKILL_JA_OUT}"
+  fail "スキルの説明の訳が期待どおりに動いていません（226）"
+fi
+ok "${SKILL_JA_OUT}"
+# 訳の口は門番（refusal）の後ろにあること。上の検査は実際に投げて見ているが、
+# 並びでも止める（門番より前に置くと、よそのサイトから claude の使用量を食わせられる）。
+PROXY_HANDLER="$(awk '/^const server = http.createServer/,/^}\);$/' "${PROXY_JS}" | grep -vE '^[[:space:]]*//')"
+REFUSAL_LINE="$(printf '%s\n' "${PROXY_HANDLER}" | grep -n 'refusal(req.headers)' | head -1 | cut -d: -f1)"
+SKILL_JA_LINE="$(printf '%s\n' "${PROXY_HANDLER}" | grep -n 'SKILL_JA_PATH' | head -1 | cut -d: -f1)"
+[ -n "${REFUSAL_LINE}" ] && [ -n "${SKILL_JA_LINE}" ] && [ "${REFUSAL_LINE}" -lt "${SKILL_JA_LINE}" ] \
+  || fail "訳の口が門番より前にあります（226）"
+ok "訳の口は門番の後ろ"
+
 # 設定ファイルを shell として実行しない（Issue #67）。
 #
 # `. "${CONFIG}"` / `source "${CONFIG}"` は、app-info.env に紛れた
