@@ -71,7 +71,7 @@ cat > "${work}/last-stdin.txt"
 case "\${FAKE_MODE:-ok}" in
   fail) exit 1 ;;
   slow) exec sleep 5 ;;
-  english) echo "This reply is still in English and should be thrown away by the proxy." ;;
+  english) echo "訳: This reply is still in English and should be thrown away by the proxy." ;;
   *) echo "架空のスキルの説明を日本語にしたものです。" ;;
 esac
 `);
