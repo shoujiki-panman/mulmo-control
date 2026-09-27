@@ -333,6 +333,33 @@ enum MulmoClaudeTelegram {
     }
 }
 
+/// リレーを見張るか（Issue #220）。
+///
+/// 見張りは `relay` がある人に常に回っていた（#214）。5分おきに `relay doctor` が
+/// node を1本立てるうえ、行には「止まっています」「直す」しか出ず、頼んでいない
+/// 人には何の行なのか分からなかった（1.0.78 を入れた人の声）。Telegram の行
+/// （#187）と同じく**既定は off**、使う人だけが入れる。
+///
+/// 置き場所と読み方は MulmoClaudeTelegram と同じ理由で揃えてある。対応する読み手は
+/// `scripts/mulmo-relay`（オフなら何もしない）。
+enum RelayWatch {
+    static let filePath = "\(homeDir)/Library/Application Support/Mulmo Control/relay-watch"
+
+    static func isOn() -> Bool {
+        guard let text = try? String(contentsOfFile: filePath, encoding: .utf8) else { return false }
+        let word = text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return word == "on"
+    }
+}
+
+/// 書くのは1語だけ。読む側（`scripts/mulmo-relay`）は on 以外をオフと読む。
+func writeRelayWatch(_ on: Bool) {
+    let path = RelayWatch.filePath
+    let dir = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try? "\(on ? "on" : "off")\n".write(toFile: path, atomically: true, encoding: .utf8)
+}
+
 /// 書くのは1語だけ。読む側（`scripts/mulmoclaude-telegram`）が知らない語を
 /// off へ倒すので、壊れた値が起動コマンドまで届くことはない。
 func writeMulmoClaudeTelegram(_ on: Bool) {
@@ -560,6 +587,8 @@ final class ControlModel: ObservableObject {
     @Published var codexRemote = readAgentRemote(codexRemotePath)
     /// `relay` がある人にだけ、リレーの行を出す（Issue #214）。
     @Published var relayInstalled = relayCommandExists()
+    /// リレーを見張るか（Issue #220）。既定はオフ。オフの間は `mulmo-relay` を走らせない。
+    @Published var relayOn = RelayWatch.isOn()
     @Published var relay = readRelayStatus(relayStatusPath)
     @Published var familyInstalled: [String: Bool] = [:]
     @Published var actionText: String?
@@ -812,6 +841,7 @@ final class ControlModel: ObservableObject {
         codexRemote = readAgentRemote(codexRemotePath)
         ensureClaudeRemoteIfDue()
         relayInstalled = relayCommandExists()
+        relayOn = RelayWatch.isOn()
         relay = readRelayStatus(relayStatusPath)
         ensureRelayIfDue()
         notifyIfNeeded(for: updates.items)
@@ -993,8 +1023,10 @@ final class ControlModel: ObservableObject {
 
     /// 落ちていたら起こす。起こすかどうかの判断はすべてスクリプト（`ensure`）と
     /// `relay doctor` が持つ。ここは呼ぶ間隔だけ。
+    ///
+    /// オフ（既定）の間は何も走らせない（Issue #220）。シェルを起こす前に見る。
     private func ensureRelayIfDue(force: Bool = false) {
-        guard !relayEnsuring, relayInstalled else { return }
+        guard !relayEnsuring, relayInstalled, relayOn else { return }
         let now = Date()
         guard force || now.timeIntervalSince(lastRelayEnsure) >= Self.relayEnsureInterval else { return }
         lastRelayEnsure = now
@@ -1016,7 +1048,21 @@ final class ControlModel: ObservableObject {
 
     /// 「直す」「確かめる」「再開」。押したのは人なので、止めていた自動の修理も再開する。
     func fixRelay() {
+        guard relayOn else { return }
         run("\(tool("mulmo-relay")) fix", label: "リレーを確かめ直しています")
+    }
+
+    /// リレーを見張るかを切り替える（Issue #220）。オンにしたらすぐ1回見る
+    /// （押した人は結果を待っている）。オフにしたら、以後は何も走らせない。
+    func setRelayOn(_ on: Bool) {
+        guard on != relayOn else { return }
+        writeRelayWatch(on)
+        relayOn = on
+        if on {
+            ensureRelayIfDue(force: true)
+        } else {
+            actionText = "リレーは見張らないようにしました"
+        }
     }
 
     func startCodexRemote() {
@@ -2941,15 +2987,20 @@ struct SetupPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 // リレー（Issue #214）。relay コマンドがある人にだけ出す。
+                // 既定はオフで、オフの間は「オフ」「オン」と何をするものかだけ（Issue #220）。
                 if model.relayInstalled {
+                    let relayLine = relayRow(on: model.relayOn, status: model.relay, now: Date().timeIntervalSince1970)
                     SetupRow(
                         title: "リレー",
-                        detail: model.relay.detail,
-                        ok: relayOK(model.relay),
-                        buttonTitle: relayButtonTitle(model.relay),
-                        action: model.fixRelay
+                        detail: relayLine.detail,
+                        ok: relayLine.ok,
+                        idle: relayLine.idle,
+                        buttonTitle: relayLine.buttonTitle,
+                        action: model.relayOn ? model.fixRelay : { model.setRelayOn(true) },
+                        extraTitle: relayLine.extraTitle,
+                        extraAction: { model.setRelayOn(false) }
                     )
-                    ForEach(relayNotes(model.relay, now: Date().timeIntervalSince1970), id: \.self) { note in
+                    ForEach(relayLine.notes, id: \.self) { note in
                         Text(note)
                             .font(AppFont.small)
                             .foregroundStyle(Palette.secondaryText)
@@ -3191,6 +3242,8 @@ struct SetupRow: View {
     let title: String
     let detail: String
     let ok: Bool
+    /// 自分で切っているもの（Issue #220）。印を橙（要確認）ではなく灰にする。
+    var idle = false
     var buttonTitle: String?
     var action: (() -> Void)?
     /// 押す所が2つ要る行のため（Issue #160）。エージェントの連携は「開く」と
@@ -3201,7 +3254,7 @@ struct SetupRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(ok ? Palette.ok : Palette.warn)
+                .fill(ok ? Palette.ok : (idle ? Palette.secondaryText : Palette.warn))
                 .frame(width: 7, height: 7)
             Text(title)
                 .font(AppFont.rowTitle)

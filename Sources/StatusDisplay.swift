@@ -353,3 +353,40 @@ func relayNotes(_ status: RelayStatus, now: Double) -> [String] {
     }
     return notes
 }
+
+/// リレーの行の見た目1式（Issue #220）。
+struct RelayRow: Equatable {
+    let detail: String
+    /// 印を緑にしてよいか。
+    let ok: Bool
+    /// オフ（見張っていない）。印を橙ではなく灰にする — 頼んでいないものを
+    /// 「要確認」の色で出さない。
+    let idle: Bool
+    let buttonTitle: String?
+    /// オンのときの「やめる」。
+    let extraTitle: String?
+    let notes: [String]
+}
+
+/// オフのときに行の下に出す一言（Issue #220）。
+///
+/// 1.0.78 で行を見た人に「リレー機能ない人は何だかわからないんじゃない」と
+/// 言われた。行には「止まっています」「直す」しか出ておらず、**何をする行なのか**が
+/// どこにも書いていなかった。Telegram の行（#194）と同じく、**手に入るもの**を
+/// 書く。見出しの「リレー」は繰り返さない。行の説明は 12 文字までなので（131）、
+/// 長い説明は行の下に出す。
+let relayOffNote = "オンにすると、スマホなどから預けた会話の受け口を見張り、止まっていたら起こします"
+
+/// リレーの行を、オン／オフと状態から決める（Issue #220）。
+///
+/// **オフのときは書き置き（relay.json）を見ない。** オンだった頃の「止まって
+/// います」が残っていても、見張っていないものに「直す」を出さない。
+func relayRow(on: Bool, status: RelayStatus, now: Double) -> RelayRow {
+    guard on else {
+        return RelayRow(detail: "オフ", ok: false, idle: true, buttonTitle: "オン",
+                        extraTitle: nil, notes: [relayOffNote])
+    }
+    return RelayRow(detail: status.detail, ok: relayOK(status), idle: false,
+                    buttonTitle: relayButtonTitle(status), extraTitle: "やめる",
+                    notes: relayNotes(status, now: now))
+}

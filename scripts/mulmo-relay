@@ -13,6 +13,10 @@ set -u
 # 見る・直すの中身は relay 側（`relay doctor`）が持つ。ここは呼ぶ回数と、
 # 何をしたかの控えだけ。**relay が無い人には何もしない**（行も出ない）。
 #
+# **見張りをオンにしていない人にも何もしない**（Issue #220、既定はオフ）。画面は
+# オフの間これを呼ばないが、呼ばれても relay doctor（node を1本立てる）まで
+# 進まないよう、ここでも見る。
+#
 # relay の投函口は、受け口（`relay mcp-deposit-http`）と Cloudflare Tunnel の
 # 2つの常駐で成り立つ。Tunnel が exit 0 で止まり、KeepAlive があるのに launchd が
 # 起こさなかったことが実際にある。止まっている間、スマホからは預けられないが、
@@ -54,6 +58,22 @@ DOCTOR_TIMEOUT=90
 # 0本の形を捕まえる（Issue #216）。未確認（本数を決められない）は ok 扱いで届くので、
 # 下の state == "down" の条件で起こさない。
 FIXABLE="deposit tunnel-agent tunnel-ready tunnel-reach"
+
+# 見張るか（Issue #220）。書くのは画面（「オン」「やめる」）。on の1語のときだけ
+# 見張り、無い・空・知らない語はオフ（Telegram ブリッジ #187 と同じ扱い）。
+# STATE_DIR には従わない — 画面は決まった場所しか見ないので、揃えるならここも固定。
+WATCH_FILE="${MULMO_RELAY_WATCH_FILE:-${HOME}/Library/Application Support/Mulmo Control/relay-watch}"
+
+watch_on() {
+  [ -f "${WATCH_FILE}" ] || return 1
+  [ "$(/usr/bin/head -1 "${WATCH_FILE}" 2>/dev/null | /usr/bin/tr -d '[:space:]')" = "on" ]
+}
+
+# オフなら、ログの置き場所も作らずに帰る。
+if ! watch_on; then
+  [ "${1:-status}" = "fix" ] && echo "リレーの見張りはオフです"
+  exit 0
+fi
 
 mkdir -p "${LOG_DIR}" "${STATE_DIR}"
 
