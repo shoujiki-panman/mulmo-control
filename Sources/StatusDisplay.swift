@@ -390,3 +390,66 @@ func relayRow(on: Bool, status: RelayStatus, now: Double) -> RelayRow {
                     buttonTitle: relayButtonTitle(status), extraTitle: "やめる",
                     notes: relayNotes(status, now: now))
 }
+
+// MARK: - session-relay を「追加」から入れる（Issue #222）
+
+/// session-relay の追加ツールとしての id。入れたあとに `relay install` まで走らせる印。
+let relayPackageID = "session-relay"
+
+/// 入れ終わったあとに出す知らせ1式。
+struct RelayInstallOutcome: Equatable {
+    /// 入って、どこかに登録できた。
+    let ok: Bool
+    let title: String
+    let text: String
+}
+
+/// `mulmo-relay-install` の結果（終了コードと出力）から、出す知らせを決める。
+///
+/// **`relay install` は登録に失敗しても 0 で終わる**（`×  Claude Code: MCPに relay を登録
+/// （claude が失敗）` の行を出すだけ）。終了コードだけ見ると「入れました」と言ってしまい、
+/// 利用者は「続きから」が効かない理由に辿り着けない。だから出力も読む。
+/// Claude Code も Codex も見つからなかったときも、何も登録していないので「入れました」とは言わない。
+func relayInstallOutcome(succeeded: Bool, log: String) -> RelayInstallOutcome {
+    let lines = log.split(whereSeparator: \.isNewline).map { trimmedLine($0) }.filter { !$0.isEmpty }
+    guard succeeded else {
+        return RelayInstallOutcome(ok: false, title: "session-relay を入れられませんでした",
+                                   text: lines.last ?? "理由を取れませんでした。ログを確認してください")
+    }
+    let failed = lines.filter { $0.hasPrefix("×") }
+        .map { trimmedLine($0.dropFirst()) }
+    if !failed.isEmpty {
+        return RelayInstallOutcome(ok: false, title: "session-relay は入りましたが、登録に失敗しました",
+                                   text: failed.joined(separator: "\n") + "\n" + relayInstallRetryHint)
+    }
+    let skipped = lines.filter { $0.contains("見つからないので飛ばす") }
+    if skipped.count >= 2 {
+        return RelayInstallOutcome(ok: false, title: "session-relay は入りましたが、登録先がありません",
+                                   text: "Claude Code も Codex も見つかりませんでした。どちらかを入れてから、" + relayInstallRetryHint)
+    }
+    return RelayInstallOutcome(ok: true, title: "session-relay を入れました", text: relayInstalledNote)
+}
+
+/// 行の前後の空白を落とす。Foundation を読まない（このファイルは外に触らない）ので自前で。
+private func trimmedLine(_ line: Substring) -> String {
+    String(line.drop(while: { $0.isWhitespace }).reversed().drop(while: { $0.isWhitespace }).reversed())
+}
+
+/// 登録をやり直す道。入ったあとは「追加」タブから消えるので、もう一度押す口は無い。
+let relayInstallRetryHint = "ターミナルで relay install を実行すると、登録をやり直せます"
+
+/// 入ったときの一言。何ができるようになったかと、環境タブに出る行が何かを言う。
+let relayInstalledNote = "Claude Code や Codex の新しいセッションで「続きから」と言うと、前の会話を読み込みます。"
+    + "環境タブに「リレー」の行が出ます（スマホから預ける受け口を使うときだけオンにします）"
+
+/// 一括更新で入れ直してよいか（Issue #222）。
+///
+/// 一括更新は npm で入れ直したあと `~/.local/bin/<コマンド>` のリンクを張り直す。
+/// relay は、このアプリ以外（開発中の checkout へのリンク・`npm install -g`）で
+/// 入れている人が居る。張り直すと、その人の relay がこちらの版にすり替わる。
+/// `keepsForeignInstall` の物は、実体がこのアプリの入れ先の中にあるときだけ更新する。
+func familyUpdateTarget(resolvedPath: String?, prefix: String, keepsForeignInstall: Bool) -> Bool {
+    guard let resolvedPath else { return false }
+    guard keepsForeignInstall else { return true }
+    return resolvedPath.hasPrefix(prefix.hasSuffix("/") ? prefix : prefix + "/")
+}
