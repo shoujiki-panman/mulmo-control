@@ -1167,6 +1167,67 @@ if [ -n "${BACKTICK}" ]; then
 fi
 ok "画面に出す文に記号が紛れていない"
 
+# ── 入れる物が増えても、運用タブは伸びない（Issue #228）──────────────
+#
+# #192 の直し方（器を1枚にまとめ、文字と余白を詰める）は効いたが、**追加ツールは
+# 入っている物の数だけ1行ずつ伸びる形のまま**だった。#222 で session-relay が増え、
+# 全部入れた人のパネルが 914pt になった（この Mac の見える高さは 853pt）。上の #192 の
+# ガードは器の形しか見ていないので、行の数が増えても何も言わない。
+#
+# 201 追加ツールは何個入っていても1行。運用タブに縦に並ぶ行の数に上限を置く。
+FAMILY_PANEL="$(awk '/^struct InstalledFamilyPanel: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+[ -n "${FAMILY_PANEL}" ] || fail "InstalledFamilyPanel を見失いました（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'ForEach' \
+  && fail "運用タブの追加ツールが、入っている物の数だけ行を並べています。1行に畳んでください（#228）"
+FAMILY_ROWS="$(printf '%s\n' "${FAMILY_PANEL}" | grep -c 'SettingsRow' || true)"
+[ "${FAMILY_ROWS}" = "1" ] \
+  || fail "運用タブの追加ツールが ${FAMILY_ROWS} 行あります。畳んだ1行だけにしてください（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q '\.popover(isPresented: \$showsTools' \
+  || fail "畳んだ追加ツールの中身を、押したときに吹き出しで出していません（#228）"
+OPERATE_SELF_ROWS="$(printf '%s\n' "${OPERATE}" | grep -cE 'ServicePanel\(|SettingsRow' || true)"
+printf '%s\n' "${OPERATE}" | grep -q 'InstalledFamilyPanel(' \
+  || fail "運用タブが追加ツールの行を通っていません（#228）"
+OPERATE_ROWS=$((OPERATE_SELF_ROWS + FAMILY_ROWS))
+# 上限は今の5行（MulmoTerminal・MulmoClaude・画面ガイド・Telegram・追加ツール）。
+# 全部入れた状態を描いて測ると 672pt（直す前は 914pt）。行を足したくなったら、
+# 上限を上げる前に、何かを畳むか別のタブへ移す。
+OPERATE_ROW_LIMIT=5
+[ "${OPERATE_ROWS}" -le "${OPERATE_ROW_LIMIT}" ] \
+  || fail "運用タブに縦に並ぶ行が ${OPERATE_ROWS} 行あります（上限 ${OPERATE_ROW_LIMIT}）。足すたびに画面からはみ出します。何かを畳むか、別のタブへ移してください（#228）"
+ok "運用タブは、追加ツールを何個入れても伸びない（${OPERATE_ROWS} 行 / 上限 ${OPERATE_ROW_LIMIT}）"
+
+# 202 パネルをスクロールで解決しない（STATUS.md・#192 の決定）。
+# スクロールしてよいのは吹き出しの中だけ（#183 の「前回の更新」など）。吹き出しは
+# 別の窓なので、パネルの高さには効かない。構造体ごとに、ScrollView が `.popover(` の
+# 後ろにしか出てこないことを見る。
+PANEL_SCROLL="$(awk '
+  /^struct [A-Za-z0-9_<>: ]+\{/ { name=$2; seen=0 }
+  /\.popover\(/ { seen=1 }
+  /ScrollView/ && $0 !~ /^[[:space:]]*\/\// { if (!seen) print FILENAME ":" FNR ": " name }
+' "${ROOT}/Sources"/*.swift)"
+if [ -n "${PANEL_SCROLL}" ]; then
+  printf '%s\n' "${PANEL_SCROLL}"
+  fail "パネルにスクロールが入っています。メニューバーのパネルはスクロールで解決しない決まりです（STATUS.md・#192 / #228）"
+fi
+for panel_view in ControlView OperateView InstalledFamilyPanel SettingsGroup SettingsRow; do
+  awk -v v="struct ${panel_view}" 'index($0, v) == 1 { inside=1 } inside { print; if ($0 ~ /^\}$/) exit }' \
+    "${ROOT}/Sources/main.swift" | grep -v '^[[:space:]]*//' | grep -q 'ScrollView' \
+    && fail "${panel_view} がスクロールを持っています。パネルはスクロールで解決しない決まりです（#192 / #228）"
+done
+ok "パネルはスクロールに頼っていない（スクロールは吹き出しの中だけ）"
+
+# 203 畳んだ1行にも、更新がある印が出る。言葉の対応は status-display-test の
+# foldCases（6通り）で**実際に走らせて**いる。ここでは画面がその言葉と印を通ることを見る。
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'familyFold(statuses:' \
+  || fail "畳んだ追加ツールの1行が、あらましを決める関数を通っていません（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'if fold.needsAttention' \
+  || fail "畳んだ追加ツールの1行に、更新がある印が出ません。畳んだせいで気づけなくなります（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -A2 'if fold.needsAttention' | grep -q 'Palette.warn' \
+  || fail "畳んだ追加ツールの1行の印が、要確認の色（橙）ではありません（#228）"
+grep -q 'for item in foldCases' "${ROOT}/tests/status-display-test.swift" \
+  || fail "畳んだ1行の言葉を、検査で走らせていません（#228）"
+ok "畳んだ追加ツールの1行にも、更新がある印と言葉が出る"
+
 # ── 画面ガイド（Issue #202 / #207）──────────────────────────────
 #
 # 164 ガイドの本体がリポジトリに在ること。前の版はどこにも置かれておらず

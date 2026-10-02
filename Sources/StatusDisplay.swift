@@ -453,3 +453,23 @@ func familyUpdateTarget(resolvedPath: String?, prefix: String, keepsForeignInsta
     guard keepsForeignInstall else { return true }
     return resolvedPath.hasPrefix(prefix.hasSuffix("/") ? prefix : prefix + "/")
 }
+
+/// 運用タブの「追加ツール」を1行に畳んだときの言葉（Issue #228）。
+struct FamilyFold: Equatable {
+    let headline: String
+    /// 畳んだ1行にも印を出すか。畳んだせいで更新に気づけなくならないように。
+    let needsAttention: Bool
+}
+
+/// 入っている追加ツールそれぞれの更新の状態（mulmo-check-updates の status、
+/// まだ確かめていなければ nil）から、畳んだ1行の言葉を決める。
+///
+/// 印を出すのは「更新あり」だけ。`missing` は版を読めなかったという意味で、
+/// よそで入れた relay（#222）のように入っていても出る。押しても消えない印は
+/// 壊れているのと見分けがつかない（#131 で一度やった形）ので、ここでは数えない。
+func familyFold(statuses: [String?]) -> FamilyFold {
+    let updates = statuses.filter { $0 == "update" }.count
+    var parts = ["\(statuses.count)件"]
+    if updates > 0 { parts.append("更新あり \(updates)件") }
+    return FamilyFold(headline: parts.joined(separator: " ・ "), needsAttention: updates > 0)
+}
