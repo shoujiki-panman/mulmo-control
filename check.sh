@@ -2650,6 +2650,27 @@ awk '/^    FamilyPackage\(/ { block = "" } { block = block $0 "\n" } /^    \),?$
 ok "一括更新は、よそで入れた relay をすり替えない"
 
 
+# ── 自分で選んだスキル ─────────────────────────────────────────
+# SECURITY.md の P 節（201）。
+#
+# 追加ツールは作者が決め打ちで並べていて、npm に無いスキル（GitHub にだけある物）は
+# 入れられなかった。入れ口（scripts/mulmo-my-tools.mjs）は他人のリポジトリの中身を
+# この Mac の Claude Code に渡すので、使い捨ての git リポジトリを GitHub に見立て、
+# 偽の HOME で本物の入れ口を走らせる。本物の ~/.claude には触らない。
+step "自分で選んだスキル（#229）"
+MY_TOOLS_TEST="${ROOT}/tests/my-tools-test.mjs"
+[ -f "${MY_TOOLS_TEST}" ] || fail "自分で選んだスキルの入れ口の検査がありません（229）"
+[ -f "${ROOT}/scripts/mulmo-my-tools.mjs" ] || fail "自分で選んだスキルの入れ口がありません（229）"
+MY_TOOLS_OUT=""
+MY_TOOLS_RC=0
+MY_TOOLS_OUT="$(node "${MY_TOOLS_TEST}" 2>&1)" || MY_TOOLS_RC=$?
+if [ "${MY_TOOLS_RC}" != "0" ]; then
+  printf '%s\n' "${MY_TOOLS_OUT}"
+  fail "自分で選んだスキルの入れ口が期待どおりに動いていません（229）"
+fi
+ok "${MY_TOOLS_OUT}"
+
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #
