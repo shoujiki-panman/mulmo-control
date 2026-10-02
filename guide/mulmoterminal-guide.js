@@ -344,9 +344,103 @@
     ],
   ];
 
+  // ── Skill メニュー（Issue #226）──────────────────────────────
+  //
+  // MulmoTerminal の Skill メニューは、各スキルの SKILL.md の `description` を英語の
+  // ツールチップ（title）に出し、名前だけを並べる。項目に `data-testid` も `aria-label` も
+  // 無いので、**メニューを開くボタンの title** で Skill メニューだと見分ける（Run の
+  // メニューも同じ形の項目を持っていて、そちらの title はコマンドそのもの）。
+  //
+  // - 同梱スキル（MulmoTerminal が配る mulmoterminal-*）は下の表の日本語（2段）
+  // - それ以外（本人やプロジェクトのスキル）は、その場の説明を1〜2文に畳んで出す
+  // - 英語の説明は、中継が裏で訳した控え（/__mulmo-guide/skill-ja）があればそれを出す。
+  //   無ければ原文のまま。**画面の側で訳を捏造しない**
+  const SKILL_MENU_TITLE = "Run a skill in the current session";
+  const SKILL_BUTTON = [
+    "このフォルダで使えるスキル（決まった手順の頼み方）の一覧を開きます。",
+    "選ぶと、このセルのエージェントにそのスキルを実行させます。定型の作業を頼むときに。",
+  ];
+  // 上流の server/skills/<名前>/SKILL.md の description を訳したもの（6.5.0）。
+  const BY_SKILL = {
+    "mulmoterminal-bug-report": [
+      "「MulmoTerminal が変」の相談窓口です。設定や仕様かを調べ、残った不具合だけ報告します。",
+      "動かない・おかしいと感じたとき、不具合を報告したいとき、動きの理由を知りたいときに。",
+    ],
+    "mulmoterminal-config": [
+      "MulmoTerminal の設定の入口です。いまどう設定されているかも、実際に読んで答えます。",
+      "何を変えられるか知りたいとき、設定が効かないときに。分野ごとのスキルへ案内もします。",
+    ],
+    "mulmoterminal-decisions": [
+      "このプロジェクトで過去に人へ何を聞き、どう答えられたかを読み返します。",
+      "似た質問をする前や、「前にも決めたよね」というときに。",
+    ],
+    "mulmoterminal-dirs": [
+      "作業するフォルダに色・名前・並び順・文字の大きさを付け、これまでの付け方にそろえます。",
+      "プロジェクトを色分けしたいとき、新しく clone したものに色が無いときに。",
+    ],
+    "mulmoterminal-header": [
+      "セルの見出しに、自分用のボタン（ビルド・テストなど）や情報の札を足します。",
+      "よく打つコマンドを1クリックにしたいとき、見出しに出したい情報があるときに。",
+    ],
+    "mulmoterminal-keys": [
+      "キーボードのショートカットを割り当て、キー操作やコピーのおかしな動きを直します。",
+      "マウスなしでセルを移りたいとき、Enter や Cmd+← が思った動きをしないときに。",
+    ],
+    "mulmoterminal-model": [
+      "標準以外のモデル（OpenRouter・ローカルの Ollama など）でセッションを動かします。",
+      "安いモデルや別のモデルを使いたいとき、モデルを変えたら動かなくなったときに。",
+    ],
+    "mulmoterminal-notify": [
+      "どんなときに音やスマホへの通知を出すか、どの音を鳴らすかを決めます。",
+      "通知がうるさい・静かすぎるとき、CI の失敗やコマンドの終わりを知りたいときに。",
+    ],
+    "mulmoterminal-shared-app": [
+      "アンケート・申込表・予約フォームなど、何人かで使い答えを1か所に集めるアプリを作ります。",
+      "ほかの人に書き込んでもらう・見てもらうものが要るとき、公開や取り下げのときに。",
+    ],
+    "mulmoterminal-theme": [
+      "MulmoTerminal 全体の配色を自分で作り、設定のテーマ一覧に加えます。",
+      "既成のテーマが暗すぎる・青すぎるとき、絵や写真・ブランドの色で作りたいときに。",
+    ],
+  };
+  /** 畳んだ説明の長さの上限。吹き出し（幅 300px）で5行ほど。 */
+  const MAX_FOLD = 120;
+
+  /** 説明を1〜2文に畳む。1文目だけで長すぎれば、切って「…」を付ける。 */
+  function foldDescription(text) {
+    const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (flat === "") return "";
+    // 文の終わりは「。！？」の後ろ、または「. ! ?」の後ろに空白が来たところ。
+    // config.json や v1.2 の点では切らない。
+    const sentences = flat.split(/(?<=[。！？])|(?<=[.!?])\s+/).map((one) => one.trim()).filter(Boolean);
+    let out = sentences[0] ?? flat;
+    const second = sentences[1];
+    if (second !== undefined) {
+      const joined = /[。！？]$/.test(out) ? out + second : `${out} ${second}`;
+      if ([...joined].length <= MAX_FOLD) out = joined;
+    }
+    return [...out].length > MAX_FOLD ? `${[...out].slice(0, MAX_FOLD - 1).join("")}…` : out;
+  }
+
+  /**
+   * Skill メニューの1項目に出す説明。[何をするか, どんな時に使うか]。2段目が空なら1段で出す。
+   * translations は中継の控え（原文 → 訳）。
+   */
+  function skillText(slug, description, translations) {
+    if (Object.hasOwn(BY_SKILL, slug)) return BY_SKILL[slug];
+    if (typeof description !== "string" || description.trim() === "") return null;
+    const ja = translations !== null && typeof translations === "object" && Object.hasOwn(translations, description)
+      ? translations[description]
+      : null;
+    return [foldDescription(typeof ja === "string" ? ja : description), ""];
+  }
+
   // 検査（tests/guide-text-test.mjs）から読むための口。ブラウザでは使わない。
   if (typeof document === "undefined") {
-    globalThis.mulmoGuideTables = { BY_TESTID, BY_ARIA, BY_ARIA_PREFIX };
+    globalThis.mulmoGuideTables = {
+      BY_TESTID, BY_ARIA, BY_ARIA_PREFIX, BY_SKILL, SKILL_BUTTON, SKILL_MENU_TITLE, MAX_FOLD,
+      foldDescription, skillText,
+    };
     return;
   }
 
@@ -444,8 +538,55 @@
     return hit === undefined ? null : hit[1];
   }
 
+  // ── Skill メニューを見分ける ────────────────────────────────
+
+  /** title を読む。吹き出しを出しているあいだは預かっているので、そちらも見る。 */
+  const titleOf = (node) => node.getAttribute("title") ?? node.dataset.mtgTitle ?? null;
+
+  /** Skill メニューを開くボタンか。 */
+  const isSkillButton = (node) =>
+    node instanceof HTMLButtonElement &&
+    node.getAttribute("aria-haspopup") === "menu" &&
+    titleOf(node) === SKILL_MENU_TITLE;
+
+  /** 項目の名前。アイコンは別の要素なので、項目じかの文字だけをつなぐ。 */
+  const slugOf = (item) =>
+    [...item.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim();
+
+  /** 中継が訳した控え。古ければ裏で取り直す（待たない。次に動かしたときに出る）。 */
+  const SKILL_JA_PATH = "/__mulmo-guide/skill-ja";
+  const SKILL_JA_TTL_MS = 5000;
+  let skillJa = null;
+  let skillJaAt = 0;
+  function refreshSkillJa() {
+    if (Date.now() - skillJaAt < SKILL_JA_TTL_MS) return;
+    skillJaAt = Date.now();
+    fetch(SKILL_JA_PATH, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body !== null && typeof body.translations === "object") skillJa = body.translations;
+      })
+      .catch(() => {
+        // 中継が古い・訳が無い。原文のまま出す。
+      });
+  }
+
+  /** Skill メニュー（ボタンと項目）の説明。当てはまらなければ null。 */
+  function explainSkill(el) {
+    const button = el.closest("button");
+    if (button !== null && isSkillButton(button)) return SKILL_BUTTON;
+    const item = el.closest('[role="menuitem"]');
+    const menu = item?.closest('[role="menu"]');
+    const opener = menu?.previousElementSibling;
+    if (item == null || opener == null || !isSkillButton(opener)) return null;
+    refreshSkillJa();
+    return skillText(slugOf(item), titleOf(item), skillJa);
+  }
+
   /** その要素に当てる説明。**知らない印で止まらず、親へ辿る**（アイコンの中にいても届く）。 */
   function explain(el) {
+    const skill = explainSkill(el);
+    if (skill !== null) return skill;
     let node = el.closest("[data-testid],[aria-label]");
     for (let depth = 0; node !== null && depth < MAX_DEPTH; depth += 1) {
       const text = lookup(node);
@@ -478,7 +619,10 @@
   function show([what, when], x, y) {
     const box = ensureBubble();
     box.querySelector('[data-part="what"]').textContent = what;
-    box.querySelector('[data-part="when"]').textContent = when;
+    const whenPart = box.querySelector('[data-part="when"]');
+    whenPart.textContent = when;
+    // 本人やプロジェクトのスキルは説明が1つだけ。空の2段目で線だけ出さない。
+    whenPart.style.display = when === "" ? "none" : "block";
     box.style.display = "block";
     // 画面の外へはみ出さない。右端と下端で折り返す。
     const rect = box.getBoundingClientRect();
