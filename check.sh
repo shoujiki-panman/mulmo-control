@@ -365,6 +365,31 @@ for uid in ${(f)UPDATE_IDS}; do
 done
 ok "更新一覧の項目はすべて更新する手段がある"
 
+# 202 自分で選んだスキル（#229）も、更新の一覧に載せたら更新する手段を持つ。
+#
+# 項目は mulmo-check-updates が入れ口（mulmo-my-tools.mjs）の check から足す（id は
+# `my-skill:` で始まる）。上の 131 は `id: "..."` と書かれた項目しか見えないので、
+# ここで別に見る。載せる側（同梱の入れ口を呼んで足す）と、更新する側（まとめて更新の
+# 2つの口が入れ口の update を呼ぶ）の両方が揃っていなければ落とす。
+MYT_CHK="$(grep -vE '^[[:space:]]*(//|#)' "${ROOT}/scripts/mulmo-check-updates")"
+printf '%s\n' "${MYT_CHK}" | grep -qF 'MY_TOOLS="${SCRIPT_DIR}/mulmo-my-tools.mjs"' \
+  || fail "mulmo-check-updates が、同梱の入れ口を呼んでいません（202）"
+printf '%s\n' "${MYT_CHK}" | grep -qF '.concat(myToolItems())' \
+  || fail "mulmo-check-updates が、自分で選んだスキルを更新の一覧に足していません（202）"
+grep -qF 'private let mySkillIDPrefix = "my-skill:"' "${ROOT}/Sources/main.swift" \
+  || fail "main.swift の id の頭が、mulmo-check-updates の印（my-skill:）と違います（202）"
+MYT_UPDATE="$(awk '/private func mySkillsUpdate\(\)/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${MYT_UPDATE}" | grep -qF 'tool("mulmo-my-tools.mjs")) update' \
+  || fail "まとめて更新が、自分で選んだスキルの入れ口の update を呼んでいません（202）"
+for presser in updateInstalledFamily updateAllInstalled; do
+  BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
+    "${ROOT}/Sources/main.swift")"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（202）"
+  printf '%s\n' "${BODY}" | grep -q 'mySkillsUpdate()' \
+    || fail "${presser} が自分で選んだスキルを更新しません。「更新あり」が消えなくなります（202）"
+done
+ok "自分で選んだスキルは、更新の一覧に載り、まとめて更新で更新される"
+
 
 # 入っていないものの版を、宣言から作らない（Issue #109）。
 #
@@ -2650,6 +2675,74 @@ awk '/^    FamilyPackage\(/ { block = "" } { block = block $0 "\n" } /^    \),?$
 ok "一括更新は、よそで入れた relay をすり替えない"
 
 
+# ── 自分で選んだスキル ─────────────────────────────────────────
+# SECURITY.md の P 節（201）。
+#
+# 追加ツールは作者が決め打ちで並べていて、npm に無いスキル（GitHub にだけある物）は
+# 入れられなかった。入れ口（scripts/mulmo-my-tools.mjs）は他人のリポジトリの中身を
+# この Mac の Claude Code に渡すので、使い捨ての git リポジトリを GitHub に見立て、
+# 偽の HOME で本物の入れ口を走らせる。本物の ~/.claude には触らない。
+step "自分で選んだスキル（#229）"
+MY_TOOLS_TEST="${ROOT}/tests/my-tools-test.mjs"
+[ -f "${MY_TOOLS_TEST}" ] || fail "自分で選んだスキルの入れ口の検査がありません（229）"
+[ -f "${ROOT}/scripts/mulmo-my-tools.mjs" ] || fail "自分で選んだスキルの入れ口がありません（229）"
+MY_TOOLS_OUT=""
+MY_TOOLS_RC=0
+MY_TOOLS_OUT="$(node "${MY_TOOLS_TEST}" 2>&1)" || MY_TOOLS_RC=$?
+if [ "${MY_TOOLS_RC}" != "0" ]; then
+  printf '%s\n' "${MY_TOOLS_OUT}"
+  fail "自分で選んだスキルの入れ口が期待どおりに動いていません（229）"
+fi
+ok "${MY_TOOLS_OUT}"
+
+# 203 自分で選んだスキルの画面（追加タブ）。
+#
+# 控えの場所が、書く側（入れ口）と読む側（画面）で同じであること。ずれると、入れたのに
+# 一覧に出ない（#190 の控えと同じ型）。入れ口が組み立てる場所を実際に読み、main.swift の
+# 綴りと突き合わせる。入れ口のパスは環境変数で渡す（引数で渡すと、入れ口が自分を
+# 起こされたと読んで使い方を出し、1 で終わる）。
+MYT_JS_RECORD="$(HOME=/HOME MYT_JS="${ROOT}/scripts/mulmo-my-tools.mjs" node --input-type=module \
+  -e 'const m = await import(process.env.MYT_JS); console.log(m.recordPath())')"
+MYT_SWIFT_RECORD="$(grep -E '^private let mySkillsRecordPath = ' "${ROOT}/Sources/main.swift" \
+  | sed -E 's/.*"\\\(homeDir\)([^"]*)".*/\1/')"
+[ -n "${MYT_SWIFT_RECORD}" ] && [ "/HOME${MYT_SWIFT_RECORD}" = "${MYT_JS_RECORD}" ] \
+  || fail "自分で選んだスキルの控えの場所が、入れ口（${MYT_JS_RECORD}）と画面（${MYT_SWIFT_RECORD}）で違います（203）"
+ok "自分で選んだスキルの控えの場所が、書く側と読む側で揃っている"
+
+# 打たれた出どころをシェルに通さない。入れ口は Process に引数で渡す。コマンド文字列に
+# 埋めると、引用符の扱いを1つ間違えただけで、打った文字がそのままシェルで走る。
+# 確かめる・入れる・外すの3つの口を列挙して回す（#147）。
+MYT_RUNNER="$(awk '/private nonisolated static func runMyTools\(/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' \
+  "${ROOT}/Sources/main.swift")"
+[ -n "${MYT_RUNNER}" ] || fail "入れ口を走らせる口（runMyTools）を見失いました（203）"
+printf '%s\n' "${MYT_RUNNER}" | grep -q 'zsh' \
+  && fail "入れ口をシェル越しに走らせています。打たれた出どころがシェルで走ります（203）"
+printf '%s\n' "${MYT_RUNNER}" | grep -qF 'process.arguments = [script] + arguments' \
+  || fail "入れ口に、出どころを引数として渡していません（203）"
+for presser in previewMySkill addMySkill removeMySkill; do
+  BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
+    "${ROOT}/Sources/main.swift")"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（203）"
+  printf '%s\n' "${BODY}" | grep -q 'Self.runMyTools(' \
+    || fail "${presser} が、引数で渡す口（runMyTools）を通っていません（203）"
+  printf '%s\n' "${BODY}" | grep -qE '(^|[^A-Za-z])run\(' \
+    && fail "${presser} が、シェルで走らせる口（run）を通っています（203）"
+done
+ok "打たれた出どころをシェルに通さない"
+
+# 入れたスキルの一覧は、押したときだけ開く。追加タブに1行ずつ並べると、入れる数だけ
+# パネルが伸び、いつか一番下の「終了」が押せなくなる（#192 / #228 と同じ壊れ方）。
+MYT_SECTION="$(awk '/^struct MySkillsSection: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+[ -n "${MYT_SECTION}" ] || fail "自分で選んだスキルの欄（MySkillsSection）を見失いました（203）"
+printf '%s\n' "${MYT_SECTION}" | grep -qF '.popover(isPresented: $showsList' \
+  || fail "入れたスキルの一覧が、押したときだけ開く形になっていません（203）"
+printf '%s\n' "${MYT_SECTION}" | grep -qF 'ForEach(model.mySkills' \
+  && fail "入れたスキルを追加タブに1行ずつ並べています。入れる数だけパネルが伸びます（203）"
+awk '/^struct FamilyView: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" | grep -qF 'MySkillsSection(model: model)' \
+  || fail "追加タブに、自分で選んだスキルの欄がありません（203）"
+ok "入れたスキルの一覧は押したときだけ開き、追加タブは伸びない"
+
+
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
 #
@@ -3213,6 +3306,49 @@ if int(m.group(1)) != n:
     raise SystemExit("件数が合いません: 表示 " + m.group(1) + " / 実際 " + str(n))
 ' "${UPD_JSON}" || fail "更新があるときに件数を正しく出していません（078）"
 ok "更新があるときは件数を出す"
+
+# 202 自分で選んだスキルに新しい版が出たら、更新の一覧に載り、件数に入る（Issue #229）。
+#
+# 載らなければ、新しい版が出ても誰も気づけない（#229 の発端）。使い捨ての git
+# リポジトリを GitHub に見立て、偽の HOME に本物の入れ口で1つ入れてから新しい
+# タグを打ち、本物の mulmo-check-updates（の写し）で確かめる。
+# 見立ての置き場所の名前には空白を入れない（git の file:// に渡すため）。
+MYT_GH="$(mktemp -d "${TMPDIR:-/tmp}/mulmo-gh.XXXXXX")"
+MYT_REPO="${MYT_GH}/acme/tidy"
+mkdir -p "${MYT_REPO}"
+myt_git() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@example.invalid \
+    GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@example.invalid \
+    git -C "${MYT_REPO}" "$@" >/dev/null 2>&1
+}
+printf '%s\n' '---' 'name: tidy' 'description: 架空のスキル' '---' > "${MYT_REPO}/SKILL.md"
+myt_git -c init.defaultBranch=main init -q
+myt_git add -A
+myt_git commit -q -m init
+myt_git tag v1.0.0
+HOME="${REC}" MULMO_MY_TOOLS_GITHUB="file://${MYT_GH}" "${NODE_BIN}" "${ROOT}/scripts/mulmo-my-tools.mjs" add acme/tidy >/dev/null 2>&1 \
+  || fail "検査の前提が崩れています: 架空のスキルを入れられません（202）"
+printf 'v2\n' > "${MYT_REPO}/NOTES.md"
+myt_git add -A
+myt_git commit -q -m v2
+myt_git tag v1.0.1
+export MULMO_MY_TOOLS_GITHUB="file://${MYT_GH}"
+export MULMO_GIT="$(command -v git)"
+run_updates_with "${NPMLESS}"
+unset MULMO_MY_TOOLS_GITHUB MULMO_GIT
+/usr/bin/python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+item = next((i for i in d["items"] if i["id"] == "my-skill:tidy"), None)
+if item is None:
+    raise SystemExit("自分で入れたスキルが更新の一覧にありません")
+if item["status"] != "update" or item["current"] != "v1.0.0" or item["latest"] != "v1.0.1":
+    raise SystemExit("自分で入れたスキルの版を読み違えています: " + json.dumps(item, ensure_ascii=False))
+if not d["summary"].startswith("更新あり"):
+    raise SystemExit("更新があるのに要約が「" + d["summary"] + "」です")
+' "${UPD_JSON}" || fail "自分で入れたスキルの新しい版が、更新の一覧に載りません（202）"
+rm -rf "${MYT_GH}"
+ok "自分で入れたスキルも、新しい版が出れば更新の一覧に載る"
 
 rm -rf "${REC}"
 trap - EXIT
