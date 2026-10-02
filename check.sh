@@ -365,6 +365,31 @@ for uid in ${(f)UPDATE_IDS}; do
 done
 ok "更新一覧の項目はすべて更新する手段がある"
 
+# 202 自分で選んだスキル（#229）も、更新の一覧に載せたら更新する手段を持つ。
+#
+# 項目は mulmo-check-updates が入れ口（mulmo-my-tools.mjs）の check から足す（id は
+# `my-skill:` で始まる）。上の 131 は `id: "..."` と書かれた項目しか見えないので、
+# ここで別に見る。載せる側（同梱の入れ口を呼んで足す）と、更新する側（まとめて更新の
+# 2つの口が入れ口の update を呼ぶ）の両方が揃っていなければ落とす。
+MYT_CHK="$(grep -vE '^[[:space:]]*(//|#)' "${ROOT}/scripts/mulmo-check-updates")"
+printf '%s\n' "${MYT_CHK}" | grep -qF 'MY_TOOLS="${SCRIPT_DIR}/mulmo-my-tools.mjs"' \
+  || fail "mulmo-check-updates が、同梱の入れ口を呼んでいません（202）"
+printf '%s\n' "${MYT_CHK}" | grep -qF '.concat(myToolItems())' \
+  || fail "mulmo-check-updates が、自分で選んだスキルを更新の一覧に足していません（202）"
+grep -qF 'private let mySkillIDPrefix = "my-skill:"' "${ROOT}/Sources/main.swift" \
+  || fail "main.swift の id の頭が、mulmo-check-updates の印（my-skill:）と違います（202）"
+MYT_UPDATE="$(awk '/private func mySkillsUpdate\(\)/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${MYT_UPDATE}" | grep -qF 'tool("mulmo-my-tools.mjs")) update' \
+  || fail "まとめて更新が、自分で選んだスキルの入れ口の update を呼んでいません（202）"
+for presser in updateInstalledFamily updateAllInstalled; do
+  BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
+    "${ROOT}/Sources/main.swift")"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（202）"
+  printf '%s\n' "${BODY}" | grep -q 'mySkillsUpdate()' \
+    || fail "${presser} が自分で選んだスキルを更新しません。「更新あり」が消えなくなります（202）"
+done
+ok "自分で選んだスキルは、更新の一覧に載り、まとめて更新で更新される"
+
 
 # 入っていないものの版を、宣言から作らない（Issue #109）。
 #
@@ -3234,6 +3259,49 @@ if int(m.group(1)) != n:
     raise SystemExit("件数が合いません: 表示 " + m.group(1) + " / 実際 " + str(n))
 ' "${UPD_JSON}" || fail "更新があるときに件数を正しく出していません（078）"
 ok "更新があるときは件数を出す"
+
+# 202 自分で選んだスキルに新しい版が出たら、更新の一覧に載り、件数に入る（Issue #229）。
+#
+# 載らなければ、新しい版が出ても誰も気づけない（#229 の発端）。使い捨ての git
+# リポジトリを GitHub に見立て、偽の HOME に本物の入れ口で1つ入れてから新しい
+# タグを打ち、本物の mulmo-check-updates（の写し）で確かめる。
+# 見立ての置き場所の名前には空白を入れない（git の file:// に渡すため）。
+MYT_GH="$(mktemp -d "${TMPDIR:-/tmp}/mulmo-gh.XXXXXX")"
+MYT_REPO="${MYT_GH}/acme/tidy"
+mkdir -p "${MYT_REPO}"
+myt_git() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@example.invalid \
+    GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@example.invalid \
+    git -C "${MYT_REPO}" "$@" >/dev/null 2>&1
+}
+printf '%s\n' '---' 'name: tidy' 'description: 架空のスキル' '---' > "${MYT_REPO}/SKILL.md"
+myt_git -c init.defaultBranch=main init -q
+myt_git add -A
+myt_git commit -q -m init
+myt_git tag v1.0.0
+HOME="${REC}" MULMO_MY_TOOLS_GITHUB="file://${MYT_GH}" "${NODE_BIN}" "${ROOT}/scripts/mulmo-my-tools.mjs" add acme/tidy >/dev/null 2>&1 \
+  || fail "検査の前提が崩れています: 架空のスキルを入れられません（202）"
+printf 'v2\n' > "${MYT_REPO}/NOTES.md"
+myt_git add -A
+myt_git commit -q -m v2
+myt_git tag v1.0.1
+export MULMO_MY_TOOLS_GITHUB="file://${MYT_GH}"
+export MULMO_GIT="$(command -v git)"
+run_updates_with "${NPMLESS}"
+unset MULMO_MY_TOOLS_GITHUB MULMO_GIT
+/usr/bin/python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+item = next((i for i in d["items"] if i["id"] == "my-skill:tidy"), None)
+if item is None:
+    raise SystemExit("自分で入れたスキルが更新の一覧にありません")
+if item["status"] != "update" or item["current"] != "v1.0.0" or item["latest"] != "v1.0.1":
+    raise SystemExit("自分で入れたスキルの版を読み違えています: " + json.dumps(item, ensure_ascii=False))
+if not d["summary"].startswith("更新あり"):
+    raise SystemExit("更新があるのに要約が「" + d["summary"] + "」です")
+' "${UPD_JSON}" || fail "自分で入れたスキルの新しい版が、更新の一覧に載りません（202）"
+rm -rf "${MYT_GH}"
+ok "自分で入れたスキルも、新しい版が出れば更新の一覧に載る"
 
 rm -rf "${REC}"
 trap - EXIT

@@ -10,6 +10,9 @@ private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 /// npm が新しい版を入れても画面は古いままで「更新できませんでした」と言い続けた。
 private let familyPrefix = "\(homeDir)/.local/share/mulmo-family"
 private let localBin = "\(homeDir)/.local/bin"
+/// 自分で選んだスキル（Issue #229）の、更新の一覧での id の頭。mulmo-check-updates が
+/// 入れ口（mulmo-my-tools.mjs）の `check` から受け取る項目に付いている。
+private let mySkillIDPrefix = "my-skill:"
 
 // MulmoTerminal のポート。3箇所に数字が散っていて、変えるときに拾い漏れる形
 // だった（Issue #7）。スクリプト側の既定は mulmoterminal-agent-env が持つので、
@@ -1261,20 +1264,41 @@ final class ControlModel: ObservableObject {
         return familyUpdateTarget(resolvedPath: path, prefix: familyPrefix,
                                   keepsForeignInstall: package.keepsForeignInstall)
     }
+    /// 自分で選んだスキルの更新（Issue #229）。更新の一覧に載っているときだけ、入れ口の
+    /// `update` を呼ぶ。入れ口は、手元で書き換えたスキルを入れ替えない。
+    ///
+    /// 一覧に載せた物を更新する手段がここに無いと、「更新あり」が押しても消えない
+    /// （#131 と同じ形）。まとめて更新の2つの口（追加ツール・すべて）がここを通る。
+    private func mySkillsUpdate() -> (command: String, ids: [String])? {
+        let ids = updateItems.filter { $0.id.hasPrefix(mySkillIDPrefix) }.map(\.id)
+        guard !ids.isEmpty, let node = nodePath ?? commandPath("node") else { return nil }
+        return ("\(shellQuoted(node)) \(tool("mulmo-my-tools.mjs")) update", ids)
+    }
     func updateInstalledFamily() {
         let packages = familyPackages.filter { familyUpdatable($0) }
-        guard !packages.isEmpty else {
+        let skills = mySkillsUpdate()
+        guard !packages.isEmpty || skills != nil else {
             showMessage(title: "追加ツールは未導入です", text: "先に追加タブからインストールしてください。")
             return
         }
-        guard let command = familyInstallCommand(for: packages) else { return }
+        var commands: [String] = []
+        if !packages.isEmpty {
+            guard let command = familyInstallCommand(for: packages) else { return }
+            commands.append(command)
+        }
+        if let skills {
+            commands.append(skills.command)
+        }
+        let skillIds = Set(skills?.ids ?? [])
         prepareUpdateReport(
             title: "追加ツールを更新しました",
             items: updateItems.filter { item in
-                item.status == "update" && packages.contains(where: { $0.id == item.id || $0.packageName == item.name })
+                guard item.status == "update" else { return false }
+                if skillIds.contains(item.id) { return true }
+                return packages.contains(where: { $0.id == item.id || $0.packageName == item.name })
             }
         )
-        run(updateCommand(command), label: "追加ツールをまとめて更新中")
+        run(updateCommand(commands.joined(separator: "\n")), label: "追加ツールをまとめて更新中")
     }
     func updateAllInstalled() {
         // MulmoClaude を含む一括更新も、処理中なら受け取らない（Issue #187）。
@@ -1295,6 +1319,10 @@ final class ControlModel: ObservableObject {
         if let familyCommand = familyInstallCommand(for: installedFamily) {
             commands.append(familyCommand)
             updated = installedFamily
+        }
+        if let skills = mySkillsUpdate() {
+            commands.append(skills.command)
+            updatedIds.formUnion(skills.ids)
         }
         guard !commands.isEmpty else {
             showMessage(title: "更新対象がありません", text: "先にインストールしてください。")
