@@ -2695,6 +2695,53 @@ if [ "${MY_TOOLS_RC}" != "0" ]; then
 fi
 ok "${MY_TOOLS_OUT}"
 
+# 203 自分で選んだスキルの画面（追加タブ）。
+#
+# 控えの場所が、書く側（入れ口）と読む側（画面）で同じであること。ずれると、入れたのに
+# 一覧に出ない（#190 の控えと同じ型）。入れ口が組み立てる場所を実際に読み、main.swift の
+# 綴りと突き合わせる。入れ口のパスは環境変数で渡す（引数で渡すと、入れ口が自分を
+# 起こされたと読んで使い方を出し、1 で終わる）。
+MYT_JS_RECORD="$(HOME=/HOME MYT_JS="${ROOT}/scripts/mulmo-my-tools.mjs" node --input-type=module \
+  -e 'const m = await import(process.env.MYT_JS); console.log(m.recordPath())')"
+MYT_SWIFT_RECORD="$(grep -E '^private let mySkillsRecordPath = ' "${ROOT}/Sources/main.swift" \
+  | sed -E 's/.*"\\\(homeDir\)([^"]*)".*/\1/')"
+[ -n "${MYT_SWIFT_RECORD}" ] && [ "/HOME${MYT_SWIFT_RECORD}" = "${MYT_JS_RECORD}" ] \
+  || fail "自分で選んだスキルの控えの場所が、入れ口（${MYT_JS_RECORD}）と画面（${MYT_SWIFT_RECORD}）で違います（203）"
+ok "自分で選んだスキルの控えの場所が、書く側と読む側で揃っている"
+
+# 打たれた出どころをシェルに通さない。入れ口は Process に引数で渡す。コマンド文字列に
+# 埋めると、引用符の扱いを1つ間違えただけで、打った文字がそのままシェルで走る。
+# 確かめる・入れる・外すの3つの口を列挙して回す（#147）。
+MYT_RUNNER="$(awk '/private nonisolated static func runMyTools\(/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' \
+  "${ROOT}/Sources/main.swift")"
+[ -n "${MYT_RUNNER}" ] || fail "入れ口を走らせる口（runMyTools）を見失いました（203）"
+printf '%s\n' "${MYT_RUNNER}" | grep -q 'zsh' \
+  && fail "入れ口をシェル越しに走らせています。打たれた出どころがシェルで走ります（203）"
+printf '%s\n' "${MYT_RUNNER}" | grep -qF 'process.arguments = [script] + arguments' \
+  || fail "入れ口に、出どころを引数として渡していません（203）"
+for presser in previewMySkill addMySkill removeMySkill; do
+  BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
+    "${ROOT}/Sources/main.swift")"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（203）"
+  printf '%s\n' "${BODY}" | grep -q 'Self.runMyTools(' \
+    || fail "${presser} が、引数で渡す口（runMyTools）を通っていません（203）"
+  printf '%s\n' "${BODY}" | grep -qE '(^|[^A-Za-z])run\(' \
+    && fail "${presser} が、シェルで走らせる口（run）を通っています（203）"
+done
+ok "打たれた出どころをシェルに通さない"
+
+# 入れたスキルの一覧は、押したときだけ開く。追加タブに1行ずつ並べると、入れる数だけ
+# パネルが伸び、いつか一番下の「終了」が押せなくなる（#192 / #228 と同じ壊れ方）。
+MYT_SECTION="$(awk '/^struct MySkillsSection: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+[ -n "${MYT_SECTION}" ] || fail "自分で選んだスキルの欄（MySkillsSection）を見失いました（203）"
+printf '%s\n' "${MYT_SECTION}" | grep -qF '.popover(isPresented: $showsList' \
+  || fail "入れたスキルの一覧が、押したときだけ開く形になっていません（203）"
+printf '%s\n' "${MYT_SECTION}" | grep -qF 'ForEach(model.mySkills' \
+  && fail "入れたスキルを追加タブに1行ずつ並べています。入れる数だけパネルが伸びます（203）"
+awk '/^struct FamilyView: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" | grep -qF 'MySkillsSection(model: model)' \
+  || fail "追加タブに、自分で選んだスキルの欄がありません（203）"
+ok "入れたスキルの一覧は押したときだけ開き、追加タブは伸びない"
+
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
 # SECURITY.md の A 節（001〜007）と B 節（011〜014・018）、F 節（052・053）。
