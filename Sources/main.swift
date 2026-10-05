@@ -2717,31 +2717,94 @@ struct SettingsRow<Content: View>: View {
     }
 }
 
+/// 運用タブの「追加ツール」（Issue #228）。
+///
+/// 以前は入っている物の数だけ1行ずつ並べていた。#222 で session-relay が増え、
+/// 全部入れた人のパネルは画面の見える高さを超えて、一番下の「終了」に手が
+/// 届かなくなった（#192 と同じ壊れ方。#192 は器と余白を詰めただけで、**入れる
+/// 物の数だけ伸びる形**は残っていた）。
+///
+/// スクロールでは直さない（STATUS.md・#192 の決定）。「前回の更新」（#183）と
+/// 更新直後の知らせ（#205）と同じ作法で、あらまし1行と `>` に畳み、中身は
+/// 押したときだけ吹き出しで出す。吹き出しは別の窓なので、何個入れても
+/// パネルの高さは1行ぶんのまま変わらない。
+///
+/// 更新がある物があれば、畳んだ1行にも橙の印と「更新あり N件」を出す。
+/// 畳んだせいで気づけなくなるのでは、溢れていたときと同じことになる。
 struct InstalledFamilyPanel: View {
     @ObservedObject var model: ControlModel
+    @State private var showsTools = false
 
     private var installedPackages: [FamilyPackage] {
         familyPackages.filter { model.familyInstalled[$0.id] ?? false }
     }
 
+    private func update(for package: FamilyPackage) -> MulmoUpdateItem? {
+        model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
+    }
+
+    private var fold: FamilyFold {
+        familyFold(statuses: installedPackages.map { update(for: $0)?.status })
+    }
+
     var body: some View {
         if !installedPackages.isEmpty {
-            // 見出しも1行として扱う。**区切り線を持たせないと、上の行と
-            // くっついて見える**（Issue #192）。台紙は持たない。
             SettingsRow {
-                Text("追加ツール")
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-            }
-            ForEach(installedPackages) { package in
-                SettingsRow(showsSeparator: package.id != installedPackages.first?.id) {
-                    FamilyToolRow(
-                        package: package,
-                        update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
-                    )
-                }
+                foldedRow
             }
         }
+    }
+
+    private var foldedRow: some View {
+        HStack(spacing: 8) {
+            Text("追加ツール")
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            if fold.needsAttention {
+                Circle()
+                    .fill(Palette.warn)
+                    .frame(width: 8, height: 8)
+            }
+            Text(fold.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold, design: .default))
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showsTools.toggle() }
+        .popover(isPresented: $showsTools, arrowEdge: .trailing) {
+            FamilyToolsPopover(packages: installedPackages, update: update(for:))
+        }
+    }
+}
+
+/// 畳んだ「追加ツール」を押したときに出す中身（Issue #228）。並べ方は畳む前の
+/// 運用タブと同じで、1行ずつ押すとその物の説明が開く。
+struct FamilyToolsPopover: View {
+    let packages: [FamilyPackage]
+    let update: (FamilyPackage) -> MulmoUpdateItem?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("追加ツール")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+                .padding(.bottom, 6)
+            ForEach(packages) { package in
+                if package.id != packages.first?.id {
+                    Hairline()
+                }
+                FamilyToolRow(package: package, update: update(package))
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(14)
+        .frame(width: 290)
     }
 }
 
@@ -2752,8 +2815,9 @@ struct FamilyToolRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // 更新がある物は橙（Issue #228）。畳んだ1行の印と同じ物を指す。
             Circle()
-                .fill(Palette.ok)
+                .fill(update?.status == "update" ? Palette.warn : Palette.ok)
                 .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
                 Text(package.title)

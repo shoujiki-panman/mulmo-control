@@ -241,6 +241,30 @@ private let relayToggleCases: [RelayToggleCase] = [
 /// 行の説明に使える長さ（check.sh の 131 と同じ）。超えると真ん中が潰れる。
 private let rowDetailLimit = 12
 
+/// 運用タブの「追加ツール」を畳んだ1行（Issue #228）。更新があるのに印が
+/// 消えると、畳んだせいで気づけなくなる。版を読めない（missing）だけでは
+/// 印を出さない（よそで入れた relay で消えない印になる）。
+private struct FoldCase {
+    let title: String
+    let statuses: [String?]
+    let expected: FamilyFold
+}
+
+private let foldCases: [FoldCase] = [
+    FoldCase(title: "1つ・最新", statuses: ["current"],
+             expected: FamilyFold(headline: "1件", needsAttention: false)),
+    FoldCase(title: "5つ・まだ確かめていない", statuses: [nil, nil, nil, nil, nil],
+             expected: FamilyFold(headline: "5件", needsAttention: false)),
+    FoldCase(title: "5つ・1つに更新", statuses: ["current", "update", "current", "current", "current"],
+             expected: FamilyFold(headline: "5件 ・ 更新あり 1件", needsAttention: true)),
+    FoldCase(title: "3つ・全部に更新", statuses: ["update", "update", "update"],
+             expected: FamilyFold(headline: "3件 ・ 更新あり 3件", needsAttention: true)),
+    FoldCase(title: "よそで入れた relay（版を読めない）", statuses: ["current", "missing"],
+             expected: FamilyFold(headline: "2件", needsAttention: false)),
+    FoldCase(title: "版を読めない物と更新が混ざる", statuses: ["missing", "update", "unknown"],
+             expected: FamilyFold(headline: "3件 ・ 更新あり 1件", needsAttention: true)),
+]
+
 /// 「前回の更新」のあらまし（Issue #183）。記録の形ごとに、行に出る1行を見る。
 private struct DigestCase {
     let title: String
@@ -626,10 +650,20 @@ struct StatusDisplayTest {
             }
         }
 
+        // ⑩ 追加ツールを畳んだ1行（Issue #228）
+        for item in foldCases {
+            let actual = familyFold(statuses: item.statuses)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  追加ツールの畳み \(item.title): 期待 \(item.expected) / 実際 \(actual)\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通りすべて一致")
     }
 }
