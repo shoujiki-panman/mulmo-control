@@ -63,7 +63,7 @@ function readJson(path) {
 // 何も足さない。入れ口が失敗しても、ほかの項目の確認は止めない。
 //
 // id は `my-skill:` で始まる。一覧に載せた物は、まとめて更新で入れ口の update を呼んで
-// 更新できる（main.swift の mySkillsUpdate・check.sh の 202。#131 と同じ「押しても
+// 更新できる（main.swift の mySkillsUpdate・check.sh の 205。#131 と同じ「押しても
 // 直らない」項目を作らないため）。
 function myToolItems() {
   const script = process.env.MY_TOOLS;

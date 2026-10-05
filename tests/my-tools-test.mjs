@@ -16,6 +16,8 @@
 // 10. Codex が入っている HOME には Codex の置き場にも入れること
 // 11. 壊れた控えを空とみなして書き直さないこと、追加・更新を重ねて走らせないこと
 //     （錠は逐次ではなく、同時に5本走らせて入れられるのが1本だけであることまで見る）
+// 12. 確かめたコミット・名前から変わった物と、正式版が無いタグ付きリポジトリは入れないこと
+// 13. 点で始まる手元の変更も守り、複数の置き場・控えの保存が失敗したら元に戻すこと
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
@@ -25,6 +27,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -99,6 +102,31 @@ const lastLine = (text) => text.trim().split("\n").pop() ?? "";
 
 function run(home, ...args) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], { env: runEnv(home), encoding: "utf8" });
+  return { code: result.status, out: result.stdout, err: result.stderr, last: lastLine(result.stderr) };
+}
+
+// 実物の CLI でファイル操作の失敗を再現する。製品側には検査専用の抜け道を作らない。
+const faultPreload = join(tmp, "fail-rename.cjs");
+writeFileSync(faultPreload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const rename = fs.renameSync;
+let failed = false;
+fs.renameSync = (from, to) => {
+  if (!failed && ((process.env.TEST_RENAME_FROM && String(from) === process.env.TEST_RENAME_FROM) ||
+                  (process.env.TEST_RENAME_TO && String(to) === process.env.TEST_RENAME_TO))) {
+    failed = true;
+    throw Object.assign(new Error("injected rename failure"), { code: "EACCES" });
+  }
+  return rename(from, to);
+};
+syncBuiltinESMExports();
+`);
+
+function runWithFailure(home, { from = "", to = "" }, ...args) {
+  const result = spawnSync(process.execPath, ["--require", faultPreload, SCRIPT, ...args], {
+    env: { ...runEnv(home), TEST_RENAME_FROM: from, TEST_RENAME_TO: to }, encoding: "utf8",
+  });
   return { code: result.status, out: result.stdout, err: result.stderr, last: lastLine(result.stderr) };
 }
 
@@ -312,6 +340,102 @@ try {
     "書き換えていない物を外せていません");
   check(run(homeD, "remove", "nothing").code === 1, "控えに無いスキルを外したと言っています");
 
+  // ── 12. 確かめた中身を入れる・試用版だけなら断る ───────────────
+  const pinRepo = makeRepo("review", "pinned", { "SKILL.md": skillMd("reviewed-name") }, ["v1.0.0"]);
+  const pinHome = newHome();
+  const pin = JSON.parse(run(pinHome, "preview", "review/pinned").out);
+  const pinArgs = (seen) => ["--expect-commit", seen.commit, "--expect-name", seen.name];
+  commit(pinRepo, { "SKILL.md": skillMd("unreviewed-name") }, ["v2.0.0"]);
+  const different = run(pinHome, "add", pin.source, ...pinArgs(pin));
+  check(different.code === 1 && different.last.includes("確かめた後"), "確かめた後に変わった名前・版を入れています");
+  check(listDir(join(pinHome, ".claude", "skills")).length === 0 && !existsSync(join(support(pinHome), "my-tools.json")),
+    "確かめた中身と違うのに、スキルか控えを書いています");
+  const beforeMove = JSON.parse(run(pinHome, "preview", "review/pinned").out);
+  commit(pinRepo, { "SKILL.md": skillMd("unreviewed-name", "同じタグでも中身を変えた") });
+  git(pinRepo, "tag", "-f", "v2.0.0");
+  const moved = run(pinHome, "add", beforeMove.source, ...pinArgs(beforeMove));
+  check(moved.code === 1 && moved.last.includes("確かめた後"), "同じタグの指すコミットが変わったのに入れています");
+  const reviewed = JSON.parse(run(pinHome, "preview", "review/pinned").out);
+  const wrongName = run(pinHome, "add", reviewed.source, "--expect-commit", reviewed.commit, "--expect-name", "different-name");
+  check(wrongName.code === 1 && wrongName.last.includes("確かめた後"), "確かめた名前の照合が効いていません");
+  const exact = run(pinHome, "add", reviewed.source, ...pinArgs(reviewed));
+  check(exact.code === 0 && recordOf(pinHome).items[0]?.commit === reviewed.commit,
+    `確かめたコミットが変わっていないのに入れられません: ${exact.last}`);
+
+  makeRepo("release", "beta-only", { "SKILL.md": skillMd("beta-only") }, ["v1.0.0-beta.1"]);
+  const betaHome = newHome();
+  for (const action of ["preview", "add"]) {
+    const beta = run(betaHome, action, "release/beta-only");
+    check(beta.code === 1 && beta.last.includes("正式版のタグがありません"), `試用版のタグしか無いのに ${action} が先頭を使っています`);
+  }
+  check(!existsSync(claudeSkill(betaHome, "beta-only")), "試用版だけのリポジトリから入れています");
+
+  // ── 13. 手元の隠しファイルも守る ────────────────────────────
+  const hiddenRepo = makeRepo("local", "hidden", { "SKILL.md": skillMd("hidden"), VERSION: "1" }, ["v1.0.0"]);
+  const hiddenHome = newHome();
+  run(hiddenHome, "add", "local/hidden");
+  const hiddenNote = join(claudeSkill(hiddenHome, "hidden"), ".local-notes");
+  writeFileSync(hiddenNote, "本人が残した非公開のメモ");
+  commit(hiddenRepo, { VERSION: "2" }, ["v2.0.0"]);
+  check(JSON.parse(run(hiddenHome, "check").out)[0]?.modified === true, "点で始まる手元の変更を見落としています");
+  const hiddenUpdate = run(hiddenHome, "update");
+  check(hiddenUpdate.code === 0 && hiddenUpdate.out.includes("手元で変えている") && existsSync(hiddenNote) &&
+    readFileSync(join(claudeSkill(hiddenHome, "hidden"), "VERSION"), "utf8") === "1", "更新が手元の隠しファイルを消しています");
+  check(run(hiddenHome, "remove", "hidden").code === 1 && existsSync(hiddenNote), "--force 無しで隠しファイルごと消しています");
+
+  const linkRepo = makeRepo("local", "root-link", { "SKILL.md": skillMd("root-link"), VERSION: "1" }, ["v1.0.0"]);
+  const linkHomes = ["live", "dangling"].map((kind) => {
+    const linkHome = newHome();
+    run(linkHome, "add", "local/root-link");
+    const original = join(linkHome, "original-skill");
+    renameSync(claudeSkill(linkHome, "root-link"), original);
+    symlinkSync(kind === "live" ? original : join(linkHome, "missing-target"), claudeSkill(linkHome, "root-link"));
+    return { linkHome, original, kind };
+  });
+  commit(linkRepo, { VERSION: "2" }, ["v2.0.0"]);
+  for (const { linkHome, original, kind } of linkHomes) {
+    check(JSON.parse(run(linkHome, "check").out)[0]?.modified === true, `${kind}: 根元をリンクに変えたことを見落としています`);
+    const keptLink = run(linkHome, "update");
+    check(keptLink.code === 0 && keptLink.out.includes("手元で変えている") && recordOf(linkHome).items[0].version === "v1.0.0",
+      `${kind}: 手元のリンクを更新で差し替えています`);
+    check(run(linkHome, "remove", "root-link").code === 1 && readFileSync(join(original, "VERSION"), "utf8") === "1",
+      `${kind}: 本人が置いたリンクを --force 無しで消しています`);
+  }
+
+  // ── 14. 2つ目の置き場と控えの保存に失敗しても、全部元に戻す ──
+  for (const action of ["add", "update", "remove"]) {
+    for (const failure of ["second-target", "record"]) {
+      const name = `${action}-${failure}`;
+      const repo = makeRepo("atomic", name, { "SKILL.md": skillMd(name), VERSION: "1" }, ["v1.0.0"]);
+      const atomicHome = newHome({ codex: true });
+      const claude = claudeSkill(atomicHome, name);
+      const codex = join(atomicHome, ".codex", "skills", name);
+      const record = join(support(atomicHome), "my-tools.json");
+      if (action !== "add") check(run(atomicHome, "add", `atomic/${name}`).code === 0, `${name}: 検査用の導入が失敗しました`);
+      if (action === "update") commit(repo, { VERSION: "2" }, ["v2.0.0"]);
+      const before = existsSync(record) ? readFileSync(record, "utf8") : null;
+      const args = action === "add" ? [action, `atomic/${name}`] : action === "remove" ? [action, name] : [action];
+      const fault = failure === "record" ? { to: record } : action === "remove" ? { from: codex } : { to: codex };
+      const failed = runWithFailure(atomicHome, fault, ...args);
+      check(failed.code === 1 && `${failed.out}${failed.err}`.includes("injected rename failure"), `${name}: 保存失敗を再現できていません`);
+      check((existsSync(record) ? readFileSync(record, "utf8") : null) === before, `${name}: 失敗したのに控えが変わりました`);
+      check([claude, codex].every((dir) => action === "add" ? !existsSync(dir) :
+        existsSync(join(dir, "VERSION")) && readFileSync(join(dir, "VERSION"), "utf8") === "1"),
+      `${name}: 失敗後、いずれかの置き場が元に戻っていません`);
+      check(listDir(join(support(atomicHome), "my-tools-staging")).length === 0 &&
+        !listDir(support(atomicHome)).some((entry) => entry.startsWith("my-tools.json.tmp-")), `${name}: 正常に戻せたのに途中の物が残っています`);
+      const retry = run(atomicHome, ...args);
+      check(retry.code === 0, `${name}: 保存失敗を直しても再試行できません: ${retry.out}${retry.last}`);
+      if (action === "remove") {
+        check(!existsSync(claude) && !existsSync(codex) && recordOf(atomicHome).items.length === 0, `${name}: 再試行しても外せません`);
+      } else {
+        const expected = action === "update" ? "2" : "1";
+        check([claude, codex].every((dir) => readFileSync(join(dir, "VERSION"), "utf8") === expected) &&
+          recordOf(atomicHome).items[0]?.version === `v${expected}.0.0`, `${name}: 再試行後の両方の中身と控えが揃いません`);
+      }
+    }
+  }
+
   // ── 11. 壊れた控え・重ねて走らせない ─────────────────────────
   const homeE = newHome();
   mkdirSync(support(homeE), { recursive: true });
@@ -349,5 +473,5 @@ if (failures > 0) {
   process.exit(1);
 }
 process.stdout.write(
-  `出どころの読み方・最新タグ（途中のコミットは配らない）・skills/ の側を入れる・点とリンクを持ち込まない・preview は書かない・同名を上書きしない・版の確認（タグ／先頭）・手元で変えた物は更新も削除もしない・危ない名前と外を指すフォルダを断る・Codex の置き場・壊れた控えと錠（${checks} 項目）\n`,
+  `出どころの読み方・正式版と確かめたコミットだけを入れる・skills/ の側を入れる・点とリンクを持ち込まない・preview は書かない・同名を上書きしない・版の確認（タグ／先頭）・隠しファイルを含む手元の変更を守る・危ない名前と外を指すフォルダを断る・複数の置き場と控えを失敗時に元に戻す・Codex の置き場・壊れた控えと錠（${checks} 項目）\n`,
 );

@@ -519,6 +519,7 @@ private struct MySkillRecordFile: Decodable {
 
 /// 入れる前に見せる中身（`mulmo-my-tools.mjs preview` の返事）。
 struct MySkillPreview: Decodable, Sendable {
+    let commit: String
     let name: String
     let description: String
     let source: String
@@ -528,7 +529,7 @@ struct MySkillPreview: Decodable, Sendable {
 }
 
 /// 自分で選んだスキルの控えの場所。入れ口の recordPath と同じでなければならない
-/// （check.sh の 203 が突き合わせている）。ずれると、入れたのに一覧に出ない。
+/// （check.sh の 206 が突き合わせている）。ずれると、入れたのに一覧に出ない。
 private let mySkillsRecordPath = "\(homeDir)/Library/Application Support/Mulmo Control/my-tools.json"
 
 private let familyPackages = [
@@ -1373,7 +1374,7 @@ final class ControlModel: ObservableObject {
             showMessage(title: "nodeが見つかりません", text: "先にNode.jsをインストールしてください。")
             return
         }
-        var arguments = ["add", preview.source]
+        var arguments = ["add", preview.source, "--expect-commit", preview.commit, "--expect-name", preview.name]
         if !preview.path.isEmpty { arguments += ["--path", preview.path] }
         let name = preview.name
         mySkillBusy = true
@@ -2897,31 +2898,111 @@ struct SettingsRow<Content: View>: View {
     }
 }
 
+/// 運用タブの「追加ツール」（Issue #228）。
+///
+/// 以前は入っている物の数だけ1行ずつ並べていた。#222 で session-relay が増え、
+/// 全部入れた人のパネルは画面の見える高さを超えて、一番下の「終了」に手が
+/// 届かなくなった（#192 と同じ壊れ方。#192 は器と余白を詰めただけで、**入れる
+/// 物の数だけ伸びる形**は残っていた）。
+///
+/// スクロールでは直さない（STATUS.md・#192 の決定）。「前回の更新」（#183）と
+/// 更新直後の知らせ（#205）と同じ作法で、あらまし1行と `>` に畳み、中身は
+/// 押したときだけ吹き出しで出す。吹き出しは別の窓なので、何個入れても
+/// パネルの高さは1行ぶんのまま変わらない。
+///
+/// 更新がある物があれば、畳んだ1行にも橙の印と「更新あり N件」を出す。
+/// 畳んだせいで気づけなくなるのでは、溢れていたときと同じことになる。
 struct InstalledFamilyPanel: View {
     @ObservedObject var model: ControlModel
+    @State private var showsTools = false
 
     private var installedPackages: [FamilyPackage] {
         familyPackages.filter { model.familyInstalled[$0.id] ?? false }
     }
 
+    private func update(for package: FamilyPackage) -> MulmoUpdateItem? {
+        model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
+    }
+
+    private func update(for skill: MySkillRecord) -> MulmoUpdateItem? {
+        model.updateItems.first(where: { $0.id == "\(mySkillIDPrefix)\(skill.name)" })
+    }
+
+    private var fold: FamilyFold {
+        familyFold(statuses: installedPackages.map { update(for: $0)?.status },
+                   skillStatuses: model.mySkills.map { update(for: $0)?.status })
+    }
+
     var body: some View {
-        if !installedPackages.isEmpty {
-            // 見出しも1行として扱う。**区切り線を持たせないと、上の行と
-            // くっついて見える**（Issue #192）。台紙は持たない。
+        if !installedPackages.isEmpty || !model.mySkills.isEmpty {
             SettingsRow {
-                Text("追加ツール")
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-            }
-            ForEach(installedPackages) { package in
-                SettingsRow(showsSeparator: package.id != installedPackages.first?.id) {
-                    FamilyToolRow(
-                        package: package,
-                        update: model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
-                    )
-                }
+                foldedRow
             }
         }
+    }
+
+    private var foldedRow: some View {
+        HStack(spacing: 8) {
+            Text("追加ツール")
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            if fold.needsAttention {
+                Circle()
+                    .fill(Palette.warn)
+                    .frame(width: 8, height: 8)
+            }
+            Text(fold.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold, design: .default))
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showsTools.toggle() }
+        .popover(isPresented: $showsTools, arrowEdge: .trailing) {
+            ScrollView {
+                FamilyToolsPopover(packages: installedPackages, skills: model.mySkills,
+                                   update: { update(for: $0) }, skillUpdate: { update(for: $0) })
+            }
+            .frame(width: 290)
+            .frame(maxHeight: 320)
+        }
+    }
+}
+
+/// 畳んだ「追加ツール」を押したときに出す中身（Issue #228）。並べ方は畳む前の
+/// 運用タブと同じで、1行ずつ押すとその物の説明が開く。
+struct FamilyToolsPopover: View {
+    let packages: [FamilyPackage]
+    let skills: [MySkillRecord]
+    let update: (FamilyPackage) -> MulmoUpdateItem?
+    let skillUpdate: (MySkillRecord) -> MulmoUpdateItem?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("追加ツール")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+                .padding(.bottom, 6)
+            ForEach(packages) { package in
+                if package.id != packages.first?.id {
+                    Hairline()
+                }
+                FamilyToolRow(package: package, update: update(package))
+                    .padding(.vertical, 8)
+            }
+            ForEach(skills) { skill in
+                if !packages.isEmpty || skill.id != skills.first?.id { Hairline() }
+                MySkillSummaryRow(skill: skill, update: skillUpdate(skill))
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(14)
+        .frame(width: 290)
     }
 }
 
@@ -2932,8 +3013,9 @@ struct FamilyToolRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // 更新がある物は橙（Issue #228）。畳んだ1行の印と同じ物を指す。
             Circle()
-                .fill(Palette.ok)
+                .fill(update?.status == "update" ? Palette.warn : Palette.ok)
                 .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
                 Text(package.title)
@@ -3471,7 +3553,11 @@ struct MySkillsSection: View {
                 }
                 .buttonStyle(.plain)
                 .popover(isPresented: $showsList, arrowEdge: .bottom) {
-                    MySkillListPopover(model: model)
+                    ScrollView {
+                        MySkillListPopover(model: model)
+                    }
+                    .frame(width: 300)
+                    .frame(maxHeight: 320)
                 }
             }
         }
@@ -3531,6 +3617,31 @@ struct MySkillPreviewCard: View {
     }
 }
 
+/// 自分で入れたスキルの名前と版。運用タブの吹き出しでも、追加タブの一覧でも同じ表示にする。
+struct MySkillSummaryRow: View {
+    let skill: MySkillRecord
+    let update: MulmoUpdateItem?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if update?.status == "update" {
+                Circle().fill(Palette.warn).frame(width: 8, height: 8)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(skill.name)
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text(mySkillRowDetail(version: skill.version, status: update?.status, latest: update?.latest))
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 /// 入れたスキルの一覧（Issue #229）。押したときだけ開き、中は上限つきのスクロール
 /// （#183 と同じ）。「外す」は2回押させる（1回目で確かめ、2回目で外す）。
 struct MySkillListPopover: View {
@@ -3542,14 +3653,11 @@ struct MySkillListPopover: View {
             Text("入れたスキル")
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.mySkills) { skill in
-                        row(skill)
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(model.mySkills) { skill in
+                    row(skill)
                 }
             }
-            .frame(maxHeight: 240)
             Text("新しい版は、追加ツールのまとめて更新で入ります。手元で書き換えたスキルは入れ替えません")
                 .font(AppFont.small)
                 .foregroundStyle(Palette.secondaryText)
@@ -3562,16 +3670,7 @@ struct MySkillListPopover: View {
     private func row(_ skill: MySkillRecord) -> some View {
         let item = model.updateItems.first(where: { $0.id == "\(mySkillIDPrefix)\(skill.name)" })
         return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(skill.name)
-                    .font(AppFont.rowTitle)
-                    .foregroundStyle(Palette.primaryText)
-                Text(mySkillRowDetail(version: skill.version, status: item?.status, latest: item?.latest))
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            MySkillSummaryRow(skill: skill, update: item)
             Spacer()
             if confirming == skill.name {
                 Button("やめる") { confirming = nil }

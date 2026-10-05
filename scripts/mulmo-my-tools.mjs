@@ -1,7 +1,8 @@
 // 自分で選んだスキル（GitHub）を入れて、版を確かめ、入れ替える入れ口（Issue #229）。
 //
 //   node mulmo-my-tools.mjs preview <出どころ> [--path <フォルダ>]   入れる前に、名前・説明・取る版を JSON で出す
-//   node mulmo-my-tools.mjs add <出どころ> [--path <フォルダ>]       入れて控える
+//   node mulmo-my-tools.mjs add <出どころ> [--path <フォルダ>] [--expect-commit <SHA> --expect-name <名前>]
+//                                                                確かめた中身と照合して、入れて控える
 //   node mulmo-my-tools.mjs check                                  控えた各スキルの版を JSON で出す
 //   node mulmo-my-tools.mjs update                                 新しい版があるものを入れ替える
 //   node mulmo-my-tools.mjs remove <名前> [--force]                 入れたフォルダと控えを消す
@@ -154,7 +155,7 @@ export function pickLatestTag(tags) {
 
 const compareVersions = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 
-/** 取りに行く版。タグがあればタグ、無ければ既定ブランチの先頭。 */
+/** 正式版のタグを取る。タグ自体が無いときだけ既定ブランチの先頭に落ちる。 */
 export function remoteVersion(source) {
   const url = remoteUrl(source);
   const tags = git(["ls-remote", "--tags", "--refs", url])
@@ -164,6 +165,7 @@ export function remoteVersion(source) {
     .map((ref) => ref.slice("refs/tags/".length));
   const tag = pickLatestTag(tags);
   if (tag) return { tag, label: tag };
+  if (tags.length) throw new Error("正式版のタグがありません（試用版や途中のコミットは入れません）");
   const head = git(["ls-remote", url, "HEAD"]).split(/\s+/)[0] ?? "";
   if (!/^[0-9a-f]{40}$/.test(head)) throw new Error("リポジトリの版を読めませんでした");
   return { tag: null, label: head.slice(0, 7) };
@@ -290,12 +292,11 @@ function copyTree(from, to) {
   }
 }
 
-/** 中身のハッシュ。手元で書き換えたかどうかを、入れたときの控えと比べて見る。 */
+/** 手元の隠しファイルも含めたハッシュ。コピー元を絞る規則とは分けて、利用者の変更を守る。 */
 export function hashTree(dir) {
   const hash = createHash("sha256");
   const walk = (current, prefix) => {
     for (const name of readdirSync(current).sort()) {
-      if (name.startsWith(".")) continue;
       const path = join(current, name);
       const rel = prefix ? `${prefix}/${name}` : name;
       const stat = lstatSync(path);
@@ -309,30 +310,71 @@ export function hashTree(dir) {
 }
 
 /**
- * スキルのフォルダを置く。新しい中身はいったん Mulmo Control の置き場で組み、名前を
- * 付け替えて差し込む。スキルの置き場に作りかけのフォルダを置くと、途中で止まったとき
- * に Claude Code が同じ名前のスキルを2つ読むため。
+ * 全ての置き場と控えを1組で変える。前の中身は控えの保存が終わるまで残す。
+ * 途中で失敗したら、先に変えた置き場も戻す。復旧にも失敗した場合は控えを消さず、
+ * 保存先を知らせる。from が null のときは取り外し。
+ * 作りかけと退避先はスキルの置き場に置かない（同名のスキルを二重に読ませない）。
  */
-function placeSkill(from, target) {
+function changeSkills(from, targets, save) {
   const staging = join(supportDir(), "my-tools-staging");
   mkdirSync(staging, { recursive: true });
-  mkdirSync(dirname(target), { recursive: true });
-  const fresh = mkdtempSync(join(staging, "new-"));
-  const old = mkdtempSync(join(staging, "old-"));
+  const work = mkdtempSync(join(staging, "transaction-"));
+  const changes = targets.map((target, index) => ({
+    target,
+    fresh: join(work, `new-${index}`),
+    old: join(work, `old-${index}`),
+    backedUp: false,
+    installed: false,
+  }));
+  let retainBackup = false;
   try {
-    copyTree(from, join(fresh, "skill"));
-    const hadOld = existsSync(target);
-    if (hadOld) renameSync(target, join(old, "skill"));
+    // 全て組み立ててから置き換え始める。コピー失敗では既存の中身に触れない。
+    if (from) {
+      for (const change of changes) {
+        mkdirSync(dirname(change.target), { recursive: true });
+        copyTree(from, change.fresh);
+      }
+    }
     try {
-      renameSync(join(fresh, "skill"), target);
+      for (const change of changes) {
+        if (pathExists(change.target)) {
+          renameSync(change.target, change.old);
+          change.backedUp = true;
+        }
+        if (from) {
+          renameSync(change.fresh, change.target);
+          change.installed = true;
+        }
+      }
+      return save();
     } catch (error) {
-      // 差し込めなかったら前の中身を戻す。戻さずに片付けると、入っていたスキルが消える。
-      if (hadOld) renameSync(join(old, "skill"), target);
+      const failures = [];
+      for (const change of [...changes].reverse()) {
+        try {
+          if (change.installed) rmSync(change.target, { recursive: true, force: true });
+          if (change.backedUp) renameSync(change.old, change.target);
+        } catch (restoreError) {
+          failures.push(restoreError.message);
+        }
+      }
+      if (failures.length) {
+        retainBackup = true;
+        throw new Error(`${error.message}。元に戻せなかった中身は ${work} に残しています: ${failures.join("、")}`);
+      }
       throw error;
     }
   } finally {
-    rmSync(fresh, { recursive: true, force: true });
-    rmSync(old, { recursive: true, force: true });
+    if (!retainBackup) {
+      // 保存後の片付けの失敗を「更新失敗」としない。控えと中身は既に揃っている。
+      try { rmSync(work, { recursive: true, force: true }); } catch { /* 次の検査・手動片付けに残す */ }
+    }
+  }
+}
+
+function pathExists(path) {
+  try { lstatSync(path); return true; } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
   }
 }
 
@@ -361,8 +403,12 @@ function writeRecord(record) {
   const path = recordPath();
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`);
-  renameSync(temporary, path);
+  try {
+    writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`);
+    renameSync(temporary, path);
+  } finally {
+    try { rmSync(temporary, { force: true }); } catch { /* 元の保存エラーを保つ */ }
+  }
 }
 
 /** 追加・更新・取り外しは1本ずつ（画面の連打と、巡回の更新が重ならないように）。 */
@@ -428,39 +474,44 @@ export function preview(input, folder = "") {
       version: seen.version,
       commit: seen.commit,
       targets,
-      conflicts: targets.filter((target) => existsSync(target)),
+      conflicts: targets.filter(pathExists),
     };
   });
 }
 
-export function add(input, folder = "") {
+export function add(input, folder = "", { expectedCommit, expectedName } = {}) {
   const source = mustParse(input, folder);
   return withLock(() => {
     const record = readRecord();
     return withWorkDir((work) => {
       const seen = inspect(source, work);
+      if ((expectedCommit !== undefined && seen.commit !== expectedCommit) ||
+          (expectedName !== undefined && seen.name !== expectedName)) {
+        throw new Error("確かめた後にスキルの中身が変わりました。もう一度「確かめる」を押してください");
+      }
       if (record.items.some((item) => item.name === seen.name)) throw new Error(`「${seen.name}」はもう入っています`);
       const agents = detectAgents();
-      const taken = agents.map((agent) => skillDir(agent, seen.name)).filter((target) => existsSync(target));
+      const targets = agents.map((agent) => skillDir(agent, seen.name));
+      const taken = targets.filter(pathExists);
       if (taken.length) throw new Error(`同じ名前のスキルが既にあるので入れていません: ${taken.join("、")}`);
-      for (const agent of agents) placeSkill(seen.found.dir, skillDir(agent, seen.name));
-      const now = new Date().toISOString();
-      const item = {
-        kind: "skill",
-        name: seen.name,
-        source: source.url,
-        path: seen.found.path,
-        version: seen.version,
-        tag: seen.tag,
-        commit: seen.commit,
-        hash: hashTree(skillDir(agents[0], seen.name)),
-        agents,
-        installedAt: now,
-        updatedAt: now,
-      };
-      record.items.push(item);
-      writeRecord(record);
-      return item;
+      return changeSkills(seen.found.dir, targets, () => {
+        const now = new Date().toISOString();
+        const item = {
+          kind: "skill",
+          name: seen.name,
+          source: source.url,
+          path: seen.found.path,
+          version: seen.version,
+          tag: seen.tag,
+          commit: seen.commit,
+          hash: hashTree(targets[0]),
+          agents,
+          installedAt: now,
+          updatedAt: now,
+        };
+        writeRecord({ ...record, items: [...record.items, item] });
+        return item;
+      });
     });
   });
 }
@@ -474,7 +525,9 @@ function storedSource(item) {
 const changedLocally = (item) =>
   item.agents.some((agent) => {
     const dir = skillDir(agent, item.name);
-    return existsSync(dir) && hashTree(dir) !== item.hash;
+    // リンクへの置き換えも本人の変更。existsSync は切れたリンクを「無い」と読むので
+    // lstat で根元を確かめ、リンク先をハッシュして同じ物だと誤読しない。
+    return pathExists(dir) && (!lstatSync(dir).isDirectory() || hashTree(dir) !== item.hash);
   });
 
 /**
@@ -492,11 +545,11 @@ export function check() {
     }
     const current = present ? item.version : "unknown";
     const status = !present ? "missing" : latest === "unknown" ? "unknown" : current === latest ? "current" : "update";
-    return { id: `my-skill:${item.name}`, name: item.name, current, latest, status, modified: present && changedLocally(item) };
+    return { id: `my-skill:${item.name}`, name: item.name, current, latest, status, modified: changedLocally(item) };
   });
 }
 
-function updateOne(item) {
+function updateOne(item, record) {
   const source = storedSource(item);
   const version = remoteVersion(source);
   if (version.label === item.version) return { name: item.name, outcome: "current" };
@@ -506,16 +559,21 @@ function updateOne(item) {
     const found = insideRepo(dir, item.path ? join(dir, ...item.path.split("/")) : dir);
     const name = skillMeta(found.dir).name;
     if (name !== item.name) throw new Error(`名前が ${name} に変わったので入れ替えていません`);
-    for (const agent of item.agents) placeSkill(found.dir, skillDir(agent, item.name));
-    const before = item.version;
-    Object.assign(item, {
-      version: versionLabel(version, commit),
-      tag: version.tag,
-      commit,
-      hash: hashTree(skillDir(item.agents[0], item.name)),
-      updatedAt: new Date().toISOString(),
+    const targets = item.agents.map((agent) => skillDir(agent, item.name));
+    return changeSkills(found.dir, targets, () => {
+      const updated = {
+        ...item,
+        version: versionLabel(version, commit),
+        tag: version.tag,
+        commit,
+        hash: hashTree(targets[0]),
+        updatedAt: new Date().toISOString(),
+      };
+      const next = { ...record, items: record.items.map((entry) => entry === item ? updated : entry) };
+      writeRecord(next);
+      record.items = next.items;
+      return { name: item.name, outcome: "updated", text: `${item.name}: ${item.version} → ${updated.version}` };
     });
-    return { name: item.name, outcome: "updated", text: `${item.name}: ${before} → ${item.version}` };
   });
 }
 
@@ -525,12 +583,11 @@ export function update() {
     const record = readRecord();
     const results = record.items.map((item) => {
       try {
-        return updateOne(item);
+        return updateOne(item, record);
       } catch (error) {
         return { name: item.name, outcome: "failed", text: `${item.name}: ${error.message}` };
       }
     });
-    writeRecord(record);
     return results;
   });
 }
@@ -542,10 +599,10 @@ export function remove(name, { force = false } = {}) {
     if (!item) throw new Error(`「${name}」は自分で追加したスキルにありません`);
     if (!force && changedLocally(item)) throw new Error(`「${name}」は手元で変えているので消していません`);
     const removed = item.agents.map((agent) => skillDir(agent, item.name));
-    for (const dir of removed) rmSync(dir, { recursive: true, force: true });
-    record.items = record.items.filter((entry) => entry !== item);
-    writeRecord(record);
-    return { name, removed };
+    return changeSkills(null, removed, () => {
+      writeRecord({ ...record, items: record.items.filter((entry) => entry !== item) });
+      return { name, removed };
+    });
   });
 }
 
@@ -555,12 +612,16 @@ function parseArgs(argv) {
   const args = [];
   let path = "";
   let force = false;
+  let expectedCommit;
+  let expectedName;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--path") path = argv[(i += 1)] ?? "";
     else if (argv[i] === "--force") force = true;
+    else if (argv[i] === "--expect-commit") expectedCommit = argv[(i += 1)] ?? "";
+    else if (argv[i] === "--expect-name") expectedName = argv[(i += 1)] ?? "";
     else args.push(argv[i]);
   }
-  return { args, path, force };
+  return { args, path, force, expectedCommit, expectedName };
 }
 
 function summarize(results) {
@@ -576,10 +637,10 @@ const print = (value) => process.stdout.write(`${JSON.stringify(value, null, 2)}
 
 function main(argv) {
   const [command, ...rest] = argv;
-  const { args, path, force } = parseArgs(rest);
+  const { args, path, force, expectedCommit, expectedName } = parseArgs(rest);
   if (command === "preview") return print(preview(args[0], path));
   if (command === "add") {
-    const item = add(args[0], path);
+    const item = add(args[0], path, { expectedCommit, expectedName });
     return console.log(`${item.name}（${item.version}）を入れました`);
   }
   if (command === "check") return print(check());

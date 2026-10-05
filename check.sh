@@ -365,7 +365,7 @@ for uid in ${(f)UPDATE_IDS}; do
 done
 ok "更新一覧の項目はすべて更新する手段がある"
 
-# 202 自分で選んだスキル（#229）も、更新の一覧に載せたら更新する手段を持つ。
+# 205 自分で選んだスキル（#229）も、更新の一覧に載せたら更新する手段を持つ。
 #
 # 項目は mulmo-check-updates が入れ口（mulmo-my-tools.mjs）の check から足す（id は
 # `my-skill:` で始まる）。上の 131 は `id: "..."` と書かれた項目しか見えないので、
@@ -373,20 +373,20 @@ ok "更新一覧の項目はすべて更新する手段がある"
 # 2つの口が入れ口の update を呼ぶ）の両方が揃っていなければ落とす。
 MYT_CHK="$(grep -vE '^[[:space:]]*(//|#)' "${ROOT}/scripts/mulmo-check-updates")"
 printf '%s\n' "${MYT_CHK}" | grep -qF 'MY_TOOLS="${SCRIPT_DIR}/mulmo-my-tools.mjs"' \
-  || fail "mulmo-check-updates が、同梱の入れ口を呼んでいません（202）"
+  || fail "mulmo-check-updates が、同梱の入れ口を呼んでいません（205）"
 printf '%s\n' "${MYT_CHK}" | grep -qF '.concat(myToolItems())' \
-  || fail "mulmo-check-updates が、自分で選んだスキルを更新の一覧に足していません（202）"
+  || fail "mulmo-check-updates が、自分で選んだスキルを更新の一覧に足していません（205）"
 grep -qF 'private let mySkillIDPrefix = "my-skill:"' "${ROOT}/Sources/main.swift" \
-  || fail "main.swift の id の頭が、mulmo-check-updates の印（my-skill:）と違います（202）"
+  || fail "main.swift の id の頭が、mulmo-check-updates の印（my-skill:）と違います（205）"
 MYT_UPDATE="$(awk '/private func mySkillsUpdate\(\)/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' "${ROOT}/Sources/main.swift")"
 printf '%s\n' "${MYT_UPDATE}" | grep -qF 'tool("mulmo-my-tools.mjs")) update' \
-  || fail "まとめて更新が、自分で選んだスキルの入れ口の update を呼んでいません（202）"
+  || fail "まとめて更新が、自分で選んだスキルの入れ口の update を呼んでいません（205）"
 for presser in updateInstalledFamily updateAllInstalled; do
   BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
     "${ROOT}/Sources/main.swift")"
-  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（202）"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（205）"
   printf '%s\n' "${BODY}" | grep -q 'mySkillsUpdate()' \
-    || fail "${presser} が自分で選んだスキルを更新しません。「更新あり」が消えなくなります（202）"
+    || fail "${presser} が自分で選んだスキルを更新しません。「更新あり」が消えなくなります（205）"
 done
 ok "自分で選んだスキルは、更新の一覧に載り、まとめて更新で更新される"
 
@@ -1191,6 +1191,67 @@ if [ -n "${BACKTICK}" ]; then
   fail "画面に出す文にバッククォートが入っています。そのまま記号として出ます（#192）"
 fi
 ok "画面に出す文に記号が紛れていない"
+
+# ── 入れる物が増えても、運用タブは伸びない（Issue #228）──────────────
+#
+# #192 の直し方（器を1枚にまとめ、文字と余白を詰める）は効いたが、**追加ツールは
+# 入っている物の数だけ1行ずつ伸びる形のまま**だった。#222 で session-relay が増え、
+# 全部入れた人のパネルが 914pt になった（この Mac の見える高さは 853pt）。上の #192 の
+# ガードは器の形しか見ていないので、行の数が増えても何も言わない。
+#
+# 201 追加ツールは何個入っていても1行。運用タブに縦に並ぶ行の数に上限を置く。
+FAMILY_PANEL="$(awk '/^struct InstalledFamilyPanel: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+[ -n "${FAMILY_PANEL}" ] || fail "InstalledFamilyPanel を見失いました（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'ForEach' \
+  && fail "運用タブの追加ツールが、入っている物の数だけ行を並べています。1行に畳んでください（#228）"
+FAMILY_ROWS="$(printf '%s\n' "${FAMILY_PANEL}" | grep -c 'SettingsRow' || true)"
+[ "${FAMILY_ROWS}" = "1" ] \
+  || fail "運用タブの追加ツールが ${FAMILY_ROWS} 行あります。畳んだ1行だけにしてください（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q '\.popover(isPresented: \$showsTools' \
+  || fail "畳んだ追加ツールの中身を、押したときに吹き出しで出していません（#228）"
+OPERATE_SELF_ROWS="$(printf '%s\n' "${OPERATE}" | grep -cE 'ServicePanel\(|SettingsRow' || true)"
+printf '%s\n' "${OPERATE}" | grep -q 'InstalledFamilyPanel(' \
+  || fail "運用タブが追加ツールの行を通っていません（#228）"
+OPERATE_ROWS=$((OPERATE_SELF_ROWS + FAMILY_ROWS))
+# 上限は今の5行（MulmoTerminal・MulmoClaude・画面ガイド・Telegram・追加ツール）。
+# 全部入れた状態を描いて測ると 672pt（直す前は 914pt）。行を足したくなったら、
+# 上限を上げる前に、何かを畳むか別のタブへ移す。
+OPERATE_ROW_LIMIT=5
+[ "${OPERATE_ROWS}" -le "${OPERATE_ROW_LIMIT}" ] \
+  || fail "運用タブに縦に並ぶ行が ${OPERATE_ROWS} 行あります（上限 ${OPERATE_ROW_LIMIT}）。足すたびに画面からはみ出します。何かを畳むか、別のタブへ移してください（#228）"
+ok "運用タブは、追加ツールを何個入れても伸びない（${OPERATE_ROWS} 行 / 上限 ${OPERATE_ROW_LIMIT}）"
+
+# 202 パネルをスクロールで解決しない（STATUS.md・#192 の決定）。
+# スクロールしてよいのは吹き出しの中だけ（#183 の「前回の更新」など）。吹き出しは
+# 別の窓なので、パネルの高さには効かない。構造体ごとに、ScrollView が `.popover(` の
+# 中にしか出てこないことを見る。字下げが戻ったら吹き出しの外なので許さない。
+PANEL_SCROLL="$(awk '
+  /^struct [A-Za-z0-9_<>: ]+\{/ { name=$2; popover=-1 }
+  /^[[:space:]]*\/\// { next }
+  {
+    match($0, /[^[:space:]]/); indent=RSTART-1
+    if ($0 ~ /\.popover\(/) { popover=indent; next }
+    if (RSTART > 0 && indent <= popover) popover=-1
+    if ($0 ~ /ScrollView/ && popover < 0) print FILENAME ":" FNR ": " name
+  }
+' "${ROOT}/Sources"/*.swift)"
+if [ -n "${PANEL_SCROLL}" ]; then
+  printf '%s\n' "${PANEL_SCROLL}"
+  fail "パネルにスクロールが入っています。メニューバーのパネルはスクロールで解決しない決まりです（STATUS.md・#192 / #228）"
+fi
+ok "パネルはスクロールに頼っていない（スクロールは吹き出しの中だけ）"
+
+# 203 畳んだ1行にも、更新がある印が出る。言葉の対応は status-display-test の
+# foldCases（6通り）で**実際に走らせて**いる。ここでは画面がその言葉と印を通ることを見る。
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'familyFold(statuses:' \
+  || fail "畳んだ追加ツールの1行が、あらましを決める関数を通っていません（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -q 'if fold.needsAttention' \
+  || fail "畳んだ追加ツールの1行に、更新がある印が出ません。畳んだせいで気づけなくなります（#228）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -A2 'if fold.needsAttention' | grep -q 'Palette.warn' \
+  || fail "畳んだ追加ツールの1行の印が、要確認の色（橙）ではありません（#228）"
+grep -q 'for item in foldCases' "${ROOT}/tests/status-display-test.swift" \
+  || fail "畳んだ1行の言葉を、検査で走らせていません（#228）"
+ok "畳んだ追加ツールの1行にも、更新がある印と言葉が出る"
 
 # ── 画面ガイド（Issue #202 / #207）──────────────────────────────
 #
@@ -2676,7 +2737,7 @@ ok "一括更新は、よそで入れた relay をすり替えない"
 
 
 # ── 自分で選んだスキル ─────────────────────────────────────────
-# SECURITY.md の P 節（201）。
+# SECURITY.md の P 節（204）。
 #
 # 追加ツールは作者が決め打ちで並べていて、npm に無いスキル（GitHub にだけある物）は
 # 入れられなかった。入れ口（scripts/mulmo-my-tools.mjs）は他人のリポジトリの中身を
@@ -2695,7 +2756,7 @@ if [ "${MY_TOOLS_RC}" != "0" ]; then
 fi
 ok "${MY_TOOLS_OUT}"
 
-# 203 自分で選んだスキルの画面（追加タブ）。
+# 206 自分で選んだスキルの画面（追加タブ）。
 #
 # 控えの場所が、書く側（入れ口）と読む側（画面）で同じであること。ずれると、入れたのに
 # 一覧に出ない（#190 の控えと同じ型）。入れ口が組み立てる場所を実際に読み、main.swift の
@@ -2706,7 +2767,7 @@ MYT_JS_RECORD="$(HOME=/HOME MYT_JS="${ROOT}/scripts/mulmo-my-tools.mjs" node --i
 MYT_SWIFT_RECORD="$(grep -E '^private let mySkillsRecordPath = ' "${ROOT}/Sources/main.swift" \
   | sed -E 's/.*"\\\(homeDir\)([^"]*)".*/\1/')"
 [ -n "${MYT_SWIFT_RECORD}" ] && [ "/HOME${MYT_SWIFT_RECORD}" = "${MYT_JS_RECORD}" ] \
-  || fail "自分で選んだスキルの控えの場所が、入れ口（${MYT_JS_RECORD}）と画面（${MYT_SWIFT_RECORD}）で違います（203）"
+  || fail "自分で選んだスキルの控えの場所が、入れ口（${MYT_JS_RECORD}）と画面（${MYT_SWIFT_RECORD}）で違います（206）"
 ok "自分で選んだスキルの控えの場所が、書く側と読む側で揃っている"
 
 # 打たれた出どころをシェルに通さない。入れ口は Process に引数で渡す。コマンド文字列に
@@ -2714,33 +2775,57 @@ ok "自分で選んだスキルの控えの場所が、書く側と読む側で�
 # 確かめる・入れる・外すの3つの口を列挙して回す（#147）。
 MYT_RUNNER="$(awk '/private nonisolated static func runMyTools\(/ { inside = 1 } inside { print } inside && /^    \}$/ { exit }' \
   "${ROOT}/Sources/main.swift")"
-[ -n "${MYT_RUNNER}" ] || fail "入れ口を走らせる口（runMyTools）を見失いました（203）"
+[ -n "${MYT_RUNNER}" ] || fail "入れ口を走らせる口（runMyTools）を見失いました（206）"
 printf '%s\n' "${MYT_RUNNER}" | grep -q 'zsh' \
-  && fail "入れ口をシェル越しに走らせています。打たれた出どころがシェルで走ります（203）"
+  && fail "入れ口をシェル越しに走らせています。打たれた出どころがシェルで走ります（206）"
 printf '%s\n' "${MYT_RUNNER}" | grep -qF 'process.arguments = [script] + arguments' \
-  || fail "入れ口に、出どころを引数として渡していません（203）"
+  || fail "入れ口に、出どころを引数として渡していません（206）"
 for presser in previewMySkill addMySkill removeMySkill; do
   BODY="$(awk -v f="func ${presser}(" 'index($0, f) { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' \
     "${ROOT}/Sources/main.swift")"
-  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（203）"
+  [ -n "${BODY}" ] || fail "Sources/main.swift の ${presser} を見失いました（206）"
   printf '%s\n' "${BODY}" | grep -q 'Self.runMyTools(' \
-    || fail "${presser} が、引数で渡す口（runMyTools）を通っていません（203）"
+    || fail "${presser} が、引数で渡す口（runMyTools）を通っていません（206）"
   printf '%s\n' "${BODY}" | grep -qE '(^|[^A-Za-z])run\(' \
-    && fail "${presser} が、シェルで走らせる口（run）を通っています（203）"
+    && fail "${presser} が、シェルで走らせる口（run）を通っています（206）"
 done
 ok "打たれた出どころをシェルに通さない"
+
+# プレビューで確かめた版・名前を入れ口へ渡す。途中で新しいタグが出ても、見ていない物を入れない。
+MYT_ADD="$(awk '/    func addMySkill\(/ { inside=1 } inside { print; if ($0 ~ /^    }$/) exit }' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${MYT_ADD}" | grep -qF '"--expect-commit", preview.commit' \
+  && printf '%s\n' "${MYT_ADD}" | grep -qF '"--expect-name", preview.name' \
+  || fail "入れる操作が、確かめた版と名前を入れ口へ渡していません（206）"
+ok "入れる物は、プレビューで確かめた版と名前に限る"
+
 
 # 入れたスキルの一覧は、押したときだけ開く。追加タブに1行ずつ並べると、入れる数だけ
 # パネルが伸び、いつか一番下の「終了」が押せなくなる（#192 / #228 と同じ壊れ方）。
 MYT_SECTION="$(awk '/^struct MySkillsSection: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
-[ -n "${MYT_SECTION}" ] || fail "自分で選んだスキルの欄（MySkillsSection）を見失いました（203）"
+[ -n "${MYT_SECTION}" ] || fail "自分で選んだスキルの欄（MySkillsSection）を見失いました（206）"
 printf '%s\n' "${MYT_SECTION}" | grep -qF '.popover(isPresented: $showsList' \
-  || fail "入れたスキルの一覧が、押したときだけ開く形になっていません（203）"
+  || fail "入れたスキルの一覧が、押したときだけ開く形になっていません（206）"
 printf '%s\n' "${MYT_SECTION}" | grep -qF 'ForEach(model.mySkills' \
-  && fail "入れたスキルを追加タブに1行ずつ並べています。入れる数だけパネルが伸びます（203）"
+  && fail "入れたスキルを追加タブに1行ずつ並べています。入れる数だけパネルが伸びます（206）"
 awk '/^struct FamilyView: View \{/,/^\}$/' "${ROOT}/Sources/main.swift" | grep -qF 'MySkillsSection(model: model)' \
-  || fail "追加タブに、自分で選んだスキルの欄がありません（203）"
+  || fail "追加タブに、自分で選んだスキルの欄がありません（206）"
 ok "入れたスキルの一覧は押したときだけ開き、追加タブは伸びない"
+
+printf '%s\n' "${MYT_SECTION}" | grep -qF '.frame(maxHeight: 320)' \
+  || fail "スキル一覧の吹き出しに高さの上限がありません（206）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -qF 'skillStatuses: model.mySkills.map' \
+  || fail "畳んだ追加ツールの件数と印に、自分で入れたスキルが含まれていません（206）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -qF '|| !model.mySkills.isEmpty' \
+  || fail "スキルだけ入れた人に、畳んだ追加ツールの行が出ません（206）"
+printf '%s\n' "${FAMILY_PANEL}" | grep -qF 'skills: model.mySkills' \
+  && printf '%s\n' "${FAMILY_PANEL}" | grep -qF '.frame(maxHeight: 320)' \
+  || fail "運用タブの吹き出しに、スキル一覧と高さの上限がありません（206）"
+FAMILY_POPOVER="$(awk '/^struct FamilyToolsPopover: View \{/,/^\}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${FAMILY_POPOVER}" | grep -qF 'ForEach(skills)' \
+  && printf '%s\n' "${FAMILY_POPOVER}" | grep -qF 'MySkillSummaryRow(skill: skill, update: skillUpdate(skill))' \
+  || fail "運用タブの吹き出しがスキルの名前と版を出していません（206）"
+ok "自分で入れたスキルも、運用タブの畳んだ1行と高さを限った吹き出しに出る"
+
 
 
 # ── 空白と ' を含むパス ─────────────────────────────────────────
@@ -3307,7 +3392,7 @@ if int(m.group(1)) != n:
 ' "${UPD_JSON}" || fail "更新があるときに件数を正しく出していません（078）"
 ok "更新があるときは件数を出す"
 
-# 202 自分で選んだスキルに新しい版が出たら、更新の一覧に載り、件数に入る（Issue #229）。
+# 205 自分で選んだスキルに新しい版が出たら、更新の一覧に載り、件数に入る（Issue #229）。
 #
 # 載らなければ、新しい版が出ても誰も気づけない（#229 の発端）。使い捨ての git
 # リポジトリを GitHub に見立て、偽の HOME に本物の入れ口で1つ入れてから新しい
@@ -3327,7 +3412,7 @@ myt_git add -A
 myt_git commit -q -m init
 myt_git tag v1.0.0
 HOME="${REC}" MULMO_MY_TOOLS_GITHUB="file://${MYT_GH}" "${NODE_BIN}" "${ROOT}/scripts/mulmo-my-tools.mjs" add acme/tidy >/dev/null 2>&1 \
-  || fail "検査の前提が崩れています: 架空のスキルを入れられません（202）"
+  || fail "検査の前提が崩れています: 架空のスキルを入れられません（205）"
 printf 'v2\n' > "${MYT_REPO}/NOTES.md"
 myt_git add -A
 myt_git commit -q -m v2
@@ -3346,7 +3431,7 @@ if item["status"] != "update" or item["current"] != "v1.0.0" or item["latest"] !
     raise SystemExit("自分で入れたスキルの版を読み違えています: " + json.dumps(item, ensure_ascii=False))
 if not d["summary"].startswith("更新あり"):
     raise SystemExit("更新があるのに要約が「" + d["summary"] + "」です")
-' "${UPD_JSON}" || fail "自分で入れたスキルの新しい版が、更新の一覧に載りません（202）"
+' "${UPD_JSON}" || fail "自分で入れたスキルの新しい版が、更新の一覧に載りません（205）"
 rm -rf "${MYT_GH}"
 ok "自分で入れたスキルも、新しい版が出れば更新の一覧に載る"
 
