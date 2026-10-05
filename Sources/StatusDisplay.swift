@@ -454,6 +454,62 @@ func familyUpdateTarget(resolvedPath: String?, prefix: String, keepsForeignInsta
     return resolvedPath.hasPrefix(prefix.hasSuffix("/") ? prefix : prefix + "/")
 }
 
+// ── 自分で選んだスキル（Issue #229） ─────────────────────────────
+
+/// 出どころとして打たれた文字の形を見る。読めない形なら nil（「確かめる」を押させない）。
+///
+/// 本当の検査は入れ口（mulmo-my-tools.mjs）がする。ここは、明らかに違う物で入れ口を
+/// 起こさないためと、前後の空白を落とすためだけ。受け付けるのは `owner/repo` と
+/// `https://github.com/…`（`github.com/…` も）。
+func mySkillSourceInput(_ text: String) -> String? {
+    var trimmed = Substring(text)
+    while let first = trimmed.first, first.isWhitespace { trimmed = trimmed.dropFirst() }
+    while let last = trimmed.last, last.isWhitespace { trimmed = trimmed.dropLast() }
+    guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
+    let value = String(trimmed)
+    if value.hasPrefix("https://github.com/") || value.hasPrefix("github.com/") { return value }
+    let parts = value.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 2 else { return nil }
+    let readable = parts.allSatisfy { part in
+        !part.isEmpty && part.first != "." && part.first != "-" && !part.contains(":")
+    }
+    return readable ? value : nil
+}
+
+/// 入れる前の確かめで、説明を畳む長さ。パネルの幅で3行ほど。
+let mySkillDescriptionLimit = 90
+
+/// 入れる前の確かめに出す行。説明が長いときは畳み、取る版と出どころを1行で出す。
+/// 同じ名前のスキルが既にあるときは、入れられないことを書く（入れ口も入れない）。
+func mySkillPreviewLines(description: String, source: String, path: String, version: String, conflicts: Int) -> [String] {
+    var lines: [String] = []
+    if !description.isEmpty {
+        lines.append(description.count > mySkillDescriptionLimit
+                     ? String(description.prefix(mySkillDescriptionLimit)) + "…"
+                     : description)
+    }
+    var place = source.hasPrefix("https://") ? String(source.dropFirst("https://".count)) : source
+    if !path.isEmpty { place += "（\(path)）" }
+    lines.append("版 \(version)・\(place)")
+    if conflicts > 0 { lines.append("同じ名前のスキルが既にあるので、入れられません") }
+    return lines
+}
+
+/// 入れたスキルの行に出す版。更新の一覧の項目があれば、その状態に合わせる。
+func mySkillRowDetail(version: String, status: String?, latest: String?) -> String {
+    switch status {
+    case "update":
+        if let latest, !latest.isEmpty { return "\(version) → \(latest)" }
+        return "\(version)・更新あり"
+    case "current":
+        return "最新 \(version)"
+    case "missing":
+        return "見つかりません（外してから入れ直してください）"
+    default:
+        return version
+    }
+}
+
 /// 運用タブの「追加ツール」を1行に畳んだときの言葉（Issue #228）。
 struct FamilyFold: Equatable {
     let headline: String
@@ -467,9 +523,10 @@ struct FamilyFold: Equatable {
 /// 印を出すのは「更新あり」だけ。`missing` は版を読めなかったという意味で、
 /// よそで入れた relay（#222）のように入っていても出る。押しても消えない印は
 /// 壊れているのと見分けがつかない（#131 で一度やった形）ので、ここでは数えない。
-func familyFold(statuses: [String?]) -> FamilyFold {
-    let updates = statuses.filter { $0 == "update" }.count
-    var parts = ["\(statuses.count)件"]
+func familyFold(statuses: [String?], skillStatuses: [String?] = []) -> FamilyFold {
+    let allStatuses = statuses + skillStatuses
+    let updates = allStatuses.filter { $0 == "update" }.count
+    var parts = ["\(allStatuses.count)件"]
     if updates > 0 { parts.append("更新あり \(updates)件") }
     return FamilyFold(headline: parts.joined(separator: " ・ "), needsAttention: updates > 0)
 }

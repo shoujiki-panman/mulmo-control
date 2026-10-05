@@ -10,6 +10,9 @@ private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 /// npm が新しい版を入れても画面は古いままで「更新できませんでした」と言い続けた。
 private let familyPrefix = "\(homeDir)/.local/share/mulmo-family"
 private let localBin = "\(homeDir)/.local/bin"
+/// 自分で選んだスキル（Issue #229）の、更新の一覧での id の頭。mulmo-check-updates が
+/// 入れ口（mulmo-my-tools.mjs）の `check` から受け取る項目に付いている。
+private let mySkillIDPrefix = "my-skill:"
 
 // MulmoTerminal のポート。3箇所に数字が散っていて、変えるときに拾い漏れる形
 // だった（Issue #7）。スクリプト側の既定は mulmoterminal-agent-env が持つので、
@@ -500,6 +503,35 @@ struct NoticeMessage: Identifiable {
     let text: String
 }
 
+/// 自分で選んだスキルの控えの1件（Issue #229）。入れ口（mulmo-my-tools.mjs）が書き、
+/// 画面は読むだけ。
+struct MySkillRecord: Decodable, Identifiable, Sendable {
+    let name: String
+    let source: String
+    let path: String
+    let version: String
+    var id: String { name }
+}
+
+private struct MySkillRecordFile: Decodable {
+    let items: [MySkillRecord]
+}
+
+/// 入れる前に見せる中身（`mulmo-my-tools.mjs preview` の返事）。
+struct MySkillPreview: Decodable, Sendable {
+    let commit: String
+    let name: String
+    let description: String
+    let source: String
+    let path: String
+    let version: String
+    let conflicts: [String]
+}
+
+/// 自分で選んだスキルの控えの場所。入れ口の recordPath と同じでなければならない
+/// （check.sh の 206 が突き合わせている）。ずれると、入れたのに一覧に出ない。
+private let mySkillsRecordPath = "\(homeDir)/Library/Application Support/Mulmo Control/my-tools.json"
+
 private let familyPackages = [
     FamilyPackage(
         id: "mulmocast",
@@ -612,6 +644,13 @@ final class ControlModel: ObservableObject {
     @Published var relayOn = RelayWatch.isOn()
     @Published var relay = readRelayStatus(relayStatusPath)
     @Published var familyInstalled: [String: Bool] = [:]
+    /// 自分で選んだスキル（Issue #229）。控え（my-tools.json）を読んだもの。
+    @Published var mySkills: [MySkillRecord] = []
+    /// 入れる前に見せている中身。nil なら確かめの欄を出さない。
+    @Published var mySkillPreview: MySkillPreview?
+    /// 入れ口が走っている間は、確かめる・入れる・外すを押させない（#187 と同じく、
+    /// 押せるのに効かないボタンを出さない）。
+    @Published var mySkillBusy = false
     @Published var actionText: String?
     @Published var notice: NoticeMessage?
     @Published var lastUpdateReport = readLastUpdateReport()
@@ -940,6 +979,17 @@ final class ControlModel: ObservableObject {
         familyInstalled = Dictionary(uniqueKeysWithValues: familyPackages.map { package in
             (package.id, familyCommandPath(package) != nil)
         })
+        refreshMySkills()
+    }
+
+    /// 自分で選んだスキルの控えを読む（Issue #229）。画面はファイルを1つ読むだけ。
+    func refreshMySkills() {
+        guard let data = FileManager.default.contents(atPath: mySkillsRecordPath),
+              let file = try? JSONDecoder().decode(MySkillRecordFile.self, from: data) else {
+            mySkills = []
+            return
+        }
+        mySkills = file.items
     }
 
     func openMT() {
@@ -1261,20 +1311,147 @@ final class ControlModel: ObservableObject {
         return familyUpdateTarget(resolvedPath: path, prefix: familyPrefix,
                                   keepsForeignInstall: package.keepsForeignInstall)
     }
+    /// 入れ口（mulmo-my-tools.mjs）を、シェルを通さずに走らせる（Issue #229）。
+    ///
+    /// 出どころは利用者が打った文字なので、コマンド文字列に埋めない。引用符の扱いを
+    /// 1つ間違えると、打った文字がそのままシェルで走る。引数として node に渡す。
+    /// 標準エラーは操作の記録（actionLogPath）に書き、失敗の一行はそこから取る。
+    private nonisolated static func runMyTools(node: String, arguments: [String]) -> (ok: Bool, output: String) {
+        let script = (toolsDir as NSString).appendingPathComponent("mulmo-my-tools.mjs")
+        try? FileManager.default.createDirectory(atPath: logDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: actionLogPath, contents: nil)
+        let log = FileHandle(forWritingAtPath: actionLogPath)
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: node)
+        process.arguments = [script] + arguments
+        process.standardOutput = output
+        process.standardError = log ?? FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            try? log?.close()
+            try? "failed: \(error)\n".write(toFile: actionLogPath, atomically: true, encoding: .utf8)
+            return (false, "")
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        try? log?.close()
+        return (process.terminationStatus == 0, String(decoding: data, as: UTF8.self))
+    }
+
+    /// 入れる前に、名前・説明・取る版・出どころを確かめる（Issue #229）。何も書かない。
+    func previewMySkill(_ input: String) {
+        guard !mySkillBusy else { return }
+        guard let source = mySkillSourceInput(input) else {
+            showMessage(title: "出どころが読めません", text: "GitHub の owner/repo か、https://github.com/ で始まる URL を入れてください。")
+            return
+        }
+        guard let node = nodePath ?? commandPath("node") else {
+            showMessage(title: "nodeが見つかりません", text: "先にNode.jsをインストールしてください。")
+            return
+        }
+        mySkillBusy = true
+        mySkillPreview = nil
+        actionText = "スキルを確かめています"
+        Task.detached {
+            let result = Self.runMyTools(node: node, arguments: ["preview", source])
+            let preview: MySkillPreview? = result.ok
+                ? (try? JSONDecoder().decode(MySkillPreview.self, from: Data(result.output.utf8)))
+                : nil
+            await MainActor.run {
+                self.mySkillBusy = false
+                self.mySkillPreview = preview
+                self.actionText = preview == nil ? Self.failureText(prefix: "確かめられませんでした") : nil
+            }
+        }
+    }
+
+    /// 確かめた中身のとおりに入れる（Issue #229）。入れたら、版の確認をすぐ回して一覧に載せる。
+    func addMySkill(_ preview: MySkillPreview) {
+        guard !mySkillBusy else { return }
+        guard let node = nodePath ?? commandPath("node") else {
+            showMessage(title: "nodeが見つかりません", text: "先にNode.jsをインストールしてください。")
+            return
+        }
+        var arguments = ["add", preview.source, "--expect-commit", preview.commit, "--expect-name", preview.name]
+        if !preview.path.isEmpty { arguments += ["--path", preview.path] }
+        let name = preview.name
+        mySkillBusy = true
+        actionText = "\(name)を入れています"
+        Task.detached { [arguments] in
+            let result = Self.runMyTools(node: node, arguments: arguments)
+            await MainActor.run {
+                self.mySkillBusy = false
+                self.mySkillPreview = nil
+                self.refreshMySkills()
+                guard result.ok else {
+                    self.actionText = Self.failureText(prefix: "入れられませんでした")
+                    return
+                }
+                self.actionText = nil
+                self.showMessage(title: "\(name)を入れました",
+                                 text: "Claude Code の新しいセッションから使えます。新しい版が出たら、更新の一覧に出ます。")
+                self.checkUpdatesSilentlyIfNeeded(force: true)
+            }
+        }
+    }
+
+    /// 入れたスキルを外す（Issue #229）。手元で書き換えた物は、入れ口が消さずに止まる。
+    func removeMySkill(_ name: String) {
+        guard !mySkillBusy else { return }
+        guard let node = nodePath ?? commandPath("node") else {
+            showMessage(title: "nodeが見つかりません", text: "先にNode.jsをインストールしてください。")
+            return
+        }
+        mySkillBusy = true
+        actionText = "\(name)を外しています"
+        Task.detached {
+            let result = Self.runMyTools(node: node, arguments: ["remove", name])
+            await MainActor.run {
+                self.mySkillBusy = false
+                self.refreshMySkills()
+                self.actionText = result.ok ? nil : Self.failureText(prefix: "外せませんでした")
+                if result.ok { self.checkUpdatesSilentlyIfNeeded(force: true) }
+            }
+        }
+    }
+
+    /// 自分で選んだスキルの更新（Issue #229）。更新の一覧に載っているときだけ、入れ口の
+    /// `update` を呼ぶ。入れ口は、手元で書き換えたスキルを入れ替えない。
+    ///
+    /// 一覧に載せた物を更新する手段がここに無いと、「更新あり」が押しても消えない
+    /// （#131 と同じ形）。まとめて更新の2つの口（追加ツール・すべて）がここを通る。
+    private func mySkillsUpdate() -> (command: String, ids: [String])? {
+        let ids = updateItems.filter { $0.id.hasPrefix(mySkillIDPrefix) }.map(\.id)
+        guard !ids.isEmpty, let node = nodePath ?? commandPath("node") else { return nil }
+        return ("\(shellQuoted(node)) \(tool("mulmo-my-tools.mjs")) update", ids)
+    }
     func updateInstalledFamily() {
         let packages = familyPackages.filter { familyUpdatable($0) }
-        guard !packages.isEmpty else {
+        let skills = mySkillsUpdate()
+        guard !packages.isEmpty || skills != nil else {
             showMessage(title: "追加ツールは未導入です", text: "先に追加タブからインストールしてください。")
             return
         }
-        guard let command = familyInstallCommand(for: packages) else { return }
+        var commands: [String] = []
+        if !packages.isEmpty {
+            guard let command = familyInstallCommand(for: packages) else { return }
+            commands.append(command)
+        }
+        if let skills {
+            commands.append(skills.command)
+        }
+        let skillIds = Set(skills?.ids ?? [])
         prepareUpdateReport(
             title: "追加ツールを更新しました",
             items: updateItems.filter { item in
-                item.status == "update" && packages.contains(where: { $0.id == item.id || $0.packageName == item.name })
+                guard item.status == "update" else { return false }
+                if skillIds.contains(item.id) { return true }
+                return packages.contains(where: { $0.id == item.id || $0.packageName == item.name })
             }
         )
-        run(updateCommand(command), label: "追加ツールをまとめて更新中")
+        run(updateCommand(commands.joined(separator: "\n")), label: "追加ツールをまとめて更新中")
     }
     func updateAllInstalled() {
         // MulmoClaude を含む一括更新も、処理中なら受け取らない（Issue #187）。
@@ -1295,6 +1472,10 @@ final class ControlModel: ObservableObject {
         if let familyCommand = familyInstallCommand(for: installedFamily) {
             commands.append(familyCommand)
             updated = installedFamily
+        }
+        if let skills = mySkillsUpdate() {
+            commands.append(skills.command)
+            updatedIds.formUnion(skills.ids)
         }
         guard !commands.isEmpty else {
             showMessage(title: "更新対象がありません", text: "先にインストールしてください。")
@@ -2743,12 +2924,17 @@ struct InstalledFamilyPanel: View {
         model.updateItems.first(where: { $0.id == package.id || $0.name == package.packageName || $0.name == package.title })
     }
 
+    private func update(for skill: MySkillRecord) -> MulmoUpdateItem? {
+        model.updateItems.first(where: { $0.id == "\(mySkillIDPrefix)\(skill.name)" })
+    }
+
     private var fold: FamilyFold {
-        familyFold(statuses: installedPackages.map { update(for: $0)?.status })
+        familyFold(statuses: installedPackages.map { update(for: $0)?.status },
+                   skillStatuses: model.mySkills.map { update(for: $0)?.status })
     }
 
     var body: some View {
-        if !installedPackages.isEmpty {
+        if !installedPackages.isEmpty || !model.mySkills.isEmpty {
             SettingsRow {
                 foldedRow
             }
@@ -2778,7 +2964,12 @@ struct InstalledFamilyPanel: View {
         .contentShape(Rectangle())
         .onTapGesture { showsTools.toggle() }
         .popover(isPresented: $showsTools, arrowEdge: .trailing) {
-            FamilyToolsPopover(packages: installedPackages, update: update(for:))
+            ScrollView {
+                FamilyToolsPopover(packages: installedPackages, skills: model.mySkills,
+                                   update: { update(for: $0) }, skillUpdate: { update(for: $0) })
+            }
+            .frame(width: 290)
+            .frame(maxHeight: 320)
         }
     }
 }
@@ -2787,7 +2978,9 @@ struct InstalledFamilyPanel: View {
 /// 運用タブと同じで、1行ずつ押すとその物の説明が開く。
 struct FamilyToolsPopover: View {
     let packages: [FamilyPackage]
+    let skills: [MySkillRecord]
     let update: (FamilyPackage) -> MulmoUpdateItem?
+    let skillUpdate: (MySkillRecord) -> MulmoUpdateItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2800,6 +2993,11 @@ struct FamilyToolsPopover: View {
                     Hairline()
                 }
                 FamilyToolRow(package: package, update: update(package))
+                    .padding(.vertical, 8)
+            }
+            ForEach(skills) { skill in
+                if !packages.isEmpty || skill.id != skills.first?.id { Hairline() }
+                MySkillSummaryRow(skill: skill, update: skillUpdate(skill))
                     .padding(.vertical, 8)
             }
         }
@@ -3277,9 +3475,224 @@ struct FamilyView: View {
                         .padding(.vertical, 6)
                 }
             }
+
+            Hairline()
+            MySkillsSection(model: model)
         }
         .padding(13)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// 自分で選んだスキル（Issue #229）。GitHub の owner/repo か URL を入れ、確かめてから入れる。
+///
+/// 入れる前に名前・説明・取る版・出どころを見せる。他人のリポジトリの指示とスクリプトを
+/// この Mac の Claude Code に渡すことになるので、押す前に何が入るかが分かるようにする。
+/// 入れた物は1行に畳み、押したときだけ一覧を開く（#183 と同じ作法。入れる数が増えても
+/// 追加タブは伸びない・#192）。
+struct MySkillsSection: View {
+    @ObservedObject var model: ControlModel
+    @State private var source = ""
+    @State private var showsList = false
+
+    private var canPreview: Bool {
+        !model.mySkillBusy && mySkillSourceInput(source) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("自分で選んだスキル")
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text("GitHub のスキルを入れます。新しい版が出たら、更新の一覧に出ます")
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 6) {
+                TextField("owner/repo か GitHub の URL", text: $source)
+                    .textFieldStyle(.roundedBorder)
+                    .font(AppFont.body)
+                    .onSubmit(preview)
+                Button("確かめる", action: preview)
+                    .buttonStyle(.plain)
+                    .font(AppFont.action)
+                    .foregroundStyle(canPreview ? Palette.accentText : Palette.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Palette.controlFill, in: Capsule())
+                    .contentShape(Capsule())
+                    .disabled(!canPreview)
+            }
+            if let preview = model.mySkillPreview {
+                MySkillPreviewCard(
+                    preview: preview,
+                    busy: model.mySkillBusy,
+                    install: {
+                        model.addMySkill(preview)
+                        source = ""
+                    },
+                    cancel: { model.mySkillPreview = nil }
+                )
+            }
+            if !model.mySkills.isEmpty {
+                Button {
+                    showsList.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("入れたスキル  \(model.mySkills.count)件")
+                            .font(AppFont.body)
+                            .foregroundStyle(Palette.primaryText)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold, design: .default))
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showsList, arrowEdge: .bottom) {
+                    ScrollView {
+                        MySkillListPopover(model: model)
+                    }
+                    .frame(width: 300)
+                    .frame(maxHeight: 320)
+                }
+            }
+        }
+    }
+
+    private func preview() {
+        guard canPreview else { return }
+        model.previewMySkill(source)
+    }
+}
+
+/// 入れる前の確かめ（Issue #229）。同じ名前のスキルが既にあるときは「入れる」を出さない。
+struct MySkillPreviewCard: View {
+    let preview: MySkillPreview
+    let busy: Bool
+    let install: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("「\(preview.name)」を入れますか")
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+            ForEach(Array(mySkillPreviewLines(description: preview.description, source: preview.source,
+                                              path: preview.path, version: preview.version,
+                                              conflicts: preview.conflicts.count).enumerated()), id: \.offset) { item in
+                Text(item.element)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("やめる", action: cancel)
+                    .buttonStyle(.plain)
+                    .font(AppFont.action)
+                    .foregroundStyle(Palette.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Palette.controlFill, in: Capsule())
+                    .contentShape(Capsule())
+                if preview.conflicts.isEmpty {
+                    Button("入れる", action: install)
+                        .buttonStyle(.plain)
+                        .font(AppFont.action)
+                        .foregroundStyle(Palette.accentText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Palette.controlFill, in: Capsule())
+                        .contentShape(Capsule())
+                        .disabled(busy)
+                }
+            }
+        }
+        .padding(10)
+        .background(Palette.controlFill.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// 自分で入れたスキルの名前と版。運用タブの吹き出しでも、追加タブの一覧でも同じ表示にする。
+struct MySkillSummaryRow: View {
+    let skill: MySkillRecord
+    let update: MulmoUpdateItem?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if update?.status == "update" {
+                Circle().fill(Palette.warn).frame(width: 8, height: 8)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(skill.name)
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text(mySkillRowDetail(version: skill.version, status: update?.status, latest: update?.latest))
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// 入れたスキルの一覧（Issue #229）。押したときだけ開き、中は上限つきのスクロール
+/// （#183 と同じ）。「外す」は2回押させる（1回目で確かめ、2回目で外す）。
+struct MySkillListPopover: View {
+    @ObservedObject var model: ControlModel
+    @State private var confirming: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("入れたスキル")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(model.mySkills) { skill in
+                    row(skill)
+                }
+            }
+            Text("新しい版は、追加ツールのまとめて更新で入ります。手元で書き換えたスキルは入れ替えません")
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private func row(_ skill: MySkillRecord) -> some View {
+        let item = model.updateItems.first(where: { $0.id == "\(mySkillIDPrefix)\(skill.name)" })
+        return HStack(spacing: 8) {
+            MySkillSummaryRow(skill: skill, update: item)
+            Spacer()
+            if confirming == skill.name {
+                Button("やめる") { confirming = nil }
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                Button("外す") {
+                    confirming = nil
+                    model.removeMySkill(skill.name)
+                }
+                .buttonStyle(.plain)
+                .font(AppFont.small)
+                .foregroundStyle(Color.red.opacity(0.85))
+                .disabled(model.mySkillBusy)
+            } else {
+                Button("外す") { confirming = skill.name }
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.accentText)
+                    .disabled(model.mySkillBusy)
+            }
+        }
     }
 }
 

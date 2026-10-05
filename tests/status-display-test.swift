@@ -483,6 +483,69 @@ private let updateTargetCases: [UpdateTargetCase] = [
                      resolved: familyPrefixForTest + "-old/node_modules/.bin/relay", keepsForeign: true, expected: false),
 ]
 
+/// 自分で選んだスキルの出どころとして打たれた文字（Issue #229）。nil は「確かめる」を押させない。
+private let mySkillSourceCases: [(String, String?)] = [
+    ("owner/repo", "owner/repo"),
+    ("  owner/repo \n", "owner/repo"),
+    ("https://github.com/owner/repo", "https://github.com/owner/repo"),
+    ("github.com/owner/repo", "github.com/owner/repo"),
+    ("", nil),
+    ("   ", nil),
+    ("owner", nil),
+    ("owner/repo/extra", nil),
+    ("../repo", nil),
+    ("owner/.git", nil),
+    ("-x/repo", nil),
+    ("owner/re po", nil),
+    ("git@github.com:owner/repo.git", nil),
+]
+
+/// 入れる前の確かめに出す行（Issue #229）。
+private struct MySkillPreviewCase {
+    let title: String
+    let description: String
+    let source: String
+    let path: String
+    let version: String
+    let conflicts: Int
+    let expected: [String]
+}
+
+private let mySkillPreviewCases: [MySkillPreviewCase] = [
+    MySkillPreviewCase(title: "説明と版と出どころ（フォルダ付き）", description: "文章を読みやすく直します。",
+                       source: "https://github.com/owner/repo", path: "skills/tidy", version: "v1.0.4", conflicts: 0,
+                       expected: ["文章を読みやすく直します。", "版 v1.0.4・github.com/owner/repo（skills/tidy）"]),
+    MySkillPreviewCase(title: "直下のスキルはフォルダを書かない", description: "説明",
+                       source: "https://github.com/owner/repo", path: "", version: "abc1234", conflicts: 0,
+                       expected: ["説明", "版 abc1234・github.com/owner/repo"]),
+    MySkillPreviewCase(title: "説明が無ければ版の行だけ", description: "",
+                       source: "https://github.com/owner/repo", path: "", version: "v2.0.0", conflicts: 0,
+                       expected: ["版 v2.0.0・github.com/owner/repo"]),
+    MySkillPreviewCase(title: "同じ名前があれば、入れられないと書く", description: "説明",
+                       source: "https://github.com/owner/repo", path: "", version: "v1.0.0", conflicts: 1,
+                       expected: ["説明", "版 v1.0.0・github.com/owner/repo", "同じ名前のスキルが既にあるので、入れられません"]),
+    MySkillPreviewCase(title: "長い説明は畳む", description: String(repeating: "あ", count: mySkillDescriptionLimit + 30),
+                       source: "https://github.com/owner/repo", path: "", version: "v1.0.0", conflicts: 0,
+                       expected: [String(repeating: "あ", count: mySkillDescriptionLimit) + "…", "版 v1.0.0・github.com/owner/repo"]),
+]
+
+/// 入れたスキルの行に出す版（Issue #229）。
+private struct MySkillRowCase {
+    let version: String
+    let status: String?
+    let latest: String?
+    let expected: String
+}
+
+private let mySkillRowCases: [MySkillRowCase] = [
+    MySkillRowCase(version: "v1.0.3", status: "update", latest: "v1.0.4", expected: "v1.0.3 → v1.0.4"),
+    MySkillRowCase(version: "v1.0.3", status: "update", latest: nil, expected: "v1.0.3・更新あり"),
+    MySkillRowCase(version: "v1.0.4", status: "current", latest: "v1.0.4", expected: "最新 v1.0.4"),
+    MySkillRowCase(version: "v1.0.4", status: "missing", latest: "v1.0.4", expected: "見つかりません（外してから入れ直してください）"),
+    MySkillRowCase(version: "v1.0.4", status: "unknown", latest: "unknown", expected: "v1.0.4"),
+    MySkillRowCase(version: "v1.0.4", status: nil, latest: nil, expected: "v1.0.4"),
+]
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -650,6 +713,33 @@ struct StatusDisplayTest {
             }
         }
 
+        // ⑪ 自分で選んだスキル（Issue #229）
+        for (input, expected) in mySkillSourceCases {
+            let actual = mySkillSourceInput(input)
+            if actual != expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  出どころ \(input.debugDescription): 期待 \(show(expected)) / 実際 \(show(actual))\n".utf8))
+            }
+        }
+        for item in mySkillPreviewCases {
+            let actual = mySkillPreviewLines(description: item.description, source: item.source, path: item.path,
+                                             version: item.version, conflicts: item.conflicts)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  入れる前の確かめ \(item.title): 期待 \(item.expected) / 実際 \(actual)\n".utf8))
+            }
+        }
+        for item in mySkillRowCases {
+            let actual = mySkillRowDetail(version: item.version, status: item.status, latest: item.latest)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  入れたスキルの行 \(item.version)/\(show(item.status)): 期待 \(item.expected) / 実際 \(actual)\n".utf8))
+            }
+        }
+        let mySkillCount = mySkillSourceCases.count + mySkillPreviewCases.count + mySkillRowCases.count
         // ⑩ 追加ツールを畳んだ1行（Issue #228）
         for item in foldCases {
             let actual = familyFold(statuses: item.statuses)
@@ -660,10 +750,25 @@ struct StatusDisplayTest {
             }
         }
 
+        // #229 を #228 の畳んだ1行に含める。スキルだけの人も、たくさん入れた人も数える。
+        let skillFoldCases: [([String?], [String?], FamilyFold)] = [
+            ([], [], FamilyFold(headline: "0件", needsAttention: false)),
+            ([], ["update"], FamilyFold(headline: "1件 ・ 更新あり 1件", needsAttention: true)),
+            (["current", "update"], [nil, "update"], FamilyFold(headline: "4件 ・ 更新あり 2件", needsAttention: true)),
+            ([], Array(repeating: "current", count: 24), FamilyFold(headline: "24件", needsAttention: false)),
+        ]
+        for (packages, skills, expected) in skillFoldCases {
+            let actual = familyFold(statuses: packages, skillStatuses: skills)
+            if actual != expected {
+                failures += 1
+                FileHandle.standardError.write(Data("  スキルを含む畳み: 期待 \(expected) / 実際 \(actual)\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 自分で選んだスキル \(mySkillCount) 通り + 追加ツールの畳み \(foldCases.count) 通り + スキルを含む畳み \(skillFoldCases.count) 通りすべて一致")
     }
 }

@@ -23,7 +23,7 @@ if [ -z "${NODE}" ]; then
   exit 0
 fi
 
-NPM="${NPM}" NODE="${NODE}" NPM_CACHE="${NPM_CACHE}" CACHE="${CACHE}" MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR}" /bin/zsh -lc '
+NPM="${NPM}" NODE="${NODE}" NPM_CACHE="${NPM_CACHE}" CACHE="${CACHE}" MULMOCLAUDE_DIR="${MULMOCLAUDE_DIR}" MY_TOOLS="${SCRIPT_DIR}/mulmo-my-tools.mjs" /bin/zsh -lc '
 "${NODE}" <<'"'"'NODE'"'"'
 const fs = require("fs");
 const { execFileSync } = require("child_process");
@@ -56,6 +56,27 @@ function readJson(path) {
   } catch {
     return null;
   }
+}
+
+// 自分で選んだスキル（Issue #229）。版は入れ口（mulmo-my-tools.mjs）が GitHub のタグから
+// 読み、ここと同じ形（id / name / current / latest / status）で返す。控えが無い人には
+// 何も足さない。入れ口が失敗しても、ほかの項目の確認は止めない。
+//
+// id は `my-skill:` で始まる。一覧に載せた物は、まとめて更新で入れ口の update を呼んで
+// 更新できる（main.swift の mySkillsUpdate・check.sh の 205。#131 と同じ「押しても
+// 直らない」項目を作らないため）。
+function myToolItems() {
+  const script = process.env.MY_TOOLS;
+  if (!script || !fs.existsSync(script)) return [];
+  const raw = sh(process.execPath, [script, "check"], { timeout: 120000 });
+  let parsed;
+  try {
+    parsed = JSON.parse(raw || "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item) => typeof item?.id === "string" && item.id.startsWith("my-skill:"));
 }
 
 function npmLatest(name) {
@@ -189,7 +210,7 @@ const items = [
     current: pkgVersion("@mulmobridge/slack"),
     latest: npmLatest("@mulmobridge/slack")
   }
-].map((item) => ({ ...item, status: status(item.current, item.latest) }));
+].map((item) => ({ ...item, status: status(item.current, item.latest) })).concat(myToolItems());
 
 const updateCount = items.filter((item) => item.status === "update").length;
 const unknownCount = items.filter((item) => item.status === "unknown").length;
