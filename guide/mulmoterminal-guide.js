@@ -25,7 +25,23 @@
   // 同じ検査が見ている（入っている Mac のとき）。
   //
   // 知らない要素には何も出さない。埋めることより、嘘を出さないことを取る。
+  // v10.0.0 の配布物と照合。履歴・道具は個別ボタンからメニューへ移った。
   const BY_TESTID = {
+    "cell-history-btn": ["送った指示・会話・作業の時系列を選ぶ履歴メニューです。", "前の返事を読み返したいときに。会話を横に出すにはセルを大きくします。"],
+    "cell-tools-btn": ["使った道具・Canvas・記録の表示や、別セルとの会話を選ぶメニューです。", "作ったものを確かめたいときや、ほかのセルへ結果を渡したいときに。"],
+    "cell-pane-menu-tools": ["エージェントが使った道具と、その結果を横に出します。", "何を実行したか確かめたいときに。灰色なら先にセルを大きくします。"],
+    "cell-pane-menu-collections": ["このフォルダのコレクション（記録）を横に出します。", "このプロジェクトの記録を見ながら作業したいときに。"],
+    "cell-pane-menu-timeline": ["このセッションが何をしてきたかの時系列です。", "長く走らせたあとに、どこで何をしたかを追いたいときに。"],
+    "cell-pane-menu-restart": ["このセルのエージェントを起動し直します。", "モデルや Canvas の設定を変え、起動し直す必要があるときに。"],
+    "files-tabs": ["開いたファイルのタブです。押すと表示を切り替えます。", "複数のファイルを行き来して、見比べたいときに。"],
+    "files-changes-btn": ["ファイルの未コミットの変更を、元の内容と並べて表示します。", "エージェントがどこを直したか、保存する前に確かめたいときに。"],
+    "files-history-btn": ["このファイルの git の履歴を開きます。", "以前の内容と比べたいときや、前の版へ戻したいときに。"],
+    "files-outline-btn": ["Markdown の見出し一覧を開きます。選ぶとその場所へ移ります。", "長い文書で読みたい節を探すときに。"],
+    "files-canvas-btn": ["開いているファイルを Canvas に表示します。", "ファイルを大きく表示して確かめたいときに。"],
+    "palette-search-box": ["操作を名前で探すコマンドパレットを開きます。", "ボタンの場所が分からない操作を、言葉で探したいときに。"],
+    "toolbar-help": ["MulmoTerminal の使い方をエージェントに相談します。", "操作の場所や設定の変え方を、その場で聞きたいときに。"],
+    "rate-limit-account-note": ["このアカウントの使用上限です。at limit は上限に達した印です。", "返事が止まったときに。読み取れていれば、使える量が戻る時刻も出ます。"],
+    "rate-limit-note": ["使用上限に関する知らせです。読み取れていれば回復時刻も出ます。", "エージェントが上限で止まったとき、再開の目安を確かめます。"],
     // ── 画面の上の帯 ──
     "machine-load": [
       "この Mac の混み具合です。数字が大きいほど忙しい状態です。",
@@ -69,7 +85,7 @@
       "思ったより使っているセッションを見つけて、早めに区切るときの目安に。",
     ],
     "cell-account-mark": [
-      "このセルがどのアカウントで動いているかの印です。",
+      "このセルのアカウントです。ボタンなら、同じ会話を別の契約へ移せます。",
       "仕事用と個人用など、アカウントを使い分けているときの取り違え防止に。",
     ],
     "cell-canvas-chip": [
@@ -108,7 +124,7 @@
       "このフォルダに対する操作です。Finder・アプリ内のファイル・新しいターミナル・GitHub。",
       "コマンドを打たずに、フォルダや GitHub のページを開きたいときに。",
     ],
-    "cell-ask": [
+    "cell-pane-menu-talk": [
       "別のセルに話しかけます。向こうの最後の返事を持ってくる・1往復させる、ができます。",
       "調べ物をさせたセルの結果を、実装しているセルに渡したいときに。",
     ],
@@ -121,21 +137,17 @@
       "作ったスライドを、ターミナルの横で確かめたいときに。",
     ],
     // ── セルの右上のボタン ──
-    "cell-canvas-btn": [
+    "cell-pane-menu-canvas": [
       "右側の Canvas（図・表・スライドが出る場所）を開け閉めします。",
       "エージェントが作った図や表を見たいときに。押せなければ起動画面で Canvas をオンに。",
     ],
-    "cell-prompts-btn": [
+    "cell-pane-menu-prompts": [
       "このセッションで自分が送った指示を、一覧で出します。",
       "前に送った長い指示をもう一度使いたいときや、頼んだことを振り返るときに。",
     ],
-    "cell-transcript-btn": [
+    "cell-pane-menu-transcript": [
       "このセッションの会話を、読みやすい形で出します。",
       "流れが速くて読めなかった返事を、あとから落ち着いて読みたいときに。",
-    ],
-    "cell-github-btn": [
-      "GitHub の PR と Issue の一覧を、右側に出します。",
-      "Issue を選んで、そのまま作業を始めさせたいときに。",
     ],
     "cell-park-btn": [
       "このセルを脇に置きます（月のボタン）。閉じるのと違い、会話も履歴も残ります。",
@@ -187,23 +199,16 @@
   ];
   const MOVE_LEFT = ["このセルを左へ動かします。", "よく使うセルを見やすい位置に寄せたいときに（並べ方が手動のとき）。"];
   const MOVE_RIGHT = ["このセルを右へ動かします。", "よく使うセルを見やすい位置に寄せたいときに（並べ方が手動のとき）。"];
-  const FILES_PANE = [
-    "このフォルダのファイルの一覧を、右側に出します。もう一度押すと閉じます。",
-    "エージェントが作ったファイルを、その場で開いて確かめたいときに。",
-  ];
-  const TOOLS_PANE = [
-    "エージェントが使った道具（コマンドやファイル操作）の記録を、右側に出します。",
-    "エージェントが裏で何をしたかを確かめたいときに。",
-  ];
-  const FOLDER_COLLECTIONS = [
-    "このフォルダのコレクション（記録）を、右側に出します。",
-    "このプロジェクトの記録だけを見ながら作業したいときに。",
-  ];
 
   // aria-label は、上流が日本語に訳しているものがある（MulmoTerminal の表示言語が
   // 日本語のとき）。中継の窓は localhost の窓と設定の置き場所が別なので、
   // ブラウザの言語に従って日本語になりやすい。**訳された名前も並べて持つ。**
+  const CODE_COPY = ["このコードブロックを、記号や改行を保ってコピーします。", "コマンドや文面を貼りたいときに。コピー後はボタンが完了の表示に変わります。"];
   const BY_ARIA = {
+    "Copy code": CODE_COPY,
+    "コードをコピー": CODE_COPY,
+    Copied: ["コードブロックをコピーしました。", "貼り付け先で Cmd+V などを押すと使えます。"],
+    "コピーしました": ["コードブロックをコピーしました。", "貼り付け先で Cmd+V などを押すと使えます。"],
     // ── 画面の上の帯 ──
     Views: [
       "画面の切り替えです。ターミナルの並び・コレクション・PR・ルーム・作業ログを行き来します。",
@@ -276,16 +281,10 @@
       "1つの作業にじっくり向き合いたいときに。",
     ],
     "Restore terminal": ["大きく開いたセルを、元の並びに戻します。", "ほかのセルの様子も見たくなったときに。"],
-    "Start a terminal in this directory": [
-      "同じフォルダで、もう1本ターミナルを立てます。",
+    "Open the launch panel on this directory": [
+      "このフォルダで始める起動画面を開きます。エージェントなどを選んでから起動します。",
       "1つのプロジェクトで、調べ物と実装など別々のことを並行させたいときに。",
     ],
-    "Show files": FILES_PANE,
-    "Hide files": FILES_PANE,
-    "Show tools": TOOLS_PANE,
-    "Hide tools": TOOLS_PANE,
-    "Show this folder's collections": FOLDER_COLLECTIONS,
-    "Hide collections": FOLDER_COLLECTIONS,
     "Close terminal": [
       "このセルを閉じます。脇に置く（月のボタン）と違い、画面から消えます。",
       "終わった作業を片付けるときに。続きをやるかもしれないなら、脇に置く方を。",
@@ -311,7 +310,6 @@
       "エージェントが書いた文面やコマンドを、Slack やメールに貼りたいときに。",
     ],
     "Copy the code block": ["このコードの部分をコピーします。", "返事の中の一部だけを貼りたいときに。"],
-    "Show activity timeline": ["このセッションが何をしてきたかの時系列です。", "長く走らせたあとに、どこで何をしたかを追いたいときに。"],
     "Terminal input": [
       "エージェントへの指示を書くところです。",
       "送り方（Enter で送るか、Shift+Enter で送るか）は設定で変えられます。",
@@ -348,8 +346,7 @@
   //
   // MulmoTerminal の Skill メニューは、各スキルの SKILL.md の `description` を英語の
   // ツールチップ（title）に出し、名前だけを並べる。項目に `data-testid` も `aria-label` も
-  // 無いので、**メニューを開くボタンの title** で Skill メニューだと見分ける（Run の
-  // メニューも同じ形の項目を持っていて、そちらの title はコマンドそのもの）。
+  // 無いので、メニュー自体の skill-menu の印で見分ける（Run は別のメニュー）。
   //
   // - 同梱スキル（MulmoTerminal が配る mulmoterminal-*）は下の表の日本語（2段）
   // - それ以外（本人やプロジェクトのスキル）は、その場の説明を1〜2文に畳んで出す
@@ -360,8 +357,9 @@
     "このフォルダで使えるスキル（決まった手順の頼み方）の一覧を開きます。",
     "選ぶと、このセルのエージェントにそのスキルを実行させます。定型の作業を頼むときに。",
   ];
-  // 上流の server/skills/<名前>/SKILL.md の description を訳したもの（6.5.0）。
+  // 上流の server/skills/<名前>/SKILL.md の description を訳したもの（10.0.0）。
   const BY_SKILL = {
+    "mulmoterminal-help": ["MulmoTerminal の機能や操作・設定を、実際の説明を調べて答える相談窓口です。", "使い方が分からないとき、どこで操作するか知りたいときに。"],
     "mulmoterminal-bug-report": [
       "「MulmoTerminal が変」の相談窓口です。設定や仕様かを調べ、残った不具合だけ報告します。",
       "動かない・おかしいと感じたとき、不具合を報告したいとき、動きの理由を知りたいときに。",
@@ -540,17 +538,18 @@
 
   // ── Skill メニューを見分ける ────────────────────────────────
 
-  /** title を読む。吹き出しを出しているあいだは預かっているので、そちらも見る。 */
-  const titleOf = (node) => node.getAttribute("title") ?? node.dataset.mtgTitle ?? null;
+  /** v10 の data-tip と旧版の title。表示中に預かった説明も読める。 */
+  const titleOf = (node) => node.getAttribute("data-tip") ?? node.dataset.mtgTip ?? node.getAttribute("title") ?? node.dataset.mtgTitle ?? null;
 
   /** Skill メニューを開くボタンか。 */
   const isSkillButton = (node) =>
     node instanceof HTMLButtonElement &&
     node.getAttribute("aria-haspopup") === "menu" &&
-    titleOf(node) === SKILL_MENU_TITLE;
+    [SKILL_MENU_TITLE, "今のセッションでスキルを実行"].includes(titleOf(node));
 
-  /** 項目の名前。アイコンは別の要素なので、項目じかの文字だけをつなぐ。 */
+  /** v10 では名前は span の中。旧版の直下の文字も読める。 */
   const slugOf = (item) =>
+    item.querySelector(".truncate")?.textContent.trim() ??
     [...item.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim();
 
   /** 中継が訳した控え。古ければ裏で取り直す（待たない。次に動かしたときに出る）。 */
@@ -578,7 +577,9 @@
     const item = el.closest('[role="menuitem"]');
     const menu = item?.closest('[role="menu"]');
     const opener = menu?.previousElementSibling;
-    if (item == null || opener == null || !isSkillButton(opener)) return null;
+    // v10 のメニューは body に移されるので、隣のボタンを探さない。
+    if (item == null || menu == null) return null;
+    if (menu.getAttribute("data-testid") !== "skill-menu" && (opener == null || !isSkillButton(opener))) return null;
     refreshSkillJa();
     return skillText(slugOf(item), titleOf(item), skillJa);
   }
@@ -596,23 +597,28 @@
     return null;
   }
 
-  // 英語のツールチップ（title）を、吹き出しを出しているあいだだけ預かる。
+  // 上流の data-tip / title を、吹き出しを出しているあいだだけ預かる。
   // 両方出ると、英語の方が上に重なって日本語が読めない（報告のスクリーンショットがそれ）。
   function mute(el) {
-    const holder = el.closest("[title]");
+    const holder = el.closest("[data-tip],[title],[data-mtg-tip],[data-mtg-title]");
     if (holder === muted) return;
     unmute();
     if (holder === null) return;
-    holder.dataset.mtgTitle = holder.getAttribute("title") ?? "";
-    holder.removeAttribute("title");
+    for (const [attr, saved] of [["data-tip", "mtgTip"], ["title", "mtgTitle"]]) {
+      if (!holder.hasAttribute(attr)) continue;
+      holder.dataset[saved] = holder.getAttribute(attr);
+      holder.removeAttribute(attr);
+    }
     muted = holder;
   }
 
   function unmute() {
     if (muted === null) return;
-    // 預かっている間に画面側が付け直していたら、そちらを残す。
-    if (!muted.hasAttribute("title")) muted.setAttribute("title", muted.dataset.mtgTitle ?? "");
-    delete muted.dataset.mtgTitle;
+    for (const [attr, saved] of [["data-tip", "mtgTip"], ["title", "mtgTitle"]]) {
+      // 上流が表示中に更新した値は上書きしない。
+      if (saved in muted.dataset && !muted.hasAttribute(attr)) muted.setAttribute(attr, muted.dataset[saved]);
+      delete muted.dataset[saved];
+    }
     muted = null;
   }
 
@@ -691,7 +697,10 @@
     if (!isMulmoTerminal()) return;
     mountToggle();
     paint();
+    // 上流の pointerover より先に英語の説明を預かり、吹き出しの重なりを防ぐ。
+    document.addEventListener("pointerover", onMove, { capture: true, passive: true });
     document.addEventListener("mousemove", onMove, { passive: true });
+    document.addEventListener("pointerout", (event) => { if (event.relatedTarget === null) hide(); }, { passive: true });
     document.addEventListener("mouseleave", hide, { passive: true });
     void follow();
     setInterval(follow, POLL_MS);

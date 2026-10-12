@@ -1422,6 +1422,7 @@ GUIDE_SKILL_FN="$(awk '/  function explainSkill\(el\) \{/,/^  }$/' "${GUIDE_JS}"
 printf '%s\n' "${GUIDE_SKILL_FN}" | grep -q '!isSkillButton(opener)' \
   || fail "Skill メニューを開くボタンで見分けていません。Run のメニューのコマンドを説明として出します（226）"
 ok "Skill メニューの項目とボタンに説明を出す（同梱は日本語の2段・それ以外はその場の説明を畳む）"
+node "${ROOT}/tests/guide-dom-test.mjs" || fail "v10 のメニューで画面ガイドの表示・復元が壊れています"
 
 # 199 英語だったスキルの説明を、この Mac の Claude Code に一度だけ訳させて控える（Issue #226）。
 # 200 中継は Skill の一覧を1バイトも変えずに流し、訳を返す口は門番を通り、パスを返さない。

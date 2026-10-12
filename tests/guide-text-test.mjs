@@ -124,6 +124,12 @@ function readShipped(dir) {
 
 /** 文字列として書かれているか。引用符（" ' `）で閉じた形で探す。頭で当てるものは閉じない。 */
 function shipped(code, kind, mark) {
+  // v10 のメニューの印は id から組み立てる。テンプレートとアイコン表の両方を見る。
+  if (kind === "testid" && mark.startsWith("cell-pane-menu-")) {
+    const id = mark.slice("cell-pane-menu-".length);
+    return /"data-testid":`cell-pane-menu-\$\{\w+\.id\}`/.test(code)
+      && new RegExp(`(?:[,{])${id}:\\x60[^\\x60]+\\x60`).test(code);
+  }
   if (kind === "prefix") return ['"', "'", "`"].some((q) => code.includes(q + mark));
   return ['"', "'", "`"].some((q) => code.includes(q + mark + q));
 }
@@ -153,9 +159,9 @@ if (mtDir === undefined) {
     if (!Object.hasOwn(tables.BY_SKILL, name)) fail(`同梱スキル "${name}" の日本語の説明がガイドにありません`);
     if (!name.startsWith(BUNDLED_PREFIX)) fail(`同梱スキル "${name}" が "${BUNDLED_PREFIX}" で始まらず、中継が訳させてしまいます`);
   }
-  // Skill メニューの形: 項目が説明を title に持つ。ガイドはそこを読む。
-  if (!/role:`menuitem`,title:\w+\.description/.test(code)) {
-    fail(`MulmoTerminal ${version} の Skill メニューの項目が、説明を title に持っていません`);
+  // Skill メニューの形: 項目が説明を data-tip に持つ。ガイドはそこを読む。
+  if (!/role:`menuitem`,"data-tip":\w+\.description/.test(code) || !code.includes("`skill-menu`")) {
+    fail(`MulmoTerminal ${version} の Skill メニューの項目が、説明を data-tip に持つ skill-menu ではありません`);
   }
   markNote = `印 ${entries.length} 個が MulmoTerminal ${version} の配布物に実在する（同梱スキル ${shippedSkills.length} 本すべてに日本語あり）`;
 }
