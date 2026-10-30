@@ -474,88 +474,7 @@ func familyFold(statuses: [String?]) -> FamilyFold {
     return FamilyFold(headline: parts.joined(separator: " ・ "), needsAttention: updates > 0)
 }
 
-// ── AI タブ（Issue #235）────────────────────────────────────────
-
-/// MulmoTerminal が `activity-state.json` に書く、セッションごとの状態。
-struct AgentActivity: Decodable, Equatable {
-    let working: Bool?
-    let waiting: Bool?
-}
-
-/// AI タブに並べるセル1つ。
-struct AgentCell: Equatable {
-    let id: String
-    let folder: String
-    let waiting: Bool
-    let working: Bool
-    /// 会話の題名（Claude のセルだけ取れる）。同じフォルダのセルが並んだとき見分ける。
-    var title: String? = nil
-}
-
-/// 会話の題名を、行に出せる形にする。1行目だけ・40字まで。題名の無い会話は nil。
-func sessionTitleLabel(_ raw: String?) -> String? {
-    guard let first = raw?.split(separator: "\n").first.map(String.init) else { return nil }
-    let trimmed = String(first.drop(while: { $0 == " " }))
-    if trimmed.isEmpty || trimmed == "(untitled session)" { return nil }
-    return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
-}
-
-/// `dev-terminal-cwds.json` を読む。1行に「id フォルダ」。フォルダには空白が入りうるので、
-/// 最初の空白でだけ切る。
-func parseSessionCwds(_ text: String) -> [String: String] {
-    var result: [String: String] = [:]
-    for line in text.split(separator: "\n") {
-        guard let space = line.firstIndex(of: " ") else { continue }
-        let id = String(line[..<space])
-        let cwd = String(line[line.index(after: space)...].drop(while: { $0 == " " }))
-        if !id.isEmpty, !cwd.isEmpty { result[id] = cwd }
-    }
-    return result
-}
-
-/// 今動いているセルだけを、返事待ち → 作業中 → それ以外の順に並べる。
-///
-/// **`live` に無いものは出さない。** `activity-state.json` には終わったセッションの
-/// 記録も「返事待ち」のまま残っている（10/30 実測で 33 件のうち動いていたのは 0）。
-/// 両方が立っているときは返事待ちとして扱う（人の手が要るほうを取る）。
-func agentCells(activity: [String: AgentActivity], cwds: [String: String], live: Set<String>,
-                titles: [String: String] = [:]) -> [AgentCell] {
-    let cells = live.map { id -> AgentCell in
-        let state = activity[id]
-        let waiting = state?.waiting == true
-        let path = cwds[id] ?? ""
-        let folder = path.split(separator: "/").last.map(String.init) ?? "フォルダ不明"
-        return AgentCell(id: id, folder: folder, waiting: waiting, working: !waiting && state?.working == true,
-                         title: sessionTitleLabel(titles[id]))
-    }
-    func rank(_ cell: AgentCell) -> Int { cell.waiting ? 0 : (cell.working ? 1 : 2) }
-    return cells.sorted { (rank($0), $0.folder, $0.id) < (rank($1), $1.folder, $1.id) }
-}
-
-/// パネルに直に並べるセル。**返事待ちだけを、上限まで。**
-///
-/// 全部を並べると、会話が増えるほどパネルが伸びて画面の外に出る（#192 / #228 と同じ
-/// 壊れ方。本人「会話が増えるとどんどん長くなりそう」）。数は上の大きな数字が持ち、
-/// 全部の一覧は「すべてのセル」の吹き出しが持つ。ここには手が要るものだけを出す。
-func agentRowsShown(_ cells: [AgentCell], limit: Int) -> [AgentCell] {
-    Array(cells.filter(\.waiting).prefix(limit))
-}
-
-/// 数の1行。「返事待ち 2・作業中 3」。動いているセルが無ければ、そう書く。
-func agentSummary(_ cells: [AgentCell]) -> String {
-    if cells.isEmpty { return "動いているセルはありません" }
-    let waiting = cells.filter(\.waiting).count
-    let working = cells.filter(\.working).count
-    let idle = cells.count - waiting - working
-    var parts = ["返事待ち \(waiting)", "作業中 \(working)"]
-    if idle > 0 { parts.append("待機中 \(idle)") }
-    return parts.joined(separator: "・")
-}
-
-/// セルの状態の言葉。
-func agentStateLabel(_ cell: AgentCell) -> String {
-    cell.waiting ? "返事待ち" : (cell.working ? "作業中" : "待機中")
-}
+// ── 使用量（Issue #235）────────────────────────────────────────
 
 /// MulmoTerminal の `/api/rate-limits` の1つの窓。
 struct UsageWindow: Decodable, Equatable {
@@ -591,59 +510,6 @@ func usageLine(_ label: String, _ window: UsageWindow?, now: Double) -> String? 
     let percent = Int(window.usedPercentage.rounded())
     guard let reset = resetText(resetsAt: window.resetsAt_sec, now: now) else { return "\(label) \(percent)%" }
     return "\(label) \(percent)%・\(reset)"
-}
-
-// ── パネルから返事する（Issue #235）──────────────────────────────
-
-/// 返事の欄を出してよいセルか。**返事待ちのセルだけ。**
-///
-/// 返事は MulmoTerminal の `/api/terminal/<id>/reply` で、1行を打って Enter を押す。
-/// Shell のセルに送ると、それがそのままコマンドとして走る。返事待ちになるのは
-/// フックで知らせてくるエージェント（Claude / Codex）のセルだけなので、ここで絞る。
-func canReply(_ cell: AgentCell) -> Bool { cell.waiting }
-
-/// セルの画面の終わりの n 行。末尾の空行は落とす（画面は下が空いていることが多い）。
-func screenTail(_ screen: String, lines n: Int) -> String {
-    var rows = screen.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    while let last = rows.last, last.allSatisfy({ $0 == " " }) { rows.removeLast() }
-    return rows.suffix(n).joined(separator: "\n")
-}
-
-/// 返事を送った結果の言葉。status が nil なら MulmoTerminal に届いていない。
-func replyOutcome(status: Int?, reason: String?) -> String {
-    switch status {
-    case 200: return "送りました"
-    case 409 where reason == "question-open": return "選択肢の画面が開いています。MulmoTerminal で選んでください"
-    case 409: return "送れませんでした（このセルは今動いていません）"
-    case 413: return "長すぎます（4000字まで）"
-    case 400: return "送る文字がありません"
-    case 403: return "MulmoTerminal に断られました"
-    case nil: return "MulmoTerminal に届きませんでした"
-    default: return "送れませんでした（\(status ?? 0)）"
-    }
-}
-
-/// セルの画面の終わりが、選択肢の画面に見えるか（Issue #235）。
-///
-/// 返事は「1行打って Enter」なので、選択肢の画面に送ると Enter がいま選ばれている
-/// 項目を決めてしまう。10/31 に Codex の「Update available」画面で、1番の
-/// 「Update now」が選ばれた状態だった。MulmoTerminal が断ってくれるのは Claude の
-/// 質問の画面（question-open）だけなので、それ以外はここで止める。
-/// - 選んでいる印のついた番号の行（`❯ 1.` `› 1.` `> 1.`）。Claude の許可の確認もこの形
-/// - 操作の案内（`enter continue` `esc skip` `enter to select` など）
-/// 普通の入力欄（`❯ ` の後ろに番号が無い）は選択肢ではない。
-func screenLooksLikeMenu(_ tail: String) -> Bool {
-    let hints = ["enter continue", "esc skip", "enter to select", "enter to confirm", "esc to cancel", "(y/n)", "[y/n]"]
-    let lower = tail.lowercased()
-    if hints.contains(where: lower.contains) { return true }
-    for line in tail.split(separator: "\n") {
-        var rest = line.drop(while: { $0 == " " })
-        guard let marker = rest.first, ["❯", "›", ">"].contains(marker) else { continue }
-        rest = rest.dropFirst().drop(while: { $0 == " " })
-        let digits = rest.prefix(while: { $0.isNumber })
-        if !digits.isEmpty, rest.dropFirst(digits.count).first == "." { return true }
-    }
-    return false
 }
 
 // ── CodexBar から読む Codex の使用量（Issue #235）──────────────────

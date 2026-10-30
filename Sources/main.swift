@@ -745,8 +745,7 @@ final class ControlModel: ObservableObject {
         }
     }
 
-    // ── エージェントのタブと使用量（Issue #235）──
-    @Published var agentCellsNow: [AgentCell] = []
+    // ── 使用量（Issue #235）──
     @Published var rateLimits: RateLimits?
     /// CodexBar から読んだ Codex の使用量。CodexBar が無い・読めなければ nil（MulmoTerminal の数字を使う）。
     @Published var codexLimits: AgentLimits?
@@ -757,24 +756,21 @@ final class ControlModel: ObservableObject {
     /// CodexBar はネット越しに OpenAI へ聞くので、間を空ける。
     private static let codexBarInterval: TimeInterval = 300
 
-    /// 動いているセルと使用量を取り直す。**パネルを開いているときだけ**呼ぶ（#38）。
-    /// 読むのはファイル2つと、MulmoTerminal への HTTP 2本（どちらもループバック）。
+    /// 使用量を取り直す。**パネルを開いているときだけ**呼ぶ（#38）。
     func refreshAgents() {
+        refreshCodexBar()
         guard mtRunning else {
-            agentCellsNow = []
             rateLimits = nil
             return
         }
-        refreshCodexBar()
         guard !agentsLoading else { return }
         agentsLoading = true
         Task.detached { [weak self] in
-            let snapshot = loadAgentSnapshot(port: mtPort)
+            let limits = loadRateLimits(port: mtPort)
             await MainActor.run {
                 guard let self else { return }
                 self.agentsLoading = false
-                self.agentCellsNow = snapshot.cells
-                self.rateLimits = snapshot.limits
+                self.rateLimits = limits
             }
         }
     }
@@ -2132,7 +2128,7 @@ struct ControlView: View {
             case .environment:
                 EnvironmentView(model: model)
             case .ai:
-                AgentsView(model: model)
+                AgentsView()
             }
             Hairline()
             HStack {
@@ -2175,7 +2171,7 @@ enum ControlScreen: String, CaseIterable, Identifiable {
     case operate = "運用"
     case family = "追加"
     case environment = "環境"
-    /// 動いているエージェントと、パーソナルエージェントの入口（Issue #235）。
+    /// パーソナルエージェントの入口（Issue #235）。
     /// 既存の3つは変えずに足した。最初は「AI」と名付けて使用量も置いたが、本人
     /// 「AI って表現わかりにくい」「ここエージェントだけの機能にするか」で、名前を変え
     /// 使用量は環境タブへ移した。
@@ -2201,7 +2197,9 @@ struct TopTabs: View {
     @Binding var selection: ControlScreen
 
     var body: some View {
-        HStack(spacing: 12) {
+        // 4つ目の「エージェント」を足したら1列に収まらず「エー…」と切れた（Issue #235）。
+        // 間と左右の余白を詰めて、全部の名前が切れずに並ぶようにする。
+        HStack(spacing: 4) {
             ForEach(ControlScreen.allCases) { screen in
                 Button {
                     selection = screen
@@ -2212,13 +2210,15 @@ struct TopTabs: View {
                                 .font(AppFont.tab)
                             Text(screen.rawValue)
                                 .font(AppFont.tab)
+                                .lineLimit(1)
+                                .fixedSize()
                         }
                         Rectangle()
                             .fill(selection == screen ? Color.white.opacity(0.82) : Palette.hairline)
                             .frame(width: 46, height: 2)
                     }
                     .foregroundStyle(selection == screen ? Color.white : Palette.secondaryText)
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, 9)
                     .padding(.vertical, 7)
                     .background(selection == screen ? Palette.accent : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // .buttonStyle(.plain) の当たり判定は描画された中身に従うので、
@@ -3141,281 +3141,57 @@ struct DetailBlock: View {
     }
 }
 
-/// AI タブ（Issue #235）。動いているエージェントと使用量。
+/// エージェントのタブ（Issue #235）。パーソナルエージェントの入口だけを置く。
 ///
-/// 運用タブがサービスの起動・停止を見るのに対して、こちらは**その上で AI が
-/// 何をしているか**を見る。最初は他のタブと同じ灰色の行だけにしたら「想像と違う・
-/// 地味」と言われたので、数は大きく、使用量はバーで出す（部品は SwiftUI 標準）。
-/// 行は上限を決める（#192 / #228：パネルを画面の外に出さない。スクロールにもしない）。
+/// 最初は MulmoTerminal のセル（返事待ち・作業中）と返事の欄も置いたが、本人
+/// 「ここで作業待ち見ないから要らない、パーソナルエージェントに特化して」で外した。
+/// 1つを1枚のカードにして、2列で並べる。数が増えても行で伸びるのは2枚ごと。
 struct AgentsView: View {
-    @ObservedObject var model: ControlModel
-    /// 直に並べる返事待ちの上限。全部は「すべてのセル」の吹き出しへ。
-    private static let maxRows = 3
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !model.mtRunning {
-                SettingsGroup {
-                    SettingsRow(showsSeparator: false) {
-                        SetupRow(title: "MulmoTerminal", detail: "止まっています", ok: false,
-                                 buttonTitle: model.mtInstalled ? "起動" : nil, action: model.startMT)
-                    }
-                }
-            } else {
-                let cells = model.agentCellsNow
-                HStack(spacing: 10) {
-                    countTile("返事待ち", cells.filter(\.waiting).count, Palette.warn)
-                    countTile("作業中", cells.filter(\.working).count, Palette.accent)
-                }
-                if !cells.isEmpty {
-                    let shown = agentRowsShown(cells, limit: Self.maxRows)
-                    SettingsGroup {
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, cell in
-                            SettingsRow(showsSeparator: index > 0) {
-                                AgentCellRow(cell: cell, open: model.openMT)
-                            }
-                        }
-                        SettingsRow(showsSeparator: !shown.isEmpty) {
-                            AllCellsRow(cells: cells, open: model.openMT)
-                        }
-                    }
-                }
-            }
             Text("パーソナルエージェント")
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
-            // 横1列の入口にする。行で並べると、エージェントが増えるたびにパネルが伸びる（#192）。
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 ForEach(CloudAgent.all, id: \.name) { agent in
-                    Button { agent.open() } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: agent.symbol)
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
-                            Text(agent.name)
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.primaryText)
-                                .lineLimit(1)
-                            Text(agent.buttonTitle)
-                                .font(AppFont.small)
-                                .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help(agent.detail)
+                    CloudAgentCard(agent: agent)
                 }
             }
         }
     }
-
-    private func countTile(_ label: String, _ count: Int, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(count)")
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .foregroundStyle(count > 0 ? color : Palette.secondaryText)
-            Text(label)
-                .font(AppFont.body)
-                .foregroundStyle(Palette.secondaryText)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
 }
 
-/// セル1つの行（Issue #235）。パネルと「すべてのセル」の吹き出しで同じものを使う。
-struct AgentCellRow: View {
-    let cell: AgentCell
-    let open: () -> Void
-    @State private var showsReply = false
+/// パーソナルエージェント1つのカード。押すとアプリ（無ければ Web、それも無ければ入手のページ）を開く。
+struct CloudAgentCard: View {
+    let agent: CloudAgent
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(cell.folder)
-                    .font(AppFont.rowTitle)
-                    .foregroundStyle(Palette.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let title = cell.title {
-                    Text(title)
+        Button { agent.open() } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: agent.symbol)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
+                    Spacer()
+                    Text(agent.buttonTitle)
                         .font(AppFont.small)
-                        .foregroundStyle(Palette.secondaryText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
                 }
-            }
-            Spacer()
-            Text(agentStateLabel(cell))
-                .font(AppFont.small)
-                .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
-            if canReply(cell) {
-                Button("返事") { showsReply.toggle() }
-                    .buttonStyle(.plain)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.accentText)
-                    .popover(isPresented: $showsReply, arrowEdge: .trailing) {
-                        ReplyPopover(cell: cell, open: open)
-                    }
-            }
-            Button("開く", action: open)
-                .buttonStyle(.plain)
-                .font(AppFont.small)
-                .foregroundStyle(Palette.accentText)
-        }
-    }
-}
-
-/// 返事待ちのセルに、パネルから1行返す（Issue #235）。
-///
-/// 上にセルの画面の終わりを出す（何を聞かれているかが分からないと返せない）。
-/// 画面は開いたときと送ったあとにだけ読む。送れなかったら理由を書き、MulmoTerminal を
-/// 開く口を残す（選択肢の画面は、ここからは答えられない）。
-struct ReplyPopover: View {
-    let cell: AgentCell
-    let open: () -> Void
-    @State private var screen = "読み込んでいます…"
-    @State private var text = ""
-    @State private var sending = false
-    @State private var outcome: String?
-    /// 画面が選択肢に見えるあいだは送らない（`screenLooksLikeMenu`）。
-    @State private var isMenu = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(cell.folder)
-                .font(AppFont.section)
-                .foregroundStyle(Palette.primaryText)
-            // 画面の終わりを出す。**下に揃えて上を切る**（10/31 に本人の画面で、行の折り返しで
-            // 頭の4行しか入らず、肝心の最後の一言が「…」で切れていた）。スクロールにはしない（ガード202）。
-            Text(screen)
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(Palette.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .bottomLeading)
-                .frame(height: 170, alignment: .bottomLeading)
-                .clipped()
-                .textSelection(.enabled)
-                .padding(6)
-            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            HStack(spacing: 6) {
-                TextField("返事を書く（Enter で送る）", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(send)
-                    .disabled(isMenu)
-                Button("送る", action: send)
-                    .disabled(isMenu || sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            HStack {
-                if let outcome {
-                    Text(outcome)
-                        .font(AppFont.small)
-                        .foregroundStyle(outcome == "送りました" ? Palette.ok : Palette.warn)
-                }
-                Spacer()
-                Button("MulmoTerminal で開く", action: open)
-                    .buttonStyle(.plain)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.accentText)
-            }
-        }
-        .padding(14)
-        .frame(width: 360)
-        .onAppear(perform: loadScreen)
-    }
-
-    private func loadScreen() {
-        let id = cell.id
-        Task.detached {
-            let raw = fetchCellScreen(port: mtPort, id: id)
-            await MainActor.run {
-                let tail = raw.map { screenTail($0, lines: 14) }
-                screen = tail ?? "画面を読めませんでした"
-                isMenu = tail.map(screenLooksLikeMenu) ?? false
-                if isMenu { outcome = "選択肢の画面です。MulmoTerminal で選んでください" }
-            }
-        }
-    }
-
-    private func send() {
-        let line = text
-        guard !sending, !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        sending = true
-        let id = cell.id
-        Task.detached {
-            // 送る直前にもう一度画面を見る。開いてから選択肢が出ていることがある。
-            if let raw = fetchCellScreen(port: mtPort, id: id), screenLooksLikeMenu(screenTail(raw, lines: 14)) {
-                await MainActor.run {
-                    sending = false
-                    isMenu = true
-                    outcome = "選択肢の画面です。MulmoTerminal で選んでください"
-                }
-                return
-            }
-            let result = postCellReply(port: mtPort, id: id, text: line)
-            await MainActor.run {
-                sending = false
-                outcome = replyOutcome(status: result.status, reason: result.reason)
-                if result.status == 200 { text = "" }
-            }
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            await MainActor.run { loadScreen() }
-        }
-    }
-}
-
-/// 「すべてのセル N 件 ›」の1行。押すと全部を吹き出しで並べる（#228 の「追加ツール」と
-/// 同じ作法）。**スクロールは吹き出しの中だけ**（ガード202）。パネルの高さは何件でも変わらない。
-struct AllCellsRow: View {
-    let cells: [AgentCell]
-    let open: () -> Void
-    @State private var showsAll = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("すべてのセル")
-                .font(AppFont.rowTitle)
-                .foregroundStyle(Palette.primaryText)
-            Spacer()
-            Text("\(cells.count) 件")
-                .font(AppFont.small)
-                .foregroundStyle(Palette.secondaryText)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold, design: .default))
-                .foregroundStyle(Palette.secondaryText)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { showsAll.toggle() }
-        .popover(isPresented: $showsAll, arrowEdge: .trailing) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(agentSummary(cells))
-                    .font(AppFont.section)
+                Text(agent.name)
+                    .font(AppFont.cardTitle)
                     .foregroundStyle(Palette.primaryText)
-                    .padding(.bottom, 6)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(cells, id: \.id) { cell in
-                            if cell.id != cells.first?.id {
-                                Hairline()
-                            }
-                            AgentCellRow(cell: cell, open: open)
-                                .padding(.vertical, 8)
-                        }
-                    }
-                }
-                .frame(maxHeight: 360)
+                Text(agent.detail)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
-            .frame(width: 290)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -4270,80 +4046,11 @@ func servesMulmoClaude(port: Int) -> Bool {
     return body.contains("<title>MulmoClaude</title>") || body.contains("gui-chat-protocol")
 }
 
-/// AI タブの材料をまとめて読む（Issue #235）。
-///
-/// - `activity-state.json`：セッションごとの working / waiting
-/// - `dev-terminal-cwds.json`：セッション → フォルダ
-/// - `/api/sessions/live`：そのうち今動いているもの。**これを通さないと、終わった
-///   セッションの記録まで「返事待ち」で数える**（10/30 実測で 33 件中 0 件が動いていた）
-/// - `/api/rate-limits`：MulmoTerminal が上の段に出している使用量と同じ数字
-func loadAgentSnapshot(port: Int) -> (cells: [AgentCell], limits: RateLimits?) {
-    let home = "\(homeDir)/.mulmoterminal"
-    let activity = (try? Data(contentsOf: URL(fileURLWithPath: "\(home)/activity-state.json")))
-        .flatMap { try? JSONDecoder().decode([String: AgentActivity].self, from: $0) } ?? [:]
-    let cwdText = (try? String(contentsOfFile: "\(home)/dev-terminal-cwds.json", encoding: .utf8)) ?? ""
-    let cwds = parseSessionCwds(cwdText)
-    // 上流は一度に 200 件まで答える（ACTIVITY_IDS_LIMIT）。状態の記録があるものを先に、
-    // 残りはフォルダの控えの新しい順（ファイルは後ろほど新しい）で埋める。
-    let recent = cwdText.split(separator: "\n").reversed()
-        .compactMap { $0.split(separator: " ", maxSplits: 1).first.map(String.init) }
-    var ids = Array(activity.keys)
-    for id in recent where ids.count < 200 && activity[id] == nil && !ids.contains(id) { ids.append(id) }
-    ids = Array(ids.prefix(200))
-    struct LiveAnswer: Decodable { let live: [String] }
-    var live: Set<String> = []
-    if !ids.isEmpty,
-       let data = localGet(port: port, path: "/api/sessions/live?ids=\(ids.joined(separator: ","))"),
-       let answer = try? JSONDecoder().decode(LiveAnswer.self, from: data) {
-        live = Set(answer.live)
-    }
-    let limits = localGet(port: port, path: "/api/rate-limits")
+/// 使用量を MulmoTerminal から読む（Issue #235）。MulmoTerminal が上の段に出している
+/// 数字と同じ（`/api/rate-limits`）。
+func loadRateLimits(port: Int) -> RateLimits? {
+    localGet(port: port, path: "/api/rate-limits")
         .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
-    // 会話の題名。同じフォルダのセルが並ぶと名前だけでは見分けられない（10/31 本人の画面で
-    // mulmoclaude が2行並んだ）。Claude の会話の一覧はセルと同じ id を持つ。
-    // 聞くのは今動いているセルのフォルダだけ（多くて数本）。
-    struct Listing: Decodable { struct Session: Decodable { let id: String; let title: String? }; let sessions: [Session] }
-    var titles: [String: String] = [:]
-    for cwd in Set(live.compactMap { cwds[$0] }) {
-        guard let query = cwd.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let data = localGet(port: port, path: "/api/sessions?cwd=\(query)"),
-              let listing = try? JSONDecoder().decode(Listing.self, from: data) else { continue }
-        for session in listing.sessions where live.contains(session.id) {
-            titles[session.id] = session.title
-        }
-    }
-    return (agentCells(activity: activity, cwds: cwds, live: live, titles: titles), limits)
-}
-
-/// セルの画面を文字で読む（Issue #235）。返事の欄を開いたときだけ呼ぶ（巡回では読まない）。
-func fetchCellScreen(port: Int, id: String) -> String? {
-    struct Screen: Decodable { let screen: String }
-    return localGet(port: port, path: "/api/terminal/\(id)/screen")
-        .flatMap { try? JSONDecoder().decode(Screen.self, from: $0) }?.screen
-}
-
-/// 返事を1行送る（Issue #235）。MulmoTerminal の公式の口（GitHub ボードの返事欄と同じ）。
-/// 制御文字を落として Enter を押すのも、選択肢の画面が開いていれば断るのも上流がやる。
-/// 返すのは HTTP の状態と、断られた理由。届かなければ (nil, nil)。
-func postCellReply(port: Int, id: String, text: String) -> (status: Int?, reason: String?) {
-    guard let url = URL(string: "http://127.0.0.1:\(port)/api/terminal/\(id)/reply"),
-          let body = try? JSONEncoder().encode(["text": text]) else { return (nil, nil) }
-    var request = URLRequest(url: url, timeoutInterval: 5)
-    request.httpMethod = "POST"
-    request.httpBody = body
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("localhost:\(port)", forHTTPHeaderField: "Host")
-    struct Refusal: Decodable { let reason: String? }
-    let done = DispatchSemaphore(value: 0)
-    var result: (Int?, String?) = (nil, nil)
-    URLSession.shared.dataTask(with: request) { data, response, _ in
-        let status = (response as? HTTPURLResponse)?.statusCode
-        let reason = data.flatMap { try? JSONDecoder().decode(Refusal.self, from: $0) }?.reason
-        result = (status, reason)
-        done.signal()
-    }.resume()
-    _ = done.wait(timeout: .now() + 6)
-    return result
 }
 
 /// CodexBar の CLI で Codex の使用量を読む（Issue #235）。入っていなければ nil。

@@ -483,34 +483,6 @@ private let updateTargetCases: [UpdateTargetCase] = [
                      resolved: familyPrefixForTest + "-old/node_modules/.bin/relay", keepsForeign: true, expected: false),
 ]
 
-// ⑪ AI タブ（Issue #235）。動いているセルだけ・返事待ちが先・言葉と使用量の1行。
-private struct AgentCellCase {
-    let title: String
-    let activity: [String: AgentActivity]
-    let cwds: [String: String]
-    let live: Set<String>
-    let expected: [String]
-    let summary: String
-}
-
-private let cellCases: [AgentCellCase] = [
-    AgentCellCase(title: "終わった記録は数えない",
-              activity: ["a": AgentActivity(working: false, waiting: true), "b": AgentActivity(working: true, waiting: false)],
-              cwds: ["a": "/x/old", "b": "/x/new"], live: ["b"],
-              expected: ["new 作業中"], summary: "返事待ち 0・作業中 1"),
-    AgentCellCase(title: "返事待ちが先、両方立っていれば返事待ち",
-              activity: ["a": AgentActivity(working: true, waiting: false), "b": AgentActivity(working: true, waiting: true),
-                         "c": AgentActivity(working: nil, waiting: nil)],
-              cwds: ["a": "/w/alpha", "b": "/w/beta", "c": "/w/gamma"], live: ["a", "b", "c"],
-              expected: ["beta 返事待ち", "alpha 作業中", "gamma 待機中"], summary: "返事待ち 1・作業中 1・待機中 1"),
-    AgentCellCase(title: "フォルダが分からないセルも出す",
-              activity: [:], cwds: [:], live: ["z"],
-              expected: ["フォルダ不明 待機中"], summary: "返事待ち 0・作業中 0・待機中 1"),
-    AgentCellCase(title: "何も動いていない",
-              activity: ["a": AgentActivity(working: false, waiting: true)], cwds: ["a": "/x/a"], live: [],
-              expected: [], summary: "動いているセルはありません"),
-]
-
 private struct UsageCase {
     let title: String
     let window: UsageWindow?
@@ -704,75 +676,6 @@ struct StatusDisplayTest {
             }
         }
 
-        // ⑪ AI タブ（Issue #235）
-        if parseSessionCwds("a1 /Users/me/My Project\nbroken\nb2   /tmp/x\n") != ["a1": "/Users/me/My Project", "b2": "/tmp/x"] {
-            failures += 1
-            FileHandle.standardError.write(Data("  セッションのフォルダの読み方が違います\n".utf8))
-        }
-        for item in cellCases {
-            let cells = agentCells(activity: item.activity, cwds: item.cwds, live: item.live)
-            let actual = cells.map { "\($0.folder) \(agentStateLabel($0))" }
-            let summary = agentSummary(cells)
-            if actual != item.expected || summary != item.summary {
-                failures += 1
-                FileHandle.standardError.write(Data(
-                    "  AI タブ \(item.title): 期待 \(item.expected) \(item.summary) / 実際 \(actual) \(summary)\n".utf8))
-            }
-        }
-        let shownInput = agentCells(
-            activity: ["a": AgentActivity(working: false, waiting: true), "b": AgentActivity(working: true, waiting: false),
-                       "c": AgentActivity(working: false, waiting: true), "d": AgentActivity(working: false, waiting: true),
-                       "e": AgentActivity(working: false, waiting: true)],
-            cwds: ["a": "/a", "b": "/b", "c": "/c", "d": "/d", "e": "/e"], live: ["a", "b", "c", "d", "e"])
-        let shown = agentRowsShown(shownInput, limit: 3).map(\.folder)
-        if shown != ["a", "c", "d"] || !agentRowsShown(Array(shownInput.filter { !$0.waiting }), limit: 3).isEmpty {
-            failures += 1
-            FileHandle.standardError.write(Data("  AI タブ: パネルに直に出すのは返事待ちだけ・上限まで、になっていません（実際 \(shown)）\n".utf8))
-        }
-        // パネルから返事する（Issue #235）
-        let waitingCell = AgentCell(id: "w", folder: "w", waiting: true, working: false)
-        let shellCell = AgentCell(id: "s", folder: "s", waiting: false, working: false)
-        let busyCell = AgentCell(id: "b", folder: "b", waiting: false, working: true)
-        if !canReply(waitingCell) || canReply(shellCell) || canReply(busyCell) {
-            failures += 1
-            FileHandle.standardError.write(Data("  返事の欄を、返事待ち以外のセルにも出しています（Shell に送るとコマンドが走る）\n".utf8))
-        }
-        if screenTail("a\nb\nc\n   \n\n", lines: 2) != "b\nc" || screenTail("", lines: 3) != "" {
-            failures += 1
-            FileHandle.standardError.write(Data("  画面の終わりの切り出しが違います\n".utf8))
-        }
-        let outcomes: [(Int?, String?, String)] = [
-            (200, nil, "送りました"),
-            (409, "question-open", "選択肢の画面が開いています。MulmoTerminal で選んでください"),
-            (409, nil, "送れませんでした（このセルは今動いていません）"),
-            (413, nil, "長すぎます（4000字まで）"),
-            (nil, nil, "MulmoTerminal に届きませんでした"),
-        ]
-        for (status, reason, expected) in outcomes where replyOutcome(status: status, reason: reason) != expected {
-            failures += 1
-            FileHandle.standardError.write(Data("  返事の結果 \(String(describing: status)) \(reason ?? ""): 期待 \(expected)\n".utf8))
-        }
-        // 選択肢の画面には送らない（Issue #235）
-        let menuCases: [(String, String, Bool)] = [
-            ("Codex の更新の確認", "Update available · 0.162.1 → 0.164.0\n› 1. Update now (runs `sh -c ...`)\n  2. Skip\n  3. Skip until next version\n\n  enter continue · esc skip", true),
-            ("Claude の許可の確認", "Do you want to proceed?\n❯ 1. Yes\n  2. No, and tell Claude what to do differently", true),
-            ("はい／いいえ", "Overwrite file? (y/N)", true),
-            ("ふつうの入力欄", "● できたら「できた」と言ってください。\n\n❯ \n  ⏵⏵ auto mode on", false),
-            ("入力欄に番号の無い文", "❯ 1件目から進めて", false),
-            ("本文の箇条書き", "  1. 回る形になったら繰り返す\n  2. 解約も同じ", false),
-        ]
-        for (title, screen, expected) in menuCases where screenLooksLikeMenu(screen) != expected {
-            failures += 1
-            FileHandle.standardError.write(Data("  選択肢の画面の見分け \(title): 期待 \(expected)\n".utf8))
-        }
-        // 会話の題名（Issue #235）
-        let titled = agentCells(activity: [:], cwds: ["a": "/x/mulmoclaude", "b": "/x/mulmoclaude"], live: ["a", "b"],
-                                titles: ["a": "1Password：パスワード一括変更・自動解約ツールの下調べ\n続き", "b": "(untitled session)"])
-        if titled.map(\.title) != ["1Password：パスワード一括変更・自動解約ツールの下調べ", nil]
-            || sessionTitleLabel(String(repeating: "あ", count: 50)) != String(repeating: "あ", count: 40) + "…" {
-            failures += 1
-            FileHandle.standardError.write(Data("  会話の題名の出し方が違います（実際 \(titled.map(\.title))）\n".utf8))
-        }
         // CodexBar の出力（10/31 の実物を縮めたもの）を読めること（Issue #235）
         let codexBarSample = #"[{"provider":"codex","usage":{"primary":null,"secondary":{"usedPercent":0,"resetsAt":"2026-11-04T13:49:20Z","windowMinutes":10080},"codexResetCredits":{"availableCount":1,"credits":[{"status":"available","expires_at":"2026-11-06T23:21:48Z"}]}}}]"#
         let decoded = try? JSONDecoder().decode([CodexBarEntry].self, from: Data(codexBarSample.utf8))
@@ -799,6 +702,6 @@ struct StatusDisplayTest {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通り + AI タブ \(cellCases.count) 通り + 使用量 \(usageCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通り + 使用量 \(usageCases.count) 通りすべて一致")
     }
 }

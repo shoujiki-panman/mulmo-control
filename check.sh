@@ -1428,58 +1428,33 @@ printf '%s\n' "${REFRESH_FN}" | grep -q 'checkGuideProxyVersion()' \
   || fail "起動したあと、中継の版を確かめていません。更新しても古い中継が残ります（233）"
 ok "アプリを更新したら、前のアプリが立てた中継を確かめてから立て直す"
 
-# 205 AI タブ（Issue #235）。既存の3タブはそのまま、4つ目として足す（本人の指定）。
-# 並べ方と言葉は status-display-test が実際に走らせて見ている（終わった記録を数えない、
-# 返事待ちが先、使用量の1行）。ここでは配線を見る。
+# 205 エージェントのタブ（Issue #235）。既存の3タブはそのまま、4つ目として足す（本人の指定）。
+# 中身はパーソナルエージェントの入口だけ（本人「ここで作業待ち見ないから要らない」）。
+# 使用量は環境タブ（本人「ここエージェントだけの機能にするか」）。
 SCREEN_ENUM="$(awk '/^enum ControlScreen/,/^}$/' "${ROOT}/Sources/main.swift")"
 for tab in 'case operate = "運用"' 'case family = "追加"' 'case environment = "環境"' 'case ai = "エージェント"'; do
   printf '%s\n' "${SCREEN_ENUM}" | grep -qF "${tab}" \
-    || fail "パネルのタブ（${tab}）がありません。既存の3つは消さず、AI は足す約束です（235）"
+    || fail "パネルのタブ（${tab}）がありません。既存の3つは消さず、エージェントは足す約束です（235）"
 done
-grep -q 'for item in cellCases' "${ROOT}/tests/status-display-test.swift" \
-  || fail "AI タブの並べ方を status-display-test で走らせていません（235）"
-# データを取りに行くのはパネルを開いているときだけ（#38）。
-OPEN_BLOCK="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift" | awk '/if panelIsOpen \{/,/^        }$/')"
-printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
-  || fail "AI タブの材料を、パネルを閉じているときにも取りに行っています（235 / 38）"
-# 終わったセッションの記録を数えないよう、今動いているかを MulmoTerminal に聞く。
-grep -q '/api/sessions/live?ids=' "${ROOT}/Sources/main.swift" \
-  || fail "AI タブが、今動いているセルかを確かめずに数えています（235）"
-# 行は上限を決める。パネルを画面の外に出さない（#192 / #228）。
-# 直に並べるのは返事待ちだけ・上限まで。全部は吹き出しへ（本人「会話が増えると長くなりそう」）。
-awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'agentRowsShown(cells, limit: Self.maxRows)' \
-  || fail "AI タブのセルを全部パネルに並べています。会話が増えるほど画面の外に出ます（235 / 192）"
-awk '/^struct AllCellsRow/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.popover(' \
-  || fail "「すべてのセル」が吹き出しになっていません（235 / 228）"
-# 使用量は環境タブ（本人「ここエージェントだけの機能にするか」）。
-awk '/^struct EnvironmentView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'UsagePanel(model: model)' \
-  || fail "使用量が環境タブにありません（235）"
-if awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'usageLine('; then
+# タブの名前は切らない（「エー…」と切れた）。
+awk '/^struct TopTabs/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.fixedSize()' \
+  || fail "タブの名前が切れる形になっています（235）"
+AGENTS_VIEW="$(awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${AGENTS_VIEW}" | grep -q 'CloudAgent.all' \
+  || fail "エージェントのタブにパーソナルエージェントが並んでいません（235）"
+if printf '%s\n' "${AGENTS_VIEW}" | grep -q 'usageLine('; then
   fail "エージェントのタブに使用量が戻っています。エージェントだけのタブにする約束です（235）"
 fi
-ok "エージェントのタブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限・使用量は環境タブ"
-
-# 206 パネルから返事する（Issue #235）。返事は MulmoTerminal の公式の口で1行だけ。
-# Shell のセルに送るとコマンドとして走るので、返事の欄は返事待ちのセルにしか出さない。
-# 言葉と絞り込みは status-display-test が実際に走らせて見ている。ここでは配線を見る。
-CELL_ROW="$(awk '/^struct AgentCellRow/,/^}$/' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${CELL_ROW}" | grep -q 'if canReply(cell) {' \
-  || fail "返事の欄を、返事待ちかどうか確かめずに出しています。Shell に送るとコマンドが走ります（235）"
-grep -q '/api/terminal/\\(id)/reply' "${ROOT}/Sources/main.swift" \
-  || fail "返事を MulmoTerminal の公式の口（/api/terminal/<id>/reply）以外で送っています（235）"
-# 画面を読むのは返事の欄を開いたときだけ。巡回のたびに全セルの画面を読まない（#38）。
-REFRESH_ALL="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift")$(awk '/^func loadAgentSnapshot/,/^}$/' "${ROOT}/Sources/main.swift")"
-if printf '%s\n' "${REFRESH_ALL}" | grep -q 'fetchCellScreen'; then
-  fail "巡回のたびにセルの画面を読んでいます（235 / 38）"
-fi
-# 選択肢の画面に送ると Enter が選ばれている項目を決める（10/31：Codex の「Update now」）。
-# 送る直前に画面を読み直し、選択肢に見えたら送らない。見分け方は status-display-test が走らせる。
-REPLY_POP="$(awk '/^struct ReplyPopover/,/^}$/' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${REPLY_POP}" | awk '/private func send\(\)/,/^    }$/' | grep -q 'screenLooksLikeMenu' \
-  || fail "返事を送る直前に、選択肢の画面かどうかを見ていません。Enter が項目を決めてしまいます（235）"
-grep -q 'menuCases' "${ROOT}/tests/status-display-test.swift" \
-  || fail "選択肢の画面の見分け方を status-display-test で走らせていません（235）"
-ok "パネルからの返事は返事待ちのセルだけ・選択肢の画面には送らない・公式の口で・画面は開いたときだけ読む"
+awk '/^struct EnvironmentView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'UsagePanel(model: model)' \
+  || fail "使用量が環境タブにありません（235）"
+# 使用量はパネルを開いているときだけ取る（#38）。
+OPEN_BLOCK="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift" | awk '/if panelIsOpen \{/,/^        }$/')"
+printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
+  || fail "使用量を、パネルを閉じているときにも取りに行っています（235 / 38）"
+# アプリはバンドル ID で探す（置き場所の決め打ちは外れた）。
+awk '/^struct CloudAgent/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'urlForApplication(withBundleIdentifier:' \
+  || fail "パーソナルエージェントのアプリを、置き場所で探しています（235）"
+ok "エージェントのタブ：既存の3タブはそのまま・名前は切れない・パーソナルエージェントだけ・使用量は環境タブで開いている間だけ"
 
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #
