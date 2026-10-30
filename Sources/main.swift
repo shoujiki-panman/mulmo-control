@@ -3432,6 +3432,7 @@ struct AllCellsRow: View {
 /// - Dots は ChatGPT アプリ（ID は `com.openai.codex`）の中にある。アプリを開くだけでは
 ///   Dots に着かないので、アプリが持つ `codex://dots` で開く
 /// - Grok Bot の ID は `com.anysphere.sand`（名前から推せない）
+/// - Claude Duet は Mac のアプリが無いので、claude.ai を開く
 /// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）
 ///
 /// アプリが無くても Web で使えるものは、Web をそのまま「開く」（Muse は本人がブラウザで
@@ -3443,7 +3444,8 @@ struct CloudAgent {
     let name: String
     let detail: String
     let symbol: String
-    let bundleID: String
+    /// Mac のアプリ。Web とスマホにしか無いもの（Claude Duet）は nil。
+    let bundleID: String?
     /// アプリの中の行き先。無ければアプリを開くだけ。
     let deepLink: String?
     /// アプリが無いときに使える Web 版。
@@ -3451,7 +3453,7 @@ struct CloudAgent {
     /// アプリも Web も無いときの、入手のページ。
     let fallbackURL: String
 
-    var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
+    var appURL: URL? { bundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) } }
 
     /// アプリか Web で、すぐ使えるか。
     var isUsable: Bool { appURL != nil || webURL != nil }
@@ -3471,9 +3473,11 @@ struct CloudAgent {
     }
 
     static let all = [
-        CloudAgent(name: "Claude", detail: "Anthropic のデスクトップアプリ", symbol: "asterisk",
-                   bundleID: "com.anthropic.claudefordesktop", deepLink: nil, webURL: "https://claude.ai/",
-                   fallbackURL: "https://claude.ai/download"),
+        // Claude Duet（10/21 に研究プレビュー）。Mac のアプリは無く、パソコンでは claude.ai で開く。
+        // 米国の Pro / Max の待ちリスト制（解説記事より。公式ページは未確認）。
+        CloudAgent(name: "Duet", detail: "Claude のパーソナルエージェント", symbol: "asterisk",
+                   bundleID: nil, deepLink: nil, webURL: "https://claude.ai/",
+                   fallbackURL: "https://claude.ai/"),
         CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
                    bundleID: "com.openai.codex", deepLink: "codex://dots", webURL: "https://chatgpt.com/",
                    fallbackURL: "https://chatgpt.com/"),
