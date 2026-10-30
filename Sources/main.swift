@@ -2092,7 +2092,10 @@ struct ControlView: View {
                 }
             }
             TopTabs(selection: $screen)
-            UpdateToolbar(model: model)
+            // AI タブでは更新の欄を出さない（本人「上の『最新』の欄が邪魔」・Issue #235）。
+            if screen != .ai {
+                UpdateToolbar(model: model)
+            }
             Hairline()
             switch screen {
             case .operate:
@@ -3114,8 +3117,9 @@ struct DetailBlock: View {
 /// AI タブ（Issue #235）。動いているエージェントと使用量。
 ///
 /// 運用タブがサービスの起動・停止を見るのに対して、こちらは**その上で AI が
-/// 何をしているか**を見る。行は上限を決める（#192 / #228：パネルを画面の外に
-/// 出さない。スクロールにもしない）。
+/// 何をしているか**を見る。最初は他のタブと同じ灰色の行だけにしたら「想像と違う・
+/// 地味」と言われたので、数は大きく、使用量はバーで出す（部品は SwiftUI 標準）。
+/// 行は上限を決める（#192 / #228：パネルを画面の外に出さない。スクロールにもしない）。
 struct AgentsView: View {
     @ObservedObject var model: ControlModel
     private static let maxRows = 5
@@ -3130,45 +3134,41 @@ struct AgentsView: View {
                     }
                 }
             } else {
-                Text("いまのエージェント")
-                    .font(AppFont.section)
-                    .foregroundStyle(Palette.primaryText)
-                SettingsGroup {
-                    SettingsRow(showsSeparator: false) {
-                        HStack {
-                            Text(agentSummary(model.agentCellsNow))
-                                .font(AppFont.body)
-                                .foregroundStyle(Palette.secondaryText)
-                            Spacer()
-                            Button("開く", action: model.openMT)
-                                .buttonStyle(.plain)
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.accentText)
-                        }
-                    }
-                    ForEach(model.agentCellsNow.prefix(Self.maxRows), id: \.id) { cell in
-                        SettingsRow {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
-                                    .frame(width: 7, height: 7)
-                                Text(cell.folder)
-                                    .font(AppFont.rowTitle)
-                                    .foregroundStyle(Palette.primaryText)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                                Text(agentStateLabel(cell))
-                                    .font(AppFont.small)
-                                    .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
+                let cells = model.agentCellsNow
+                HStack(spacing: 10) {
+                    countTile("返事待ち", cells.filter(\.waiting).count, Palette.warn)
+                    countTile("作業中", cells.filter(\.working).count, Palette.accent)
+                }
+                if !cells.isEmpty {
+                    SettingsGroup {
+                        ForEach(Array(cells.prefix(Self.maxRows).enumerated()), id: \.element.id) { index, cell in
+                            SettingsRow(showsSeparator: index > 0) {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
+                                        .frame(width: 8, height: 8)
+                                    Text(cell.folder)
+                                        .font(AppFont.rowTitle)
+                                        .foregroundStyle(Palette.primaryText)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Text(agentStateLabel(cell))
+                                        .font(AppFont.small)
+                                        .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
+                                    Button("開く", action: model.openMT)
+                                        .buttonStyle(.plain)
+                                        .font(AppFont.small)
+                                        .foregroundStyle(Palette.accentText)
+                                }
                             }
                         }
-                    }
-                    if model.agentCellsNow.count > Self.maxRows {
-                        SettingsRow {
-                            Text("ほか \(model.agentCellsNow.count - Self.maxRows) 件")
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.secondaryText)
+                        if cells.count > Self.maxRows {
+                            SettingsRow {
+                                Text("ほか \(cells.count - Self.maxRows) 件")
+                                    .font(AppFont.small)
+                                    .foregroundStyle(Palette.secondaryText)
+                            }
                         }
                     }
                 }
@@ -3177,8 +3177,8 @@ struct AgentsView: View {
                     .foregroundStyle(Palette.primaryText)
                 SettingsGroup {
                     if let limits = model.rateLimits, limits.claude != nil || limits.codex != nil {
-                        usageRow("Claude", limits.claude, first: true)
-                        usageRow("Codex", limits.codex, first: limits.claude == nil)
+                        usageBlock("Claude", limits.claude, first: true)
+                        usageBlock("Codex", limits.codex, first: limits.claude == nil)
                     } else {
                         SettingsRow(showsSeparator: false) {
                             Text("まだ測れていません（MulmoTerminal が測るまで少し待ちます）")
@@ -3188,32 +3188,105 @@ struct AgentsView: View {
                     }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func usageRow(_ name: String, _ limits: AgentLimits?, first: Bool) -> some View {
-        if let limits {
-            let now = Date().timeIntervalSince1970
-            let lines = [usageLine("5時間", limits.fiveHour, now: now), usageLine("1週間", limits.sevenDay, now: now)]
-                .compactMap { $0 }
-            SettingsRow(showsSeparator: !first) {
-                HStack(alignment: .top) {
-                    Text(name)
-                        .font(AppFont.rowTitle)
-                        .foregroundStyle(Palette.primaryText)
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        ForEach(lines, id: \.self) { line in
-                            Text(line)
+            Text("クラウドのエージェント")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            SettingsGroup {
+                ForEach(Array(CloudAgent.all.enumerated()), id: \.element.name) { index, agent in
+                    SettingsRow(showsSeparator: index > 0) {
+                        HStack(spacing: 8) {
+                            Image(systemName: agent.symbol)
+                                .foregroundStyle(Palette.accentText)
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(agent.name)
+                                    .font(AppFont.rowTitle)
+                                    .foregroundStyle(Palette.primaryText)
+                                Text(agent.detail)
+                                    .font(AppFont.small)
+                                    .foregroundStyle(Palette.secondaryText)
+                            }
+                            Spacer()
+                            Button(agent.isInstalled ? "開く" : "入手") { agent.open() }
+                                .buttonStyle(.plain)
                                 .font(AppFont.small)
-                                .foregroundStyle(Palette.secondaryText)
+                                .foregroundStyle(Palette.accentText)
                         }
                     }
                 }
             }
         }
     }
+
+    private func countTile(_ label: String, _ count: Int, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(count)")
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .foregroundStyle(count > 0 ? color : Palette.secondaryText)
+            Text(label)
+                .font(AppFont.body)
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func usageBlock(_ name: String, _ limits: AgentLimits?, first: Bool) -> some View {
+        if let limits {
+            let now = Date().timeIntervalSince1970
+            SettingsRow(showsSeparator: !first) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(name)
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                    ForEach([("5時間", limits.fiveHour), ("1週間", limits.sevenDay)], id: \.0) { label, window in
+                        if let window, let line = usageLine(label, window, now: now) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ProgressView(value: min(max(window.usedPercentage, 0), 100), total: 100)
+                                    .progressViewStyle(.linear)
+                                    .tint(window.usedPercentage >= 80 ? Palette.warn : Palette.accent)
+                                Text(line)
+                                    .font(AppFont.small)
+                                    .foregroundStyle(Palette.secondaryText)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// クラウドで動くエージェント（Issue #235）。Mac の上には見張れるものが無いので、
+/// 入口だけを置く。アプリが入っていればアプリ、無ければ公式のページを開く。
+struct CloudAgent {
+    let name: String
+    let detail: String
+    let symbol: String
+    let appPath: String
+    let fallbackURL: String
+
+    var isInstalled: Bool { FileManager.default.fileExists(atPath: appPath) }
+
+    func open() {
+        if isInstalled {
+            NSWorkspace.shared.open(URL(fileURLWithPath: appPath))
+        } else if let url = URL(string: fallbackURL) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    static let all = [
+        // Dots は ChatGPT の中で動く常駐エージェント（OpenAI）。
+        CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
+                   appPath: "/Applications/ChatGPT.app", fallbackURL: "https://chatgpt.com/"),
+        // Muse は Meta の個人向けエージェント。Mac 版は ai.meta.com/muse から入れる（App Store には無い）。
+        CloudAgent(name: "Muse", detail: "Meta のパーソナルエージェント", symbol: "sparkle",
+                   appPath: "/Applications/Muse.app", fallbackURL: "https://ai.meta.com/muse/"),
+    ]
 }
 
 struct EnvironmentView: View {
