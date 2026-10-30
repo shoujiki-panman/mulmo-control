@@ -32,6 +32,7 @@
 //   GUIDE_UPSTREAM_PORT   MulmoTerminal のポート（必須。既定は持たない・Issue #7）
 //   GUIDE_JS              差し込むスクリプト（既定は同梱の ../guide/mulmoterminal-guide.js）
 //   GUIDE_CLAUDE          説明を訳させる claude（既定はよくある置き場所を探す・Issue #226）
+//   GUIDE_APP_VERSION     自分を立てたアプリの版。ガイドを配るときに名乗る（Issue #233）
 
 import http from "node:http";
 import net from "node:net";
@@ -58,6 +59,14 @@ const SKILL_JA_PATH = "/__mulmo-guide/skill-ja";
 /** 写しを読む一覧。MulmoTerminal の Skill メニューがここから説明を取っている。 */
 const SKILLS_API = "/api/skills";
 const translator = createTranslator();
+/**
+ * 自分を立てたアプリの版を、ガイドを配るときに名乗る（Issue #233）。
+ * ガイドの本体は毎回読み直すが、**この中継のコードは起動したときのまま**。
+ * アプリを更新しても前のアプリが立てた中継は止まらないので、アプリは起動ごとに
+ * この版を確かめ、違えば立て直す。ヘッダー名は Swift の GuideProxy.versionHeader と揃える。
+ */
+const APP_VERSION = process.env.GUIDE_APP_VERSION ?? "";
+const VERSION_HEADER = "x-mulmo-guide-proxy";
 
 // ── 門番 ─────────────────────────────────────────────────────
 
@@ -123,7 +132,11 @@ function serveGuide(res) {
     res.end();
     return;
   }
-  res.writeHead(200, { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" });
+  res.writeHead(200, {
+    "content-type": "application/javascript; charset=utf-8",
+    "cache-control": "no-store",
+    [VERSION_HEADER]: APP_VERSION,
+  });
   res.end(body);
 }
 

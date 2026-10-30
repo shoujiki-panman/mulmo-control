@@ -155,7 +155,7 @@ const guideJs = join(guideDir, "guide.js");
 writeFileSync(guideJs, GUIDE_BODY);
 
 const child = spawn(process.execPath, [PROXY], {
-  env: { ...process.env, GUIDE_LISTEN: String(proxyPort), GUIDE_UPSTREAM_PORT: String(upPort), GUIDE_JS: guideJs },
+  env: { ...process.env, GUIDE_LISTEN: String(proxyPort), GUIDE_UPSTREAM_PORT: String(upPort), GUIDE_JS: guideJs, GUIDE_APP_VERSION: "9.8.7" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 await new Promise((resolve, reject) => {
@@ -220,6 +220,8 @@ try {
   // ⑧ ガイドそのものを配る
   const guide = await get(proxyPort, "/__mulmo-guide.js", { host: own });
   check(guide.status === 200 && guide.body === GUIDE_BODY, "ガイドのスクリプトを配れていません");
+  // アプリは起動ごとにこの版を見て、違えば立て直す（Issue #233）。
+  check(guide.headers["x-mulmo-guide-proxy"] === "9.8.7", "中継が、自分を立てたアプリの版を名乗っていません（233）");
 
   // ⑨ ループバックだけで待ち受ける（LAN のアドレスからは入れない）
   const lan = lanAddress();

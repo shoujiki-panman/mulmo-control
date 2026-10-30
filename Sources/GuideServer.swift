@@ -82,6 +82,11 @@ final class GuideProxy: @unchecked Sendable {
     /// 中継の待ち受け。**scripts/mulmoterminal-guide-proxy.mjs の既定と揃える**（check.sh が見ている）。
     static let port: UInt16 = 34598
     static var url: String { "http://127.0.0.1:\(port)/" }
+    /// 中継が自分を立てたアプリの版を名乗るヘッダー（Issue #233）。
+    /// **scripts/mulmoterminal-guide-proxy.mjs の VERSION_HEADER と揃える**（check.sh が見ている）。
+    static let versionHeader = "x-mulmo-guide-proxy"
+    /// 中継のスクリプト名。止める前に、待ち受けているのが本当にこれかを確かめる。
+    static let scriptName = "mulmoterminal-guide-proxy.mjs"
 
     private let lock = NSLock()
     private var process: Process?
@@ -95,18 +100,70 @@ final class GuideProxy: @unchecked Sendable {
     }
 
     /// 中継が答えるか。自分が立てたものでも、前回アプリが落ちて残ったものでもよい。
-    static func isServing() -> Bool {
-        guard let url = URL(string: "\(url)__mulmo-guide.js") else { return false }
+    static func isServing() -> Bool { servingVersion() != nil }
+
+    /// 答えている中継を立てたアプリの版。答えなければ nil。
+    /// 名乗らない中継（#233 より前のアプリが立てたもの）は空文字。
+    static func servingVersion() -> String? {
+        guard let url = URL(string: "\(url)__mulmo-guide.js") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 0.5)
         request.setValue("127.0.0.1:\(port)", forHTTPHeaderField: "Host")
         let done = DispatchSemaphore(value: 0)
-        var ok = false
+        var version: String?
         URLSession.shared.dataTask(with: request) { _, response, _ in
-            ok = (response as? HTTPURLResponse)?.statusCode == 200
+            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                version = http.value(forHTTPHeaderField: versionHeader) ?? ""
+            }
             done.signal()
         }.resume()
         _ = done.wait(timeout: .now() + 1)
-        return ok
+        return version
+    }
+
+    /// **前のアプリが立てた中継を、今のアプリの中継に立て直す**（Issue #233）。
+    ///
+    /// ガイドの本体は中継が毎回読み直すが、中継のコードは起動したときのまま。
+    /// アプリを更新しても前の中継は止まらないので、ポートが答えるかだけを見ていると
+    /// 新しい版の中継側の直しがいつまでも届かない（10/8 の中継が 1.0.83 に更新した
+    /// あとも動いていた）。版が合っていれば何もしない。
+    /// 止めるのは、ポートで待ち受けているのが中継のスクリプトだと確かめられたときだけ。
+    func replaceIfStale(node: String, script: String, upstreamPort: Int, version: String) -> Bool {
+        guard let serving = Self.servingVersion(), serving != version else { return true }
+        // このアプリが立てた中継は、このアプリの版を名乗る。違うのは前のアプリの中継。
+        guard let pid = Self.listenerPid(), Self.isProxyProcess(pid) else { return false }
+        kill(pid, SIGTERM)
+        var waited = 0
+        while Self.isServing(), waited < 20 {
+            Thread.sleep(forTimeInterval: 0.1)
+            waited += 1
+        }
+        return ensure(node: node, script: script, upstreamPort: upstreamPort)
+    }
+
+    /// 34598 で待ち受けているプロセス。`lsof` は1回 210ms かかるので、
+    /// 版が違うと分かったときにしか呼ばない（#38）。
+    private static func listenerPid() -> pid_t? {
+        let out = run("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"])
+        return out.split(separator: "\n").first.flatMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// そのプロセスが node で中継のスクリプトを走らせているか。人のプロセスには触らない。
+    private static func isProxyProcess(_ pid: pid_t) -> Bool {
+        let command = run("/bin/ps", ["-o", "command=", "-p", String(pid)])
+        return command.contains("node") && command.contains(scriptName)
+    }
+
+    private static func run(_ path: String, _ args: [String]) -> String {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: path)
+        child.arguments = args
+        let pipe = Pipe()
+        child.standardOutput = pipe
+        child.standardError = FileHandle.nullDevice
+        do { try child.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        child.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// 立てて、答えるまで待つ（最大2秒）。立てられなければ false。
@@ -125,6 +182,7 @@ final class GuideProxy: @unchecked Sendable {
         env.removeValue(forKey: "PORT")
         env["GUIDE_LISTEN"] = String(Self.port)
         env["GUIDE_UPSTREAM_PORT"] = String(upstreamPort)
+        env["GUIDE_APP_VERSION"] = appVersion
         child.environment = env
         child.standardOutput = FileHandle.nullDevice
         child.standardError = FileHandle.nullDevice
