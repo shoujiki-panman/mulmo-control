@@ -3122,7 +3122,8 @@ struct DetailBlock: View {
 /// 行は上限を決める（#192 / #228：パネルを画面の外に出さない。スクロールにもしない）。
 struct AgentsView: View {
     @ObservedObject var model: ControlModel
-    private static let maxRows = 5
+    /// 直に並べる返事待ちの上限。全部は「すべてのセル」の吹き出しへ。
+    private static let maxRows = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -3140,35 +3141,15 @@ struct AgentsView: View {
                     countTile("作業中", cells.filter(\.working).count, Palette.accent)
                 }
                 if !cells.isEmpty {
+                    let shown = agentRowsShown(cells, limit: Self.maxRows)
                     SettingsGroup {
-                        ForEach(Array(cells.prefix(Self.maxRows).enumerated()), id: \.element.id) { index, cell in
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, cell in
                             SettingsRow(showsSeparator: index > 0) {
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
-                                        .frame(width: 8, height: 8)
-                                    Text(cell.folder)
-                                        .font(AppFont.rowTitle)
-                                        .foregroundStyle(Palette.primaryText)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer()
-                                    Text(agentStateLabel(cell))
-                                        .font(AppFont.small)
-                                        .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
-                                    Button("開く", action: model.openMT)
-                                        .buttonStyle(.plain)
-                                        .font(AppFont.small)
-                                        .foregroundStyle(Palette.accentText)
-                                }
+                                AgentCellRow(cell: cell, open: model.openMT)
                             }
                         }
-                        if cells.count > Self.maxRows {
-                            SettingsRow {
-                                Text("ほか \(cells.count - Self.maxRows) 件")
-                                    .font(AppFont.small)
-                                    .foregroundStyle(Palette.secondaryText)
-                            }
+                        SettingsRow(showsSeparator: !shown.isEmpty) {
+                            AllCellsRow(cells: cells, open: model.openMT)
                         }
                     }
                 }
@@ -3256,6 +3237,80 @@ struct AgentsView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// セル1つの行（Issue #235）。パネルと「すべてのセル」の吹き出しで同じものを使う。
+struct AgentCellRow: View {
+    let cell: AgentCell
+    let open: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
+                .frame(width: 8, height: 8)
+            Text(cell.folder)
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Text(agentStateLabel(cell))
+                .font(AppFont.small)
+                .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
+            Button("開く", action: open)
+                .buttonStyle(.plain)
+                .font(AppFont.small)
+                .foregroundStyle(Palette.accentText)
+        }
+    }
+}
+
+/// 「すべてのセル N 件 ›」の1行。押すと全部を吹き出しで並べる（#228 の「追加ツール」と
+/// 同じ作法）。**スクロールは吹き出しの中だけ**（ガード202）。パネルの高さは何件でも変わらない。
+struct AllCellsRow: View {
+    let cells: [AgentCell]
+    let open: () -> Void
+    @State private var showsAll = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("すべてのセル")
+                .font(AppFont.rowTitle)
+                .foregroundStyle(Palette.primaryText)
+            Spacer()
+            Text("\(cells.count) 件")
+                .font(AppFont.small)
+                .foregroundStyle(Palette.secondaryText)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold, design: .default))
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showsAll.toggle() }
+        .popover(isPresented: $showsAll, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(agentSummary(cells))
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                    .padding(.bottom, 6)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(cells, id: \.id) { cell in
+                            if cell.id != cells.first?.id {
+                                Hairline()
+                            }
+                            AgentCellRow(cell: cell, open: open)
+                                .padding(.vertical, 8)
+                        }
+                    }
+                }
+                .frame(maxHeight: 360)
+            }
+            .padding(14)
+            .frame(width: 290)
         }
     }
 }

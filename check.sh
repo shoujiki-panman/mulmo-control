@@ -1446,8 +1446,11 @@ printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
 grep -q '/api/sessions/live?ids=' "${ROOT}/Sources/main.swift" \
   || fail "AI タブが、今動いているセルかを確かめずに数えています（235）"
 # 行は上限を決める。パネルを画面の外に出さない（#192 / #228）。
-awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'prefix(Self.maxRows)' \
-  || fail "AI タブのセルの行に上限がありません。パネルが画面の外に出ます（235 / 192）"
+# 直に並べるのは返事待ちだけ・上限まで。全部は吹き出しへ（本人「会話が増えると長くなりそう」）。
+awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'agentRowsShown(cells, limit: Self.maxRows)' \
+  || fail "AI タブのセルを全部パネルに並べています。会話が増えるほど画面の外に出ます（235 / 192）"
+awk '/^struct AllCellsRow/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.popover(' \
+  || fail "「すべてのセル」が吹き出しになっていません（235 / 228）"
 ok "AI タブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限"
 
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。

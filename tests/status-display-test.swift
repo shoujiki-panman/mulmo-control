@@ -719,6 +719,16 @@ struct StatusDisplayTest {
                     "  AI タブ \(item.title): 期待 \(item.expected) \(item.summary) / 実際 \(actual) \(summary)\n".utf8))
             }
         }
+        let shownInput = agentCells(
+            activity: ["a": AgentActivity(working: false, waiting: true), "b": AgentActivity(working: true, waiting: false),
+                       "c": AgentActivity(working: false, waiting: true), "d": AgentActivity(working: false, waiting: true),
+                       "e": AgentActivity(working: false, waiting: true)],
+            cwds: ["a": "/a", "b": "/b", "c": "/c", "d": "/d", "e": "/e"], live: ["a", "b", "c", "d", "e"])
+        let shown = agentRowsShown(shownInput, limit: 3).map(\.folder)
+        if shown != ["a", "c", "d"] || !agentRowsShown(Array(shownInput.filter { !$0.waiting }), limit: 3).isEmpty {
+            failures += 1
+            FileHandle.standardError.write(Data("  AI タブ: パネルに直に出すのは返事待ちだけ・上限まで、になっていません（実際 \(shown)）\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {

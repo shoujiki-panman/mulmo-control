@@ -520,6 +520,15 @@ func agentCells(activity: [String: AgentActivity], cwds: [String: String], live:
     return cells.sorted { (rank($0), $0.folder, $0.id) < (rank($1), $1.folder, $1.id) }
 }
 
+/// パネルに直に並べるセル。**返事待ちだけを、上限まで。**
+///
+/// 全部を並べると、会話が増えるほどパネルが伸びて画面の外に出る（#192 / #228 と同じ
+/// 壊れ方。本人「会話が増えるとどんどん長くなりそう」）。数は上の大きな数字が持ち、
+/// 全部の一覧は「すべてのセル」の吹き出しが持つ。ここには手が要るものだけを出す。
+func agentRowsShown(_ cells: [AgentCell], limit: Int) -> [AgentCell] {
+    Array(cells.filter(\.waiting).prefix(limit))
+}
+
 /// 数の1行。「返事待ち 2・作業中 3」。動いているセルが無ければ、そう書く。
 func agentSummary(_ cells: [AgentCell]) -> String {
     if cells.isEmpty { return "動いているセルはありません" }
