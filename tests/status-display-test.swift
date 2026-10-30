@@ -483,6 +483,22 @@ private let updateTargetCases: [UpdateTargetCase] = [
                      resolved: familyPrefixForTest + "-old/node_modules/.bin/relay", keepsForeign: true, expected: false),
 ]
 
+private struct UsageCase {
+    let title: String
+    let window: UsageWindow?
+    let expected: String?
+}
+
+private let usageNow: Double = 1_000_000
+private let usageCases: [UsageCase] = [
+    UsageCase(title: "時間で戻る", window: UsageWindow(usedPercentage: 37.4, resetsAt_sec: usageNow + 2 * 3600 + 120), expected: "5時間 37%・あと2時間"),
+    UsageCase(title: "分で戻る", window: UsageWindow(usedPercentage: 99.6, resetsAt_sec: usageNow + 45 * 60 + 5), expected: "5時間 100%・あと45分"),
+    UsageCase(title: "日で戻る", window: UsageWindow(usedPercentage: 16, resetsAt_sec: usageNow + 3 * 86400 + 60), expected: "5時間 16%・あと3日"),
+    UsageCase(title: "過ぎている", window: UsageWindow(usedPercentage: 5, resetsAt_sec: usageNow - 10), expected: "5時間 5%・もうすぐ戻る"),
+    UsageCase(title: "戻る時刻が無い", window: UsageWindow(usedPercentage: 1, resetsAt_sec: nil), expected: "5時間 1%"),
+    UsageCase(title: "窓が無いなら出さない", window: nil, expected: nil),
+]
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -660,10 +676,44 @@ struct StatusDisplayTest {
             }
         }
 
+        // CodexBar の出力（10/31 の実物を縮めたもの）を読めること（Issue #235）
+        let codexBarSample = #"[{"provider":"codex","usage":{"primary":null,"secondary":{"usedPercent":0,"resetsAt":"2026-11-04T13:49:20Z","windowMinutes":10080},"codexResetCredits":{"availableCount":1,"credits":[{"status":"available","expires_at":"2026-11-06T23:21:48Z"}]}}}]"#
+        let decoded = try? JSONDecoder().decode([CodexBarEntry].self, from: Data(codexBarSample.utf8))
+        let usage = decoded?.first?.usage
+        if usage?.secondary?.windowMinutes != 10080 || usage?.primary != nil || usage?.codexResetCredits?.availableCount != 1 {
+            failures += 1
+            FileHandle.standardError.write(Data("  CodexBar の出力を読めません\n".utf8))
+        }
+        if resetCreditLine(count: 1, expiresMonthDay: "11/7") != "無料リセット 1回・11/7まで"
+            || resetCreditLine(count: 0, expiresMonthDay: "11/7") != nil || resetCreditLine(count: 2, expiresMonthDay: nil) != "無料リセット 2回" {
+            failures += 1
+            FileHandle.standardError.write(Data("  無料リセットの言葉が違います\n".utf8))
+        }
+        // relay の伝言板（10/31 の実物の出力）（Issue #235）
+        let board = parseBoardMessages("""
+        2026-10-30T15:19:12.432Z より後の伝言（古い順・2件）。続きを読むときは、最後の伝言の時刻を since に渡す。
+        - 2026-10-30T16:17:19.492Z | Claude Code → ちゃま | こんにちは、Claude Codeです。この伝言が読めたら、relay board post で返事をください。
+        - 2026-10-30T16:20:00.000Z | ちゃま → all | 読めました | 返事です
+        """)
+        if board.count != 2 || board[0].from != "Claude Code" || board[0].to != "ちゃま"
+            || board[1].text != "読めました | 返事です"
+            || boardRouteLabel(board[0]) != "Claude Code → ちゃま" || boardRouteLabel(board[1]) != "ちゃま → みんな" {
+            failures += 1
+            FileHandle.standardError.write(Data("  relay の伝言板の読み方が違います（実際 \(board)）\n".utf8))
+        }
+        for item in usageCases {
+            let actual = usageLine("5時間", item.window, now: usageNow)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  使用量 \(item.title): 期待 \(item.expected ?? "出さない") / 実際 \(actual ?? "出さない")\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通り + 使用量 \(usageCases.count) 通りすべて一致")
     }
 }

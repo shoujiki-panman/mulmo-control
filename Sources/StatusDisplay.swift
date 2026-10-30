@@ -473,3 +473,97 @@ func familyFold(statuses: [String?]) -> FamilyFold {
     if updates > 0 { parts.append("更新あり \(updates)件") }
     return FamilyFold(headline: parts.joined(separator: " ・ "), needsAttention: updates > 0)
 }
+
+// ── 使用量（Issue #235）────────────────────────────────────────
+
+/// MulmoTerminal の `/api/rate-limits` の1つの窓。
+struct UsageWindow: Decodable, Equatable {
+    let usedPercentage: Double
+    let resetsAt_sec: Double?
+}
+
+struct AgentLimits: Decodable, Equatable {
+    let fiveHour: UsageWindow?
+    let sevenDay: UsageWindow?
+}
+
+struct RateLimits: Decodable, Equatable {
+    let claude: AgentLimits?
+    let codex: AgentLimits?
+}
+
+/// 戻るまでの時間。「あと45分」「あと2時間」「あと3日」。過ぎていれば「もうすぐ戻る」。
+func resetText(resetsAt: Double?, now: Double) -> String? {
+    guard let resetsAt else { return nil }
+    let left = resetsAt - now
+    if left <= 60 { return "もうすぐ戻る" }
+    let minutes = Int(left / 60)
+    if minutes < 60 { return "あと\(minutes)分" }
+    let hours = minutes / 60
+    if hours < 24 { return "あと\(hours)時間" }
+    return "あと\(hours / 24)日"
+}
+
+/// 使用量の1行。「5時間 37%・あと2時間」。窓が無ければ nil（出さない）。
+func usageLine(_ label: String, _ window: UsageWindow?, now: Double) -> String? {
+    guard let window else { return nil }
+    let percent = Int(window.usedPercentage.rounded())
+    guard let reset = resetText(resetsAt: window.resetsAt_sec, now: now) else { return "\(label) \(percent)%" }
+    return "\(label) \(percent)%・\(reset)"
+}
+
+// ── CodexBar から読む Codex の使用量（Issue #235）──────────────────
+
+/// `codexbar usage --provider codex --json` の、使う所だけ。
+///
+/// MulmoTerminal の Codex の数字は、最後に Codex を動かしたときに Codex が知らせた
+/// 値で、古いことがある（10/31：MulmoTerminal は「1%・11/2 に戻る」、CodexBar は
+/// 「0%・11/4 22:49 に戻る」）。CodexBar は OpenAI のアカウントから直接取る。
+struct CodexBarEntry: Decodable {
+    struct Window: Decodable { let usedPercent: Double; let resetsAt: String?; let windowMinutes: Int? }
+    struct ResetCredit: Decodable { let status: String?; let expires_at: String? }
+    struct ResetCredits: Decodable { let availableCount: Int?; let credits: [ResetCredit]? }
+    struct Usage: Decodable { let primary: Window?; let secondary: Window?; let codexResetCredits: ResetCredits? }
+    let provider: String
+    let usage: Usage?
+}
+
+/// リセット券の1行。「無料リセット 1回・11/7まで」。無ければ nil。
+func resetCreditLine(count: Int?, expiresMonthDay: String?) -> String? {
+    guard let count, count > 0 else { return nil }
+    guard let expiresMonthDay else { return "無料リセット \(count)回" }
+    return "無料リセット \(count)回・\(expiresMonthDay)まで"
+}
+
+// ── エージェントの伝言板（Issue #235）──────────────────────────────
+
+/// relay の伝言板の1件（`relay board read` の1行）。
+struct BoardMessage: Equatable {
+    let at: String
+    let from: String
+    let to: String
+    let text: String
+}
+
+/// `relay board read` の出力を読む。伝言は「- 時刻 | 送り手 → 宛先 | 本文」の行。
+/// 本文に「 | 」が入っても切らない（頭から2つだけ切る）。見出しの行は読み飛ばす。
+func parseBoardMessages(_ output: String) -> [BoardMessage] {
+    output.split(separator: "\n").compactMap { line in
+        guard line.hasPrefix("- ") else { return nil }
+        let body = line.dropFirst(2)
+        guard let first = body.range(of: " | ") else { return nil }
+        let at = String(body[..<first.lowerBound])
+        let rest = body[first.upperBound...]
+        guard let second = rest.range(of: " | ") else { return nil }
+        let route = rest[..<second.lowerBound]
+        let text = String(rest[second.upperBound...])
+        guard let arrow = route.range(of: " → ") else { return nil }
+        return BoardMessage(at: at, from: String(route[..<arrow.lowerBound]),
+                            to: String(route[arrow.upperBound...]), text: text)
+    }
+}
+
+/// 時刻（ISO 8601）を「10/31 01:17」の形にする材料。表示は main 側（時差の扱いが要る）。
+func boardRouteLabel(_ message: BoardMessage) -> String {
+    message.to == "all" ? "\(message.from) → みんな" : "\(message.from) → \(message.to)"
+}

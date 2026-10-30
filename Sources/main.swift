@@ -745,6 +745,67 @@ final class ControlModel: ObservableObject {
         }
     }
 
+    // ── 使用量（Issue #235）──
+    @Published var rateLimits: RateLimits?
+    /// CodexBar から読んだ Codex の使用量。CodexBar が無い・読めなければ nil（MulmoTerminal の数字を使う）。
+    @Published var codexLimits: AgentLimits?
+    @Published var codexResetCredit: String?
+    private var agentsLoading = false
+    private var codexBarLoading = false
+    private var lastCodexBarRead = Date.distantPast
+    /// CodexBar はネット越しに OpenAI へ聞くので、間を空ける。
+    private static let codexBarInterval: TimeInterval = 300
+
+    /// 使用量を取り直す。**パネルを開いているときだけ**呼ぶ（#38）。
+    func refreshAgents() {
+        refreshCodexBar()
+        guard mtRunning else {
+            rateLimits = nil
+            return
+        }
+        guard !agentsLoading else { return }
+        agentsLoading = true
+        Task.detached { [weak self] in
+            let limits = loadRateLimits(port: mtPort)
+            await MainActor.run {
+                guard let self else { return }
+                self.agentsLoading = false
+                self.rateLimits = limits
+            }
+        }
+    }
+
+    // ── エージェントの伝言板（Issue #235）──
+    /// nil は「この relay に伝言板が無い」（古い relay）。空の配列は「伝言が無い」。
+    @Published var boardMessages: [BoardMessage]?
+    private var lastBoardRead = Date.distantPast
+
+    /// 伝言板を読み直す。パネルを開いているときに、30秒に1回まで。
+    func refreshBoard() {
+        guard relayInstalled, Date().timeIntervalSince(lastBoardRead) >= 30 else { return }
+        lastBoardRead = Date()
+        Task.detached { [weak self] in
+            let output = runRelay(["board", "read", "--hours", "72"])
+            await MainActor.run { self?.boardMessages = output.map(parseBoardMessages) }
+        }
+    }
+
+    /// Codex の使用量を CodexBar から取り直す。パネルを開いているときに、5分に1回まで。
+    private func refreshCodexBar() {
+        guard !codexBarLoading, Date().timeIntervalSince(lastCodexBarRead) >= Self.codexBarInterval else { return }
+        codexBarLoading = true
+        lastCodexBarRead = Date()
+        Task.detached { [weak self] in
+            let read = readCodexBarCodex()
+            await MainActor.run {
+                guard let self else { return }
+                self.codexBarLoading = false
+                self.codexLimits = read?.limits
+                self.codexResetCredit = read?.resetCredit
+            }
+        }
+    }
+
     /// 画面ガイドの行の「オン」「やめる」。押した結果をすぐ中継に映す。
     func guideToggled(_ on: Bool) {
         if on {
@@ -961,6 +1022,8 @@ final class ControlModel: ObservableObject {
         // 閉じている間は省く。
         if panelIsOpen {
             refreshToolPaths()
+            refreshAgents()
+            refreshBoard()
         }
         checkUpdatesSilentlyIfNeeded()
     }
@@ -2065,7 +2128,10 @@ struct ControlView: View {
                 }
             }
             TopTabs(selection: $screen)
-            UpdateToolbar(model: model)
+            // AI タブでは更新の欄を出さない（本人「上の『最新』の欄が邪魔」・Issue #235）。
+            if screen != .ai {
+                UpdateToolbar(model: model)
+            }
             Hairline()
             switch screen {
             case .operate:
@@ -2077,6 +2143,8 @@ struct ControlView: View {
                 }
             case .environment:
                 EnvironmentView(model: model)
+            case .ai:
+                AgentsView(model: model)
             }
             Hairline()
             HStack {
@@ -2119,6 +2187,11 @@ enum ControlScreen: String, CaseIterable, Identifiable {
     case operate = "運用"
     case family = "追加"
     case environment = "環境"
+    /// パーソナルエージェントの入口（Issue #235）。
+    /// 既存の3つは変えずに足した。最初は「AI」と名付けて使用量も置いたが、本人
+    /// 「AI って表現わかりにくい」「ここエージェントだけの機能にするか」で、名前を変え
+    /// 使用量は環境タブへ移した。
+    case ai = "エージェント"
 
     var id: String { rawValue }
 
@@ -2130,6 +2203,8 @@ enum ControlScreen: String, CaseIterable, Identifiable {
             return "square.grid.2x2"
         case .environment:
             return "gearshape"
+        case .ai:
+            return "sparkles"
         }
     }
 }
@@ -2138,7 +2213,9 @@ struct TopTabs: View {
     @Binding var selection: ControlScreen
 
     var body: some View {
-        HStack(spacing: 12) {
+        // 4つ目の「エージェント」を足したら1列に収まらず「エー…」と切れた（Issue #235）。
+        // 間と左右の余白を詰めて、全部の名前が切れずに並ぶようにする。
+        HStack(spacing: 4) {
             ForEach(ControlScreen.allCases) { screen in
                 Button {
                     selection = screen
@@ -2149,13 +2226,15 @@ struct TopTabs: View {
                                 .font(AppFont.tab)
                             Text(screen.rawValue)
                                 .font(AppFont.tab)
+                                .lineLimit(1)
+                                .fixedSize()
                         }
                         Rectangle()
                             .fill(selection == screen ? Color.white.opacity(0.82) : Palette.hairline)
                             .frame(width: 46, height: 2)
                     }
                     .foregroundStyle(selection == screen ? Color.white : Palette.secondaryText)
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, 9)
                     .padding(.vertical, 7)
                     .background(selection == screen ? Palette.accent : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // .buttonStyle(.plain) の当たり判定は描画された中身に従うので、
@@ -3078,11 +3157,297 @@ struct DetailBlock: View {
     }
 }
 
+/// エージェントのタブ（Issue #235）。パーソナルエージェントの入口だけを置く。
+///
+/// 最初は MulmoTerminal のセル（返事待ち・作業中）と返事の欄も置いたが、本人
+/// 「ここで作業待ち見ないから要らない、パーソナルエージェントに特化して」で外した。
+/// 1つを1枚のカードにして、2列で並べる。数が増えても行で伸びるのは2枚ごと。
+struct AgentsView: View {
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("パーソナルエージェント")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(CloudAgent.all, id: \.name) { agent in
+                    CloudAgentCard(agent: agent)
+                }
+            }
+            if let messages = model.boardMessages {
+                BoardPanel(messages: messages)
+            }
+        }
+    }
+}
+
+/// エージェントの伝言板（Issue #235）。
+///
+/// 別の会社のエージェントは、互いの作業を見られない（X で「Grok Bot から Dots へ直接
+/// つなぐのは難しい」。Google ドライブを共有オフィスにして受け渡す人も出ている）。
+/// relay は受け口の中に伝言板を置き、Dots・Claude Code・Codex が `relay board` で書いて
+/// 読み合う（session-relay #28 / #29、10/31）。ここでは**誰が誰に何を書いたかを見るだけ**。
+/// 最初はクリップボードに写す形にしたが、relay 側が伝言板に変わったので置き換えた。
+struct BoardPanel: View {
+    let messages: [BoardMessage]
+    private static let shown = 3
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("エージェントの伝言板")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            SettingsGroup {
+                if messages.isEmpty {
+                    SettingsRow(showsSeparator: false) {
+                        Text("この3日の伝言はありません")
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                }
+                // 新しいものを上に。
+                ForEach(Array(messages.suffix(Self.shown).reversed().enumerated()), id: \.offset) { index, message in
+                    SettingsRow(showsSeparator: index > 0) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(boardRouteLabel(message))
+                                    .font(AppFont.rowTitle)
+                                    .foregroundStyle(Palette.primaryText)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(boardTimeLabel(message.at))
+                                    .font(AppFont.small)
+                                    .foregroundStyle(Palette.secondaryText)
+                            }
+                            Text(message.text)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                                .lineLimit(2)
+                                .truncationMode(.tail)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 伝言の時刻を「10/31 01:17」にする（この Mac の時刻で）。読めなければそのまま。
+func boardTimeLabel(_ iso: String) -> String {
+    let parser = ISO8601DateFormatter()
+    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "M/d HH:mm"
+    return formatter.string(from: date)
+}
+
+/// パーソナルエージェント1つのカード。押すとアプリ（無ければ Web、それも無ければ入手のページ）を開く。
+struct CloudAgentCard: View {
+    let agent: CloudAgent
+
+    var body: some View {
+        Button { agent.open() } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: agent.symbol)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
+                    Spacer()
+                    Text(agent.buttonTitle)
+                        .font(AppFont.small)
+                        .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
+                }
+                Text(agent.name)
+                    .font(AppFont.cardTitle)
+                    .foregroundStyle(Palette.primaryText)
+                Text(agent.detail)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                let tagColor = agent.japan.map { $0 ? Palette.ok : Palette.warn } ?? Palette.secondaryText
+                Text(agent.availability)
+                    .font(AppFont.small)
+                    .foregroundStyle(tagColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(tagColor.opacity(0.15), in: Capsule())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// クラウドで動くパーソナルエージェント（Issue #235）。Mac の上には見張れるものが
+/// 無いので、入口だけを置く。
+///
+/// アプリは**置き場所ではなくバンドル ID で探す**。最初は `/Applications/〇〇.app` を
+/// 決め打ちしたら外れた（10/31 実測）：
+/// - Dots は ChatGPT アプリ（ID は `com.openai.codex`）の中にある。アプリを開くだけでは
+///   Dots に着かないので、アプリが持つ `codex://dots` で開く
+/// - Grok Bot の ID は `com.anysphere.sand`（名前から推せない）
+/// - Claude Duet は Mac のアプリが無いので、claude.ai を開く
+/// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）
+///
+/// アプリが無くても Web で使えるものは、Web をそのまま「開く」（Muse は本人がブラウザで
+/// 使っている。muse.ai は Meta のヘルプと Facebook のプライバシーポリシーに繋がっている
+/// ことで確かめた）。Web が無くアプリも無ければ「入手」で公式のページを開く。
+/// ダウンロード済みの dmg を探すのはやめた。macOS はアプリがダウンロードフォルダを
+/// 覗くことを許していない。
+struct CloudAgent {
+    let name: String
+    /// 得意なこと（1行）。どれに何を頼むかで迷う人が多い（比較記事が多数出ている）。
+    let detail: String
+    /// 日本で使えるか。「日本で使えるのはどれ？」と迷う人が多い。
+    /// true＝使える（緑）、false＝まだ（橙）、nil＝公式に書かれていない（灰）。
+    let japan: Bool?
+    /// 札の言葉。
+    let availability: String
+    let symbol: String
+    /// Mac のアプリ。Web とスマホにしか無いもの（Claude Duet）は nil。
+    let bundleID: String?
+    /// アプリの中の行き先。無ければアプリを開くだけ。
+    let deepLink: String?
+    /// アプリが無いときに使える Web 版。
+    let webURL: String?
+    /// アプリも Web も無いときの、入手のページ。
+    let fallbackURL: String
+    /// 入手のページを開くボタンの言葉。
+    var fallbackTitle = "入手"
+
+    var appURL: URL? { bundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) } }
+
+    /// アプリか Web で、すぐ使えるか。
+    var isUsable: Bool { appURL != nil || webURL != nil }
+
+    var buttonTitle: String { isUsable ? "開く" : fallbackTitle }
+
+    func open() {
+        if let appURL {
+            if let deepLink, let link = URL(string: deepLink) {
+                NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+            }
+        } else if let url = URL(string: webURL ?? fallbackURL) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    static let all = [
+        // 札と得意なことの出どころ（10/31 に確かめた）:
+        // - Duet：Anthropic の紹介ページとサポート記事。米国の Pro / Max・待ちリスト。
+        //   Mac のアプリは無い。claude.ai を開くと日本ではふつうの Claude になる（10/31 本人）ので、
+        //   公式の Duet のページ（待ちリストの入口）を開く
+        // - Dots：OpenAI のヘルプ（EEA・スイス・英国の Pro だけ除外）。本人が 10/3 から日本で使っている
+        // - Grok Bot：xAI の紹介ページ（ベータ）。日本での提供は公式に書かれていない
+        // - Muse：10/23 に日本で開始（報道・Meta の日本向け発表として引用）。本人が日本で使っている
+        CloudAgent(name: "Duet", detail: "メールと予定から先回りして動く", japan: false,
+                   availability: "日本はまだ（米国のみ）", symbol: "asterisk",
+                   bundleID: nil, deepLink: nil, webURL: nil,
+                   fallbackURL: "https://claude.com/product/claude-duet", fallbackTitle: "説明"),
+        CloudAgent(name: "Dots", detail: "アプリをつないで仕事を進める", japan: true,
+                   availability: "日本で使える（Pro）", symbol: "circle.grid.2x1",
+                   bundleID: "com.openai.codex", deepLink: "codex://dots", webURL: "https://chatgpt.com/",
+                   fallbackURL: "https://chatgpt.com/"),
+        CloudAgent(name: "Grok Bot", detail: "自分の PC を持ち、裏で作業を続ける", japan: nil,
+                   availability: "ベータ", symbol: "bolt",
+                   bundleID: "com.anysphere.sand", deepLink: nil, webURL: nil,
+                   fallbackURL: "https://x.ai/"),
+        CloudAgent(name: "Muse", detail: "予定・メールと、予約や買い物", japan: true,
+                   availability: "日本で使える（10/23〜）", symbol: "sparkle",
+                   bundleID: "com.meta.endo", deepLink: nil, webURL: "https://muse.ai/",
+                   fallbackURL: "https://ai.meta.com/muse/"),
+    ]
+}
+
 struct EnvironmentView: View {
     @ObservedObject var model: ControlModel
 
     var body: some View {
-        SetupPanel(model: model)
+        VStack(alignment: .leading, spacing: 12) {
+            UsagePanel(model: model)
+            SetupPanel(model: model)
+        }
+    }
+}
+
+/// 使用量（Issue #235）。最初はエージェントのタブに置いたが、本人「ここエージェントだけの
+/// 機能にするか」で環境タブへ移した。1つのエージェントを1行にまとめ、細いバーを2本並べる
+/// （環境タブの高さを増やしすぎない）。
+///
+/// Claude は MulmoTerminal の数字（CodexBar と一致を確かめた）。Codex は CodexBar が入って
+/// いればその数字を使う（MulmoTerminal の Codex の数字は古いことがある）。
+struct UsagePanel: View {
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("使用量")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            SettingsGroup {
+                let claude = model.rateLimits?.claude
+                let codex = model.codexLimits ?? model.rateLimits?.codex
+                if claude == nil && codex == nil {
+                    SettingsRow(showsSeparator: false) {
+                        Text(model.mtRunning ? "まだ測れていません（MulmoTerminal が測るまで少し待ちます）" : "MulmoTerminal が止まっているので測れません")
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                } else {
+                    if let claude { usageRow("Claude", claude, note: nil, first: true) }
+                    if let codex {
+                        usageRow("Codex", codex,
+                                 note: model.codexLimits != nil ? [model.codexResetCredit, "CodexBar の数字"].compactMap { $0 }.joined(separator: "・") : nil,
+                                 first: claude == nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func usageRow(_ name: String, _ limits: AgentLimits, note: String?, first: Bool) -> some View {
+        let now = Date().timeIntervalSince1970
+        let windows = [("5時間", limits.fiveHour), ("1週間", limits.sevenDay)].compactMap { label, window in
+            window.map { (label, $0) }
+        }
+        return SettingsRow(showsSeparator: !first) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(name)
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                    Spacer()
+                    if let note {
+                        Text(note)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(windows, id: \.0) { label, window in
+                        VStack(alignment: .leading, spacing: 3) {
+                            ProgressView(value: min(max(window.usedPercentage, 0), 100), total: 100)
+                                .progressViewStyle(.linear)
+                                .tint(window.usedPercentage >= 80 ? Palette.warn : Palette.accent)
+                            Text(usageLine(label, window, now: now) ?? label)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3785,6 +4150,94 @@ func servesMulmoClaude(port: Int) -> Bool {
     guard done.wait(timeout: .now() + 3) == .success else { return false }
 
     return body.contains("<title>MulmoClaude</title>") || body.contains("gui-chat-protocol")
+}
+
+/// 使用量を MulmoTerminal から読む（Issue #235）。MulmoTerminal が上の段に出している
+/// 数字と同じ（`/api/rate-limits`）。
+func loadRateLimits(port: Int) -> RateLimits? {
+    localGet(port: port, path: "/api/rate-limits")
+        .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
+}
+
+/// relay を走らせて標準出力を返す（Issue #235）。無い・失敗なら nil。15秒で打ち切る。
+/// relay は node のスクリプトなので、node の置き場所を PATH に足して呼ぶ。
+func runRelay(_ arguments: [String]) -> String? {
+    guard let bin = relayCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: bin)
+    child.arguments = arguments
+    child.currentDirectoryURL = URL(fileURLWithPath: homeDir)
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = [localBin, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].joined(separator: ":")
+    child.environment = env
+    let pipe = Pipe()
+    child.standardOutput = pipe
+    child.standardError = FileHandle.nullDevice
+    do { try child.run() } catch { return nil }
+    let killer = DispatchWorkItem { if child.isRunning { child.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    child.waitUntilExit()
+    killer.cancel()
+    guard child.terminationStatus == 0 else { return nil }
+    return String(decoding: data, as: UTF8.self)
+}
+
+/// CodexBar の CLI で Codex の使用量を読む（Issue #235）。入っていなければ nil。
+/// 時間がかかることがあるので、20秒で打ち切る。
+func readCodexBarCodex() -> (limits: AgentLimits, resetCredit: String?)? {
+    let candidates = ["/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar", "\(homeDir)/.local/bin/codexbar"]
+    guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: bin)
+    child.arguments = ["usage", "--provider", "codex", "--json", "--no-color"]
+    let pipe = Pipe()
+    child.standardOutput = pipe
+    child.standardError = FileHandle.nullDevice
+    do { try child.run() } catch { return nil }
+    let killer = DispatchWorkItem { if child.isRunning { child.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: killer)
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    child.waitUntilExit()
+    killer.cancel()
+    guard let entries = try? JSONDecoder().decode([CodexBarEntry].self, from: data),
+          let usage = entries.first(where: { $0.provider == "codex" })?.usage else { return nil }
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let isoPlain = ISO8601DateFormatter()
+    func seconds(_ text: String?) -> Double? {
+        guard let text else { return nil }
+        return (iso.date(from: text) ?? isoPlain.date(from: text))?.timeIntervalSince1970
+    }
+    func window(_ w: CodexBarEntry.Window?) -> UsageWindow? {
+        w.map { UsageWindow(usedPercentage: $0.usedPercent, resetsAt_sec: seconds($0.resetsAt)) }
+    }
+    // primary は短い窓（5時間）、secondary は1週間。窓の長さで確かめる。
+    let windows = [usage.primary, usage.secondary].compactMap { $0 }
+    let five = windows.first { ($0.windowMinutes ?? 0) <= 300 }
+    let week = windows.first { ($0.windowMinutes ?? 0) >= 10080 }
+    let expiry = usage.codexResetCredits?.credits?.first { $0.status == "available" }?.expires_at
+        .flatMap(seconds).map { Date(timeIntervalSince1970: $0) }
+    let monthDay: String? = expiry.map {
+        let f = DateFormatter(); f.dateFormat = "M/d"; return f.string(from: $0)
+    }
+    return (AgentLimits(fiveHour: window(five), sevenDay: window(week)),
+            resetCreditLine(count: usage.codexResetCredits?.availableCount, expiresMonthDay: monthDay))
+}
+
+/// MulmoTerminal にループバックで GET する。答えなければ nil。
+private func localGet(port: Int, path: String) -> Data? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
+    var request = URLRequest(url: url, timeoutInterval: 1)
+    request.setValue("localhost:\(port)", forHTTPHeaderField: "Host")
+    let done = DispatchSemaphore(value: 0)
+    var body: Data?
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        if (response as? HTTPURLResponse)?.statusCode == 200 { body = data }
+        done.signal()
+    }.resume()
+    _ = done.wait(timeout: .now() + 2)
+    return body
 }
 
 func portIsOpen(_ port: Int) -> Bool {

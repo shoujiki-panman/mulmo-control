@@ -1428,6 +1428,41 @@ printf '%s\n' "${REFRESH_FN}" | grep -q 'checkGuideProxyVersion()' \
   || fail "起動したあと、中継の版を確かめていません。更新しても古い中継が残ります（233）"
 ok "アプリを更新したら、前のアプリが立てた中継を確かめてから立て直す"
 
+# 205 エージェントのタブ（Issue #235）。既存の3タブはそのまま、4つ目として足す（本人の指定）。
+# 中身はパーソナルエージェントの入口だけ（本人「ここで作業待ち見ないから要らない」）。
+# 使用量は環境タブ（本人「ここエージェントだけの機能にするか」）。
+SCREEN_ENUM="$(awk '/^enum ControlScreen/,/^}$/' "${ROOT}/Sources/main.swift")"
+for tab in 'case operate = "運用"' 'case family = "追加"' 'case environment = "環境"' 'case ai = "エージェント"'; do
+  printf '%s\n' "${SCREEN_ENUM}" | grep -qF "${tab}" \
+    || fail "パネルのタブ（${tab}）がありません。既存の3つは消さず、エージェントは足す約束です（235）"
+done
+# タブの名前は切らない（「エー…」と切れた）。
+awk '/^struct TopTabs/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.fixedSize()' \
+  || fail "タブの名前が切れる形になっています（235）"
+AGENTS_VIEW="$(awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${AGENTS_VIEW}" | grep -q 'CloudAgent.all' \
+  || fail "エージェントのタブにパーソナルエージェントが並んでいません（235）"
+if printf '%s\n' "${AGENTS_VIEW}" | grep -q 'usageLine('; then
+  fail "エージェントのタブに使用量が戻っています。エージェントだけのタブにする約束です（235）"
+fi
+awk '/^struct EnvironmentView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'UsagePanel(model: model)' \
+  || fail "使用量が環境タブにありません（235）"
+# 使用量はパネルを開いているときだけ取る（#38）。
+OPEN_BLOCK="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift" | awk '/if panelIsOpen \{/,/^        }$/')"
+printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
+  || fail "使用量を、パネルを閉じているときにも取りに行っています（235 / 38）"
+# アプリはバンドル ID で探す（置き場所の決め打ちは外れた）。
+awk '/^struct CloudAgent/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'urlForApplication(withBundleIdentifier:' \
+  || fail "パーソナルエージェントのアプリを、置き場所で探しています（235）"
+# エージェントの伝言板は見るだけ。パネルから書かない（書くのはエージェント自身・relay board post）。
+BOARD_ALL="$(awk '/^struct BoardPanel/,/^}$/' "${ROOT}/Sources/main.swift")$(awk '/    func refreshBoard\(/,/^    }$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${BOARD_ALL}" | grep -q '"board", "read"' \
+  || fail "伝言板を relay board read で読んでいません（235）"
+if grep -q '"board", "post"' "${ROOT}/Sources/main.swift"; then
+  fail "パネルから伝言板に書いています。見るだけの約束です（235）"
+fi
+ok "エージェントのタブ：既存の3タブはそのまま・名前は切れない・パーソナルエージェントと伝言板（見るだけ）・使用量は環境タブで開いている間だけ"
+
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #
 # 同梱スキル（mulmoterminal-*）はガイドの表の日本語（2段）、本人やプロジェクトの
