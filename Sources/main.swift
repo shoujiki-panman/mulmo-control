@@ -3318,13 +3318,15 @@ struct CloudAgent {
     let webURL: String?
     /// アプリも Web も無いときの、入手のページ。
     let fallbackURL: String
+    /// 入手のページを開くボタンの言葉。
+    var fallbackTitle = "入手"
 
     var appURL: URL? { bundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) } }
 
     /// アプリか Web で、すぐ使えるか。
     var isUsable: Bool { appURL != nil || webURL != nil }
 
-    var buttonTitle: String { isUsable ? "開く" : "入手" }
+    var buttonTitle: String { isUsable ? "開く" : fallbackTitle }
 
     func open() {
         if let appURL {
@@ -3341,14 +3343,15 @@ struct CloudAgent {
     static let all = [
         // 札と得意なことの出どころ（10/31 に確かめた）:
         // - Duet：Anthropic の紹介ページとサポート記事。米国の Pro / Max・待ちリスト。
-        //   Mac のアプリは無く、パソコンでは claude.ai で開く
+        //   Mac のアプリは無い。claude.ai を開くと日本ではふつうの Claude になる（10/31 本人）ので、
+        //   公式の Duet のページ（待ちリストの入口）を開く
         // - Dots：OpenAI のヘルプ（EEA・スイス・英国の Pro だけ除外）。本人が 10/3 から日本で使っている
         // - Grok Bot：xAI の紹介ページ（ベータ）。日本での提供は公式に書かれていない
         // - Muse：10/23 に日本で開始（報道・Meta の日本向け発表として引用）。本人が日本で使っている
         CloudAgent(name: "Duet", detail: "メールと予定から先回りして動く", japan: false,
                    availability: "日本はまだ（米国のみ）", symbol: "asterisk",
-                   bundleID: nil, deepLink: nil, webURL: "https://claude.ai/",
-                   fallbackURL: "https://claude.ai/"),
+                   bundleID: nil, deepLink: nil, webURL: nil,
+                   fallbackURL: "https://claude.com/product/claude-duet", fallbackTitle: "説明"),
         CloudAgent(name: "Dots", detail: "アプリをつないで仕事を進める", japan: true,
                    availability: "日本で使える（Pro）", symbol: "circle.grid.2x1",
                    bundleID: "com.openai.codex", deepLink: "codex://dots", webURL: "https://chatgpt.com/",
