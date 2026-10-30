@@ -3188,7 +3188,7 @@ struct AgentsView: View {
                                     .foregroundStyle(Palette.secondaryText)
                             }
                             Spacer()
-                            Button(agent.isInstalled ? "開く" : "入手") { agent.open() }
+                            Button(agent.buttonTitle) { agent.open() }
                                 .buttonStyle(.plain)
                                 .font(AppFont.small)
                                 .foregroundStyle(Palette.accentText)
@@ -3316,31 +3316,62 @@ struct AllCellsRow: View {
 }
 
 /// クラウドで動くエージェント（Issue #235）。Mac の上には見張れるものが無いので、
-/// 入口だけを置く。アプリが入っていればアプリ、無ければ公式のページを開く。
+/// 入口だけを置く。
+///
+/// アプリは**置き場所ではなくバンドル ID で探す**。最初は `/Applications/〇〇.app` を
+/// 決め打ちしたら、どちらも外れた（10/31 実測）：
+/// - Dots は ChatGPT アプリ（ID は `com.openai.codex`）の中にある。アプリを開くだけでは
+///   Dots に着かないので、アプリが持つ `codex://dots` で開く
+/// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）。ダウンロードしただけで
+///   アプリケーションに入れていない Mac があったので、そのときは dmg を開いて入れ方へ導く
 struct CloudAgent {
     let name: String
     let detail: String
     let symbol: String
-    let appPath: String
+    let bundleID: String
+    /// アプリの中の行き先。無ければアプリを開くだけ。
+    let deepLink: String?
+    /// ダウンロード済みのディスクイメージの名前の頭（~/Downloads を探す）。
+    let dmgPrefix: String?
     let fallbackURL: String
 
-    var isInstalled: Bool { FileManager.default.fileExists(atPath: appPath) }
+    var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
+
+    /// ダウンロード済みで、まだ入れていないディスクイメージ。
+    var downloadedImage: URL? {
+        guard appURL == nil, let dmgPrefix else { return nil }
+        let downloads = URL(fileURLWithPath: "\(homeDir)/Downloads")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) ?? []
+        return names.filter { $0.hasPrefix(dmgPrefix) && $0.hasSuffix(".dmg") }.sorted().last
+            .map { downloads.appendingPathComponent($0) }
+    }
+
+    var buttonTitle: String {
+        if appURL != nil { return "開く" }
+        return downloadedImage != nil ? "入れる" : "入手"
+    }
 
     func open() {
-        if isInstalled {
-            NSWorkspace.shared.open(URL(fileURLWithPath: appPath))
+        if let appURL {
+            if let deepLink, let link = URL(string: deepLink) {
+                NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+            }
+        } else if let image = downloadedImage {
+            NSWorkspace.shared.open(image)
         } else if let url = URL(string: fallbackURL) {
             NSWorkspace.shared.open(url)
         }
     }
 
     static let all = [
-        // Dots は ChatGPT の中で動く常駐エージェント（OpenAI）。
         CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
-                   appPath: "/Applications/ChatGPT.app", fallbackURL: "https://chatgpt.com/"),
-        // Muse は Meta の個人向けエージェント。Mac 版は ai.meta.com/muse から入れる（App Store には無い）。
+                   bundleID: "com.openai.codex", deepLink: "codex://dots", dmgPrefix: nil,
+                   fallbackURL: "https://chatgpt.com/"),
         CloudAgent(name: "Muse", detail: "Meta のパーソナルエージェント", symbol: "sparkle",
-                   appPath: "/Applications/Muse.app", fallbackURL: "https://ai.meta.com/muse/"),
+                   bundleID: "com.meta.endo", deepLink: nil, dmgPrefix: "Muse",
+                   fallbackURL: "https://ai.meta.com/muse/"),
     ]
 }
 
