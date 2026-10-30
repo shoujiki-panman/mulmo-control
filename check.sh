@@ -1453,6 +1453,21 @@ awk '/^struct AllCellsRow/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.popo
   || fail "「すべてのセル」が吹き出しになっていません（235 / 228）"
 ok "AI タブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限"
 
+# 206 パネルから返事する（Issue #235）。返事は MulmoTerminal の公式の口で1行だけ。
+# Shell のセルに送るとコマンドとして走るので、返事の欄は返事待ちのセルにしか出さない。
+# 言葉と絞り込みは status-display-test が実際に走らせて見ている。ここでは配線を見る。
+CELL_ROW="$(awk '/^struct AgentCellRow/,/^}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${CELL_ROW}" | grep -q 'if canReply(cell) {' \
+  || fail "返事の欄を、返事待ちかどうか確かめずに出しています。Shell に送るとコマンドが走ります（235）"
+grep -q '/api/terminal/\\(id)/reply' "${ROOT}/Sources/main.swift" \
+  || fail "返事を MulmoTerminal の公式の口（/api/terminal/<id>/reply）以外で送っています（235）"
+# 画面を読むのは返事の欄を開いたときだけ。巡回のたびに全セルの画面を読まない（#38）。
+REFRESH_ALL="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift")$(awk '/^func loadAgentSnapshot/,/^}$/' "${ROOT}/Sources/main.swift")"
+if printf '%s\n' "${REFRESH_ALL}" | grep -q 'fetchCellScreen'; then
+  fail "巡回のたびにセルの画面を読んでいます（235 / 38）"
+fi
+ok "パネルからの返事は返事待ちのセルだけ・公式の口で・画面は開いたときだけ読む"
+
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #
 # 同梱スキル（mulmoterminal-*）はガイドの表の日本語（2段）、本人やプロジェクトの

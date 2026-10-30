@@ -729,6 +729,29 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  AI タブ: パネルに直に出すのは返事待ちだけ・上限まで、になっていません（実際 \(shown)）\n".utf8))
         }
+        // パネルから返事する（Issue #235）
+        let waitingCell = AgentCell(id: "w", folder: "w", waiting: true, working: false)
+        let shellCell = AgentCell(id: "s", folder: "s", waiting: false, working: false)
+        let busyCell = AgentCell(id: "b", folder: "b", waiting: false, working: true)
+        if !canReply(waitingCell) || canReply(shellCell) || canReply(busyCell) {
+            failures += 1
+            FileHandle.standardError.write(Data("  返事の欄を、返事待ち以外のセルにも出しています（Shell に送るとコマンドが走る）\n".utf8))
+        }
+        if screenTail("a\nb\nc\n   \n\n", lines: 2) != "b\nc" || screenTail("", lines: 3) != "" {
+            failures += 1
+            FileHandle.standardError.write(Data("  画面の終わりの切り出しが違います\n".utf8))
+        }
+        let outcomes: [(Int?, String?, String)] = [
+            (200, nil, "送りました"),
+            (409, "question-open", "選択肢の画面が開いています。MulmoTerminal で選んでください"),
+            (409, nil, "送れませんでした（このセルは今動いていません）"),
+            (413, nil, "長すぎます（4000字まで）"),
+            (nil, nil, "MulmoTerminal に届きませんでした"),
+        ]
+        for (status, reason, expected) in outcomes where replyOutcome(status: status, reason: reason) != expected {
+            failures += 1
+            FileHandle.standardError.write(Data("  返事の結果 \(String(describing: status)) \(reason ?? ""): 期待 \(expected)\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {

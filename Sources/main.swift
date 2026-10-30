@@ -3245,6 +3245,7 @@ struct AgentsView: View {
 struct AgentCellRow: View {
     let cell: AgentCell
     let open: () -> Void
+    @State private var showsReply = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -3260,10 +3261,99 @@ struct AgentCellRow: View {
             Text(agentStateLabel(cell))
                 .font(AppFont.small)
                 .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
+            if canReply(cell) {
+                Button("返事") { showsReply.toggle() }
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.accentText)
+                    .popover(isPresented: $showsReply, arrowEdge: .trailing) {
+                        ReplyPopover(cell: cell, open: open)
+                    }
+            }
             Button("開く", action: open)
                 .buttonStyle(.plain)
                 .font(AppFont.small)
                 .foregroundStyle(Palette.accentText)
+        }
+    }
+}
+
+/// 返事待ちのセルに、パネルから1行返す（Issue #235）。
+///
+/// 上にセルの画面の終わりを出す（何を聞かれているかが分からないと返せない）。
+/// 画面は開いたときと送ったあとにだけ読む。送れなかったら理由を書き、MulmoTerminal を
+/// 開く口を残す（選択肢の画面は、ここからは答えられない）。
+struct ReplyPopover: View {
+    let cell: AgentCell
+    let open: () -> Void
+    @State private var screen = "読み込んでいます…"
+    @State private var text = ""
+    @State private var sending = false
+    @State private var outcome: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(cell.folder)
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            // 終わりの14行だけを出す。スクロールにはしない（ガード202）。
+            Text(screen)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Palette.secondaryText)
+                .lineLimit(14)
+                .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+                .textSelection(.enabled)
+                .padding(6)
+            .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            HStack(spacing: 6) {
+                TextField("返事を書く（Enter で送る）", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(send)
+                Button("送る", action: send)
+                    .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            HStack {
+                if let outcome {
+                    Text(outcome)
+                        .font(AppFont.small)
+                        .foregroundStyle(outcome == "送りました" ? Palette.ok : Palette.warn)
+                }
+                Spacer()
+                Button("MulmoTerminal で開く", action: open)
+                    .buttonStyle(.plain)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.accentText)
+            }
+        }
+        .padding(14)
+        .frame(width: 360)
+        .onAppear(perform: loadScreen)
+    }
+
+    private func loadScreen() {
+        let id = cell.id
+        Task.detached {
+            let raw = fetchCellScreen(port: mtPort, id: id)
+            await MainActor.run {
+                screen = raw.map { screenTail($0, lines: 14) } ?? "画面を読めませんでした"
+            }
+        }
+    }
+
+    private func send() {
+        let line = text
+        guard !sending, !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        sending = true
+        let id = cell.id
+        Task.detached {
+            let result = postCellReply(port: mtPort, id: id, text: line)
+            await MainActor.run {
+                sending = false
+                outcome = replyOutcome(status: result.status, reason: result.reason)
+                if result.status == 200 { text = "" }
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            await MainActor.run { loadScreen() }
         }
     }
 }
@@ -4114,6 +4204,37 @@ func loadAgentSnapshot(port: Int) -> (cells: [AgentCell], limits: RateLimits?) {
     let limits = localGet(port: port, path: "/api/rate-limits")
         .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
     return (agentCells(activity: activity, cwds: cwds, live: live), limits)
+}
+
+/// セルの画面を文字で読む（Issue #235）。返事の欄を開いたときだけ呼ぶ（巡回では読まない）。
+func fetchCellScreen(port: Int, id: String) -> String? {
+    struct Screen: Decodable { let screen: String }
+    return localGet(port: port, path: "/api/terminal/\(id)/screen")
+        .flatMap { try? JSONDecoder().decode(Screen.self, from: $0) }?.screen
+}
+
+/// 返事を1行送る（Issue #235）。MulmoTerminal の公式の口（GitHub ボードの返事欄と同じ）。
+/// 制御文字を落として Enter を押すのも、選択肢の画面が開いていれば断るのも上流がやる。
+/// 返すのは HTTP の状態と、断られた理由。届かなければ (nil, nil)。
+func postCellReply(port: Int, id: String, text: String) -> (status: Int?, reason: String?) {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/api/terminal/\(id)/reply"),
+          let body = try? JSONEncoder().encode(["text": text]) else { return (nil, nil) }
+    var request = URLRequest(url: url, timeoutInterval: 5)
+    request.httpMethod = "POST"
+    request.httpBody = body
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("localhost:\(port)", forHTTPHeaderField: "Host")
+    struct Refusal: Decodable { let reason: String? }
+    let done = DispatchSemaphore(value: 0)
+    var result: (Int?, String?) = (nil, nil)
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        let status = (response as? HTTPURLResponse)?.statusCode
+        let reason = data.flatMap { try? JSONDecoder().decode(Refusal.self, from: $0) }?.reason
+        result = (status, reason)
+        done.signal()
+    }.resume()
+    _ = done.wait(timeout: .now() + 6)
+    return result
 }
 
 /// MulmoTerminal にループバックで GET する。答えなければ nil。

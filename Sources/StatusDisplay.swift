@@ -580,3 +580,33 @@ func usageLine(_ label: String, _ window: UsageWindow?, now: Double) -> String? 
     guard let reset = resetText(resetsAt: window.resetsAt_sec, now: now) else { return "\(label) \(percent)%" }
     return "\(label) \(percent)%・\(reset)"
 }
+
+// ── パネルから返事する（Issue #235）──────────────────────────────
+
+/// 返事の欄を出してよいセルか。**返事待ちのセルだけ。**
+///
+/// 返事は MulmoTerminal の `/api/terminal/<id>/reply` で、1行を打って Enter を押す。
+/// Shell のセルに送ると、それがそのままコマンドとして走る。返事待ちになるのは
+/// フックで知らせてくるエージェント（Claude / Codex）のセルだけなので、ここで絞る。
+func canReply(_ cell: AgentCell) -> Bool { cell.waiting }
+
+/// セルの画面の終わりの n 行。末尾の空行は落とす（画面は下が空いていることが多い）。
+func screenTail(_ screen: String, lines n: Int) -> String {
+    var rows = screen.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    while let last = rows.last, last.allSatisfy({ $0 == " " }) { rows.removeLast() }
+    return rows.suffix(n).joined(separator: "\n")
+}
+
+/// 返事を送った結果の言葉。status が nil なら MulmoTerminal に届いていない。
+func replyOutcome(status: Int?, reason: String?) -> String {
+    switch status {
+    case 200: return "送りました"
+    case 409 where reason == "question-open": return "選択肢の画面が開いています。MulmoTerminal で選んでください"
+    case 409: return "送れませんでした（このセルは今動いていません）"
+    case 413: return "長すぎます（4000字まで）"
+    case 400: return "送る文字がありません"
+    case 403: return "MulmoTerminal に断られました"
+    case nil: return "MulmoTerminal に届きませんでした"
+    default: return "送れませんでした（\(status ?? 0)）"
+    }
+}
