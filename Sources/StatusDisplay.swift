@@ -645,3 +645,26 @@ func screenLooksLikeMenu(_ tail: String) -> Bool {
     }
     return false
 }
+
+// ── CodexBar から読む Codex の使用量（Issue #235）──────────────────
+
+/// `codexbar usage --provider codex --json` の、使う所だけ。
+///
+/// MulmoTerminal の Codex の数字は、最後に Codex を動かしたときに Codex が知らせた
+/// 値で、古いことがある（10/31：MulmoTerminal は「1%・11/2 に戻る」、CodexBar は
+/// 「0%・11/4 22:49 に戻る」）。CodexBar は OpenAI のアカウントから直接取る。
+struct CodexBarEntry: Decodable {
+    struct Window: Decodable { let usedPercent: Double; let resetsAt: String?; let windowMinutes: Int? }
+    struct ResetCredit: Decodable { let status: String?; let expires_at: String? }
+    struct ResetCredits: Decodable { let availableCount: Int?; let credits: [ResetCredit]? }
+    struct Usage: Decodable { let primary: Window?; let secondary: Window?; let codexResetCredits: ResetCredits? }
+    let provider: String
+    let usage: Usage?
+}
+
+/// リセット券の1行。「無料リセット 1回・11/7まで」。無ければ nil。
+func resetCreditLine(count: Int?, expiresMonthDay: String?) -> String? {
+    guard let count, count > 0 else { return nil }
+    guard let expiresMonthDay else { return "無料リセット \(count)回" }
+    return "無料リセット \(count)回・\(expiresMonthDay)まで"
+}

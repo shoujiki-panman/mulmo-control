@@ -1432,7 +1432,7 @@ ok "アプリを更新したら、前のアプリが立てた中継を確かめ�
 # 並べ方と言葉は status-display-test が実際に走らせて見ている（終わった記録を数えない、
 # 返事待ちが先、使用量の1行）。ここでは配線を見る。
 SCREEN_ENUM="$(awk '/^enum ControlScreen/,/^}$/' "${ROOT}/Sources/main.swift")"
-for tab in 'case operate = "運用"' 'case family = "追加"' 'case environment = "環境"' 'case ai = "AI"'; do
+for tab in 'case operate = "運用"' 'case family = "追加"' 'case environment = "環境"' 'case ai = "エージェント"'; do
   printf '%s\n' "${SCREEN_ENUM}" | grep -qF "${tab}" \
     || fail "パネルのタブ（${tab}）がありません。既存の3つは消さず、AI は足す約束です（235）"
 done
@@ -1451,7 +1451,13 @@ awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'agentRo
   || fail "AI タブのセルを全部パネルに並べています。会話が増えるほど画面の外に出ます（235 / 192）"
 awk '/^struct AllCellsRow/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q '\.popover(' \
   || fail "「すべてのセル」が吹き出しになっていません（235 / 228）"
-ok "AI タブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限"
+# 使用量は環境タブ（本人「ここエージェントだけの機能にするか」）。
+awk '/^struct EnvironmentView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'UsagePanel(model: model)' \
+  || fail "使用量が環境タブにありません（235）"
+if awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'usageLine('; then
+  fail "エージェントのタブに使用量が戻っています。エージェントだけのタブにする約束です（235）"
+fi
+ok "エージェントのタブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限・使用量は環境タブ"
 
 # 206 パネルから返事する（Issue #235）。返事は MulmoTerminal の公式の口で1行だけ。
 # Shell のセルに送るとコマンドとして走るので、返事の欄は返事待ちのセルにしか出さない。

@@ -773,6 +773,19 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  会話の題名の出し方が違います（実際 \(titled.map(\.title))）\n".utf8))
         }
+        // CodexBar の出力（10/31 の実物を縮めたもの）を読めること（Issue #235）
+        let codexBarSample = #"[{"provider":"codex","usage":{"primary":null,"secondary":{"usedPercent":0,"resetsAt":"2026-11-04T13:49:20Z","windowMinutes":10080},"codexResetCredits":{"availableCount":1,"credits":[{"status":"available","expires_at":"2026-11-06T23:21:48Z"}]}}}]"#
+        let decoded = try? JSONDecoder().decode([CodexBarEntry].self, from: Data(codexBarSample.utf8))
+        let usage = decoded?.first?.usage
+        if usage?.secondary?.windowMinutes != 10080 || usage?.primary != nil || usage?.codexResetCredits?.availableCount != 1 {
+            failures += 1
+            FileHandle.standardError.write(Data("  CodexBar の出力を読めません\n".utf8))
+        }
+        if resetCreditLine(count: 1, expiresMonthDay: "11/7") != "無料リセット 1回・11/7まで"
+            || resetCreditLine(count: 0, expiresMonthDay: "11/7") != nil || resetCreditLine(count: 2, expiresMonthDay: nil) != "無料リセット 2回" {
+            failures += 1
+            FileHandle.standardError.write(Data("  無料リセットの言葉が違います\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {

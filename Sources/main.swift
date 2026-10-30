@@ -745,10 +745,17 @@ final class ControlModel: ObservableObject {
         }
     }
 
-    // ── AI タブ（Issue #235）──
+    // ── エージェントのタブと使用量（Issue #235）──
     @Published var agentCellsNow: [AgentCell] = []
     @Published var rateLimits: RateLimits?
+    /// CodexBar から読んだ Codex の使用量。CodexBar が無い・読めなければ nil（MulmoTerminal の数字を使う）。
+    @Published var codexLimits: AgentLimits?
+    @Published var codexResetCredit: String?
     private var agentsLoading = false
+    private var codexBarLoading = false
+    private var lastCodexBarRead = Date.distantPast
+    /// CodexBar はネット越しに OpenAI へ聞くので、間を空ける。
+    private static let codexBarInterval: TimeInterval = 300
 
     /// 動いているセルと使用量を取り直す。**パネルを開いているときだけ**呼ぶ（#38）。
     /// 読むのはファイル2つと、MulmoTerminal への HTTP 2本（どちらもループバック）。
@@ -758,6 +765,7 @@ final class ControlModel: ObservableObject {
             rateLimits = nil
             return
         }
+        refreshCodexBar()
         guard !agentsLoading else { return }
         agentsLoading = true
         Task.detached { [weak self] in
@@ -767,6 +775,22 @@ final class ControlModel: ObservableObject {
                 self.agentsLoading = false
                 self.agentCellsNow = snapshot.cells
                 self.rateLimits = snapshot.limits
+            }
+        }
+    }
+
+    /// Codex の使用量を CodexBar から取り直す。パネルを開いているときに、5分に1回まで。
+    private func refreshCodexBar() {
+        guard !codexBarLoading, Date().timeIntervalSince(lastCodexBarRead) >= Self.codexBarInterval else { return }
+        codexBarLoading = true
+        lastCodexBarRead = Date()
+        Task.detached { [weak self] in
+            let read = readCodexBarCodex()
+            await MainActor.run {
+                guard let self else { return }
+                self.codexBarLoading = false
+                self.codexLimits = read?.limits
+                self.codexResetCredit = read?.resetCredit
             }
         }
     }
@@ -2151,8 +2175,11 @@ enum ControlScreen: String, CaseIterable, Identifiable {
     case operate = "運用"
     case family = "追加"
     case environment = "環境"
-    /// 動いているエージェントと使用量（Issue #235）。既存の3つは変えずに足した。
-    case ai = "AI"
+    /// 動いているエージェントと、パーソナルエージェントの入口（Issue #235）。
+    /// 既存の3つは変えずに足した。最初は「AI」と名付けて使用量も置いたが、本人
+    /// 「AI って表現わかりにくい」「ここエージェントだけの機能にするか」で、名前を変え
+    /// 使用量は環境タブへ移した。
+    case ai = "エージェント"
 
     var id: String { rawValue }
 
@@ -3153,21 +3180,6 @@ struct AgentsView: View {
                         }
                     }
                 }
-                Text("使用量")
-                    .font(AppFont.section)
-                    .foregroundStyle(Palette.primaryText)
-                SettingsGroup {
-                    if let limits = model.rateLimits, limits.claude != nil || limits.codex != nil {
-                        usageBlock("Claude", limits.claude, first: true)
-                        usageBlock("Codex", limits.codex, first: limits.claude == nil)
-                    } else {
-                        SettingsRow(showsSeparator: false) {
-                            Text("まだ測れていません（MulmoTerminal が測るまで少し待ちます）")
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.secondaryText)
-                        }
-                    }
-                }
             }
             Text("パーソナルエージェント")
                 .font(AppFont.section)
@@ -3213,32 +3225,6 @@ struct AgentsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    @ViewBuilder
-    private func usageBlock(_ name: String, _ limits: AgentLimits?, first: Bool) -> some View {
-        if let limits {
-            let now = Date().timeIntervalSince1970
-            SettingsRow(showsSeparator: !first) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(name)
-                        .font(AppFont.rowTitle)
-                        .foregroundStyle(Palette.primaryText)
-                    ForEach([("5時間", limits.fiveHour), ("1週間", limits.sevenDay)], id: \.0) { label, window in
-                        if let window, let line = usageLine(label, window, now: now) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                ProgressView(value: min(max(window.usedPercentage, 0), 100), total: 100)
-                                    .progressViewStyle(.linear)
-                                    .tint(window.usedPercentage >= 80 ? Palette.warn : Palette.accent)
-                                Text(line)
-                                    .font(AppFont.small)
-                                    .foregroundStyle(Palette.secondaryText)
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -3503,7 +3489,83 @@ struct EnvironmentView: View {
     @ObservedObject var model: ControlModel
 
     var body: some View {
-        SetupPanel(model: model)
+        VStack(alignment: .leading, spacing: 12) {
+            UsagePanel(model: model)
+            SetupPanel(model: model)
+        }
+    }
+}
+
+/// 使用量（Issue #235）。最初はエージェントのタブに置いたが、本人「ここエージェントだけの
+/// 機能にするか」で環境タブへ移した。1つのエージェントを1行にまとめ、細いバーを2本並べる
+/// （環境タブの高さを増やしすぎない）。
+///
+/// Claude は MulmoTerminal の数字（CodexBar と一致を確かめた）。Codex は CodexBar が入って
+/// いればその数字を使う（MulmoTerminal の Codex の数字は古いことがある）。
+struct UsagePanel: View {
+    @ObservedObject var model: ControlModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("使用量")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            SettingsGroup {
+                let claude = model.rateLimits?.claude
+                let codex = model.codexLimits ?? model.rateLimits?.codex
+                if claude == nil && codex == nil {
+                    SettingsRow(showsSeparator: false) {
+                        Text(model.mtRunning ? "まだ測れていません（MulmoTerminal が測るまで少し待ちます）" : "MulmoTerminal が止まっているので測れません")
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                } else {
+                    if let claude { usageRow("Claude", claude, note: nil, first: true) }
+                    if let codex {
+                        usageRow("Codex", codex,
+                                 note: model.codexLimits != nil ? [model.codexResetCredit, "CodexBar の数字"].compactMap { $0 }.joined(separator: "・") : nil,
+                                 first: claude == nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func usageRow(_ name: String, _ limits: AgentLimits, note: String?, first: Bool) -> some View {
+        let now = Date().timeIntervalSince1970
+        let windows = [("5時間", limits.fiveHour), ("1週間", limits.sevenDay)].compactMap { label, window in
+            window.map { (label, $0) }
+        }
+        return SettingsRow(showsSeparator: !first) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(name)
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                    Spacer()
+                    if let note {
+                        Text(note)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(windows, id: \.0) { label, window in
+                        VStack(alignment: .leading, spacing: 3) {
+                            ProgressView(value: min(max(window.usedPercentage, 0), 100), total: 100)
+                                .progressViewStyle(.linear)
+                                .tint(window.usedPercentage >= 80 ? Palette.warn : Palette.accent)
+                            Text(usageLine(label, window, now: now) ?? label)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -4282,6 +4344,48 @@ func postCellReply(port: Int, id: String, text: String) -> (status: Int?, reason
     }.resume()
     _ = done.wait(timeout: .now() + 6)
     return result
+}
+
+/// CodexBar の CLI で Codex の使用量を読む（Issue #235）。入っていなければ nil。
+/// 時間がかかることがあるので、20秒で打ち切る。
+func readCodexBarCodex() -> (limits: AgentLimits, resetCredit: String?)? {
+    let candidates = ["/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar", "\(homeDir)/.local/bin/codexbar"]
+    guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: bin)
+    child.arguments = ["usage", "--provider", "codex", "--json", "--no-color"]
+    let pipe = Pipe()
+    child.standardOutput = pipe
+    child.standardError = FileHandle.nullDevice
+    do { try child.run() } catch { return nil }
+    let killer = DispatchWorkItem { if child.isRunning { child.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: killer)
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    child.waitUntilExit()
+    killer.cancel()
+    guard let entries = try? JSONDecoder().decode([CodexBarEntry].self, from: data),
+          let usage = entries.first(where: { $0.provider == "codex" })?.usage else { return nil }
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let isoPlain = ISO8601DateFormatter()
+    func seconds(_ text: String?) -> Double? {
+        guard let text else { return nil }
+        return (iso.date(from: text) ?? isoPlain.date(from: text))?.timeIntervalSince1970
+    }
+    func window(_ w: CodexBarEntry.Window?) -> UsageWindow? {
+        w.map { UsageWindow(usedPercentage: $0.usedPercent, resetsAt_sec: seconds($0.resetsAt)) }
+    }
+    // primary は短い窓（5時間）、secondary は1週間。窓の長さで確かめる。
+    let windows = [usage.primary, usage.secondary].compactMap { $0 }
+    let five = windows.first { ($0.windowMinutes ?? 0) <= 300 }
+    let week = windows.first { ($0.windowMinutes ?? 0) >= 10080 }
+    let expiry = usage.codexResetCredits?.credits?.first { $0.status == "available" }?.expires_at
+        .flatMap(seconds).map { Date(timeIntervalSince1970: $0) }
+    let monthDay: String? = expiry.map {
+        let f = DateFormatter(); f.dateFormat = "M/d"; return f.string(from: $0)
+    }
+    return (AgentLimits(fiveHour: window(five), sevenDay: window(week)),
+            resetCreditLine(count: usage.codexResetCredits?.availableCount, expiresMonthDay: monthDay))
 }
 
 /// MulmoTerminal にループバックで GET する。答えなければ nil。
