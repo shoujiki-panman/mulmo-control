@@ -101,6 +101,18 @@ export function inject(html) {
   return html.includes("</head>") ? html.replace("</head>", `${TAG}</head>`) : html + TAG;
 }
 
+/** プレビューの CSP は一切変えない。上流が許可した nonce で固定のガイドだけを動かす。 */
+export function injectPreview(html, policy, url) {
+  const request = new URL(url, "http://localhost");
+  if (request.pathname !== "/api/files/browse/md" || request.searchParams.get("embed") !== "1") return html;
+  // 上流の既知の制限と完全一致するときだけ。別の policy を推測で緩めない。
+  const match = /^sandbox allow-scripts; script-src 'nonce-([A-Za-z0-9_-]{22})'$/.exec(policy ?? "");
+  if (!match) return html;
+  const script = readFileSync(new URL("../guide/mulmoterminal-preview-guide.js", import.meta.url), "utf8");
+  const tag = `<script nonce="${match[1]}" data-mulmo-preview-guide>${script}</script>`;
+  return html + tag;
+}
+
 function serveGuide(res) {
   // 毎回読む。アプリを更新しても、動き続けている中継が古いガイドを配らないように。
   let body;
@@ -134,13 +146,16 @@ function teeSkills(upRes) {
   });
 }
 
-function sendRewrittenHtml(upRes, res) {
+function sendRewrittenHtml(upRes, res, url) {
   const chunks = [];
   upRes.on("data", (chunk) => chunks.push(chunk));
   upRes.on("end", () => {
     let html;
     try {
-      html = inject(decode(Buffer.concat(chunks), upRes.headers["content-encoding"]).toString("utf8"));
+      html = decode(Buffer.concat(chunks), upRes.headers["content-encoding"]).toString("utf8");
+      html = new URL(url, "http://localhost").pathname.startsWith("/api/files/")
+        ? injectPreview(html, upRes.headers["content-security-policy"], url)
+        : inject(html);
     } catch {
       res.writeHead(502);
       res.end("MulmoTerminal の画面を読めませんでした");
@@ -185,7 +200,7 @@ const server = http.createServer((req, res) => {
         upRes.pipe(res);
         return;
       }
-      sendRewrittenHtml(upRes, res);
+      sendRewrittenHtml(upRes, res, req.url);
     },
   );
   up.on("error", () => {

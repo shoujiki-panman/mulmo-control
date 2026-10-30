@@ -50,6 +50,14 @@ const upstream = http.createServer((req, res) => {
     res.end(JSON_BODY);
     return;
   }
+  if (req.url.startsWith("/api/files/")) {
+    const policy = req.url.includes("embed=1")
+      ? "sandbox allow-scripts; script-src 'nonce-abcdefghijklmnopqrstuv'"
+      : "sandbox";
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": policy });
+    res.end(HTML);
+    return;
+  }
   if (req.url === "/gz") {
     // identity を頼まれても圧縮して返す、行儀の悪い相手
     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-encoding": "gzip" });
@@ -76,7 +84,7 @@ function get(port, path, headers) {
     const req = http.request({ host: "127.0.0.1", port, path, headers }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
-      res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
+      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }));
     });
     req.on("error", reject);
     req.end();
@@ -194,6 +202,16 @@ try {
   check(page.body.includes('<script src="/__mulmo-guide.js" defer></script></head>'), "画面にガイドが差し込まれていません");
   const gz = await get(proxyPort, "/gz", html);
   check(gz.body.includes("/__mulmo-guide.js") && gz.body.includes("grid"), "圧縮された画面に差し込めていません");
+
+  // プレビュー: 既知の nonce で固定の説明だけを足し、CSP とサンドボックスは保つ。
+  const preview = await get(proxyPort, "/api/files/browse/md?path=example.md&embed=1", html);
+  check(preview.body.includes('nonce="abcdefghijklmnopqrstuv" data-mulmo-preview-guide'), "プレビューに nonce 付きガイドがありません");
+  check(!preview.body.includes('src="/__mulmo-guide.js"'), "opaque なプレビューに親画面用ガイドを入れています");
+  check(preview.headers["content-security-policy"] === "sandbox allow-scripts; script-src 'nonce-abcdefghijklmnopqrstuv'", "プレビューの CSP を変えています");
+  for (const path of ["/api/files/browse/md?path=example.md", "/api/files/browse/md?embed=0", "/api/files/raw?embed=1"]) {
+    const plain = await get(proxyPort, path, html);
+    check(plain.body === HTML, `対象外のファイルにガイドを入れています: ${path}`);
+  }
 
   // ⑦ HTML 以外は1バイトも変えない
   const api = await get(proxyPort, "/api/config", { host: own });
