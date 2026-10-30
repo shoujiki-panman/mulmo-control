@@ -473,3 +473,101 @@ func familyFold(statuses: [String?]) -> FamilyFold {
     if updates > 0 { parts.append("更新あり \(updates)件") }
     return FamilyFold(headline: parts.joined(separator: " ・ "), needsAttention: updates > 0)
 }
+
+// ── AI タブ（Issue #235）────────────────────────────────────────
+
+/// MulmoTerminal が `activity-state.json` に書く、セッションごとの状態。
+struct AgentActivity: Decodable, Equatable {
+    let working: Bool?
+    let waiting: Bool?
+}
+
+/// AI タブに並べるセル1つ。
+struct AgentCell: Equatable {
+    let id: String
+    let folder: String
+    let waiting: Bool
+    let working: Bool
+}
+
+/// `dev-terminal-cwds.json` を読む。1行に「id フォルダ」。フォルダには空白が入りうるので、
+/// 最初の空白でだけ切る。
+func parseSessionCwds(_ text: String) -> [String: String] {
+    var result: [String: String] = [:]
+    for line in text.split(separator: "\n") {
+        guard let space = line.firstIndex(of: " ") else { continue }
+        let id = String(line[..<space])
+        let cwd = String(line[line.index(after: space)...].drop(while: { $0 == " " }))
+        if !id.isEmpty, !cwd.isEmpty { result[id] = cwd }
+    }
+    return result
+}
+
+/// 今動いているセルだけを、返事待ち → 作業中 → それ以外の順に並べる。
+///
+/// **`live` に無いものは出さない。** `activity-state.json` には終わったセッションの
+/// 記録も「返事待ち」のまま残っている（10/30 実測で 33 件のうち動いていたのは 0）。
+/// 両方が立っているときは返事待ちとして扱う（人の手が要るほうを取る）。
+func agentCells(activity: [String: AgentActivity], cwds: [String: String], live: Set<String>) -> [AgentCell] {
+    let cells = live.map { id -> AgentCell in
+        let state = activity[id]
+        let waiting = state?.waiting == true
+        let path = cwds[id] ?? ""
+        let folder = path.split(separator: "/").last.map(String.init) ?? "フォルダ不明"
+        return AgentCell(id: id, folder: folder, waiting: waiting, working: !waiting && state?.working == true)
+    }
+    func rank(_ cell: AgentCell) -> Int { cell.waiting ? 0 : (cell.working ? 1 : 2) }
+    return cells.sorted { (rank($0), $0.folder, $0.id) < (rank($1), $1.folder, $1.id) }
+}
+
+/// 数の1行。「返事待ち 2・作業中 3」。動いているセルが無ければ、そう書く。
+func agentSummary(_ cells: [AgentCell]) -> String {
+    if cells.isEmpty { return "動いているセルはありません" }
+    let waiting = cells.filter(\.waiting).count
+    let working = cells.filter(\.working).count
+    let idle = cells.count - waiting - working
+    var parts = ["返事待ち \(waiting)", "作業中 \(working)"]
+    if idle > 0 { parts.append("待機中 \(idle)") }
+    return parts.joined(separator: "・")
+}
+
+/// セルの状態の言葉。
+func agentStateLabel(_ cell: AgentCell) -> String {
+    cell.waiting ? "返事待ち" : (cell.working ? "作業中" : "待機中")
+}
+
+/// MulmoTerminal の `/api/rate-limits` の1つの窓。
+struct UsageWindow: Decodable, Equatable {
+    let usedPercentage: Double
+    let resetsAt_sec: Double?
+}
+
+struct AgentLimits: Decodable, Equatable {
+    let fiveHour: UsageWindow?
+    let sevenDay: UsageWindow?
+}
+
+struct RateLimits: Decodable, Equatable {
+    let claude: AgentLimits?
+    let codex: AgentLimits?
+}
+
+/// 戻るまでの時間。「あと45分」「あと2時間」「あと3日」。過ぎていれば「もうすぐ戻る」。
+func resetText(resetsAt: Double?, now: Double) -> String? {
+    guard let resetsAt else { return nil }
+    let left = resetsAt - now
+    if left <= 60 { return "もうすぐ戻る" }
+    let minutes = Int(left / 60)
+    if minutes < 60 { return "あと\(minutes)分" }
+    let hours = minutes / 60
+    if hours < 24 { return "あと\(hours)時間" }
+    return "あと\(hours / 24)日"
+}
+
+/// 使用量の1行。「5時間 37%・あと2時間」。窓が無ければ nil（出さない）。
+func usageLine(_ label: String, _ window: UsageWindow?, now: Double) -> String? {
+    guard let window else { return nil }
+    let percent = Int(window.usedPercentage.rounded())
+    guard let reset = resetText(resetsAt: window.resetsAt_sec, now: now) else { return "\(label) \(percent)%" }
+    return "\(label) \(percent)%・\(reset)"
+}

@@ -1428,6 +1428,28 @@ printf '%s\n' "${REFRESH_FN}" | grep -q 'checkGuideProxyVersion()' \
   || fail "起動したあと、中継の版を確かめていません。更新しても古い中継が残ります（233）"
 ok "アプリを更新したら、前のアプリが立てた中継を確かめてから立て直す"
 
+# 205 AI タブ（Issue #235）。既存の3タブはそのまま、4つ目として足す（本人の指定）。
+# 並べ方と言葉は status-display-test が実際に走らせて見ている（終わった記録を数えない、
+# 返事待ちが先、使用量の1行）。ここでは配線を見る。
+SCREEN_ENUM="$(awk '/^enum ControlScreen/,/^}$/' "${ROOT}/Sources/main.swift")"
+for tab in 'case operate = "運用"' 'case family = "追加"' 'case environment = "環境"' 'case ai = "AI"'; do
+  printf '%s\n' "${SCREEN_ENUM}" | grep -qF "${tab}" \
+    || fail "パネルのタブ（${tab}）がありません。既存の3つは消さず、AI は足す約束です（235）"
+done
+grep -q 'for item in cellCases' "${ROOT}/tests/status-display-test.swift" \
+  || fail "AI タブの並べ方を status-display-test で走らせていません（235）"
+# データを取りに行くのはパネルを開いているときだけ（#38）。
+OPEN_BLOCK="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.swift" | awk '/if panelIsOpen \{/,/^        }$/')"
+printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
+  || fail "AI タブの材料を、パネルを閉じているときにも取りに行っています（235 / 38）"
+# 終わったセッションの記録を数えないよう、今動いているかを MulmoTerminal に聞く。
+grep -q '/api/sessions/live?ids=' "${ROOT}/Sources/main.swift" \
+  || fail "AI タブが、今動いているセルかを確かめずに数えています（235）"
+# 行は上限を決める。パネルを画面の外に出さない（#192 / #228）。
+awk '/^struct AgentsView/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'prefix(Self.maxRows)' \
+  || fail "AI タブのセルの行に上限がありません。パネルが画面の外に出ます（235 / 192）"
+ok "AI タブ：既存の3タブはそのまま・動いているセルだけ・開いている間だけ取る・行に上限"
+
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #
 # 同梱スキル（mulmoterminal-*）はガイドの表の日本語（2段）、本人やプロジェクトの

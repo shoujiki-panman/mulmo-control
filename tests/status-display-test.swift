@@ -483,6 +483,50 @@ private let updateTargetCases: [UpdateTargetCase] = [
                      resolved: familyPrefixForTest + "-old/node_modules/.bin/relay", keepsForeign: true, expected: false),
 ]
 
+// ⑪ AI タブ（Issue #235）。動いているセルだけ・返事待ちが先・言葉と使用量の1行。
+private struct AgentCellCase {
+    let title: String
+    let activity: [String: AgentActivity]
+    let cwds: [String: String]
+    let live: Set<String>
+    let expected: [String]
+    let summary: String
+}
+
+private let cellCases: [AgentCellCase] = [
+    AgentCellCase(title: "終わった記録は数えない",
+              activity: ["a": AgentActivity(working: false, waiting: true), "b": AgentActivity(working: true, waiting: false)],
+              cwds: ["a": "/x/old", "b": "/x/new"], live: ["b"],
+              expected: ["new 作業中"], summary: "返事待ち 0・作業中 1"),
+    AgentCellCase(title: "返事待ちが先、両方立っていれば返事待ち",
+              activity: ["a": AgentActivity(working: true, waiting: false), "b": AgentActivity(working: true, waiting: true),
+                         "c": AgentActivity(working: nil, waiting: nil)],
+              cwds: ["a": "/w/alpha", "b": "/w/beta", "c": "/w/gamma"], live: ["a", "b", "c"],
+              expected: ["beta 返事待ち", "alpha 作業中", "gamma 待機中"], summary: "返事待ち 1・作業中 1・待機中 1"),
+    AgentCellCase(title: "フォルダが分からないセルも出す",
+              activity: [:], cwds: [:], live: ["z"],
+              expected: ["フォルダ不明 待機中"], summary: "返事待ち 0・作業中 0・待機中 1"),
+    AgentCellCase(title: "何も動いていない",
+              activity: ["a": AgentActivity(working: false, waiting: true)], cwds: ["a": "/x/a"], live: [],
+              expected: [], summary: "動いているセルはありません"),
+]
+
+private struct UsageCase {
+    let title: String
+    let window: UsageWindow?
+    let expected: String?
+}
+
+private let usageNow: Double = 1_000_000
+private let usageCases: [UsageCase] = [
+    UsageCase(title: "時間で戻る", window: UsageWindow(usedPercentage: 37.4, resetsAt_sec: usageNow + 2 * 3600 + 120), expected: "5時間 37%・あと2時間"),
+    UsageCase(title: "分で戻る", window: UsageWindow(usedPercentage: 99.6, resetsAt_sec: usageNow + 45 * 60 + 5), expected: "5時間 100%・あと45分"),
+    UsageCase(title: "日で戻る", window: UsageWindow(usedPercentage: 16, resetsAt_sec: usageNow + 3 * 86400 + 60), expected: "5時間 16%・あと3日"),
+    UsageCase(title: "過ぎている", window: UsageWindow(usedPercentage: 5, resetsAt_sec: usageNow - 10), expected: "5時間 5%・もうすぐ戻る"),
+    UsageCase(title: "戻る時刻が無い", window: UsageWindow(usedPercentage: 1, resetsAt_sec: nil), expected: "5時間 1%"),
+    UsageCase(title: "窓が無いなら出さない", window: nil, expected: nil),
+]
+
 @main
 struct StatusDisplayTest {
     static func main() {
@@ -660,10 +704,34 @@ struct StatusDisplayTest {
             }
         }
 
+        // ⑪ AI タブ（Issue #235）
+        if parseSessionCwds("a1 /Users/me/My Project\nbroken\nb2   /tmp/x\n") != ["a1": "/Users/me/My Project", "b2": "/tmp/x"] {
+            failures += 1
+            FileHandle.standardError.write(Data("  セッションのフォルダの読み方が違います\n".utf8))
+        }
+        for item in cellCases {
+            let cells = agentCells(activity: item.activity, cwds: item.cwds, live: item.live)
+            let actual = cells.map { "\($0.folder) \(agentStateLabel($0))" }
+            let summary = agentSummary(cells)
+            if actual != item.expected || summary != item.summary {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  AI タブ \(item.title): 期待 \(item.expected) \(item.summary) / 実際 \(actual) \(summary)\n".utf8))
+            }
+        }
+        for item in usageCases {
+            let actual = usageLine("5時間", item.window, now: usageNow)
+            if actual != item.expected {
+                failures += 1
+                FileHandle.standardError.write(Data(
+                    "  使用量 \(item.title): 期待 \(item.expected ?? "出さない") / 実際 \(actual ?? "出さない")\n".utf8))
+            }
+        }
+
         if failures > 0 {
             FileHandle.standardError.write(Data("\(failures) 件、状態と表示が食い違っています\n".utf8))
             exit(1)
         }
-        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通りすべて一致")
+        print("\(cases.count) 通り + エージェント連携 \(agents.count) 通り + 繋ぎ直しの知らせ \(noteCases.count) 通り + リレーの行 \(relayCases.count) 通り + リレーのオン／オフ \(relayToggleCases.count) 通り + 更新のあらまし \(digestCases.count) 通り + relay の入れ方 \(relayInstallCases.count) 通り + 一括更新の対象 \(updateTargetCases.count) 通り + 追加ツールの畳み \(foldCases.count) 通り + AI タブ \(cellCases.count) 通り + 使用量 \(usageCases.count) 通りすべて一致")
     }
 }

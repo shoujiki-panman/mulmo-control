@@ -745,6 +745,32 @@ final class ControlModel: ObservableObject {
         }
     }
 
+    // ── AI タブ（Issue #235）──
+    @Published var agentCellsNow: [AgentCell] = []
+    @Published var rateLimits: RateLimits?
+    private var agentsLoading = false
+
+    /// 動いているセルと使用量を取り直す。**パネルを開いているときだけ**呼ぶ（#38）。
+    /// 読むのはファイル2つと、MulmoTerminal への HTTP 2本（どちらもループバック）。
+    func refreshAgents() {
+        guard mtRunning else {
+            agentCellsNow = []
+            rateLimits = nil
+            return
+        }
+        guard !agentsLoading else { return }
+        agentsLoading = true
+        Task.detached { [weak self] in
+            let snapshot = loadAgentSnapshot(port: mtPort)
+            await MainActor.run {
+                guard let self else { return }
+                self.agentsLoading = false
+                self.agentCellsNow = snapshot.cells
+                self.rateLimits = snapshot.limits
+            }
+        }
+    }
+
     /// 画面ガイドの行の「オン」「やめる」。押した結果をすぐ中継に映す。
     func guideToggled(_ on: Bool) {
         if on {
@@ -961,6 +987,7 @@ final class ControlModel: ObservableObject {
         // 閉じている間は省く。
         if panelIsOpen {
             refreshToolPaths()
+            refreshAgents()
         }
         checkUpdatesSilentlyIfNeeded()
     }
@@ -2077,6 +2104,8 @@ struct ControlView: View {
                 }
             case .environment:
                 EnvironmentView(model: model)
+            case .ai:
+                AgentsView(model: model)
             }
             Hairline()
             HStack {
@@ -2119,6 +2148,8 @@ enum ControlScreen: String, CaseIterable, Identifiable {
     case operate = "運用"
     case family = "追加"
     case environment = "環境"
+    /// 動いているエージェントと使用量（Issue #235）。既存の3つは変えずに足した。
+    case ai = "AI"
 
     var id: String { rawValue }
 
@@ -2130,6 +2161,8 @@ enum ControlScreen: String, CaseIterable, Identifiable {
             return "square.grid.2x2"
         case .environment:
             return "gearshape"
+        case .ai:
+            return "sparkles"
         }
     }
 }
@@ -3078,6 +3111,111 @@ struct DetailBlock: View {
     }
 }
 
+/// AI タブ（Issue #235）。動いているエージェントと使用量。
+///
+/// 運用タブがサービスの起動・停止を見るのに対して、こちらは**その上で AI が
+/// 何をしているか**を見る。行は上限を決める（#192 / #228：パネルを画面の外に
+/// 出さない。スクロールにもしない）。
+struct AgentsView: View {
+    @ObservedObject var model: ControlModel
+    private static let maxRows = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !model.mtRunning {
+                SettingsGroup {
+                    SettingsRow(showsSeparator: false) {
+                        SetupRow(title: "MulmoTerminal", detail: "止まっています", ok: false,
+                                 buttonTitle: model.mtInstalled ? "起動" : nil, action: model.startMT)
+                    }
+                }
+            } else {
+                Text("いまのエージェント")
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                SettingsGroup {
+                    SettingsRow(showsSeparator: false) {
+                        HStack {
+                            Text(agentSummary(model.agentCellsNow))
+                                .font(AppFont.body)
+                                .foregroundStyle(Palette.secondaryText)
+                            Spacer()
+                            Button("開く", action: model.openMT)
+                                .buttonStyle(.plain)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.accentText)
+                        }
+                    }
+                    ForEach(model.agentCellsNow.prefix(Self.maxRows), id: \.id) { cell in
+                        SettingsRow {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
+                                    .frame(width: 7, height: 7)
+                                Text(cell.folder)
+                                    .font(AppFont.rowTitle)
+                                    .foregroundStyle(Palette.primaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Text(agentStateLabel(cell))
+                                    .font(AppFont.small)
+                                    .foregroundStyle(cell.waiting ? Palette.warn : Palette.secondaryText)
+                            }
+                        }
+                    }
+                    if model.agentCellsNow.count > Self.maxRows {
+                        SettingsRow {
+                            Text("ほか \(model.agentCellsNow.count - Self.maxRows) 件")
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                    }
+                }
+                Text("使用量")
+                    .font(AppFont.section)
+                    .foregroundStyle(Palette.primaryText)
+                SettingsGroup {
+                    if let limits = model.rateLimits, limits.claude != nil || limits.codex != nil {
+                        usageRow("Claude", limits.claude, first: true)
+                        usageRow("Codex", limits.codex, first: limits.claude == nil)
+                    } else {
+                        SettingsRow(showsSeparator: false) {
+                            Text("まだ測れていません（MulmoTerminal が測るまで少し待ちます）")
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func usageRow(_ name: String, _ limits: AgentLimits?, first: Bool) -> some View {
+        if let limits {
+            let now = Date().timeIntervalSince1970
+            let lines = [usageLine("5時間", limits.fiveHour, now: now), usageLine("1週間", limits.sevenDay, now: now)]
+                .compactMap { $0 }
+            SettingsRow(showsSeparator: !first) {
+                HStack(alignment: .top) {
+                    Text(name)
+                        .font(AppFont.rowTitle)
+                        .foregroundStyle(Palette.primaryText)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        ForEach(lines, id: \.self) { line in
+                            Text(line)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct EnvironmentView: View {
     @ObservedObject var model: ControlModel
 
@@ -3785,6 +3923,53 @@ func servesMulmoClaude(port: Int) -> Bool {
     guard done.wait(timeout: .now() + 3) == .success else { return false }
 
     return body.contains("<title>MulmoClaude</title>") || body.contains("gui-chat-protocol")
+}
+
+/// AI タブの材料をまとめて読む（Issue #235）。
+///
+/// - `activity-state.json`：セッションごとの working / waiting
+/// - `dev-terminal-cwds.json`：セッション → フォルダ
+/// - `/api/sessions/live`：そのうち今動いているもの。**これを通さないと、終わった
+///   セッションの記録まで「返事待ち」で数える**（10/30 実測で 33 件中 0 件が動いていた）
+/// - `/api/rate-limits`：MulmoTerminal が上の段に出している使用量と同じ数字
+func loadAgentSnapshot(port: Int) -> (cells: [AgentCell], limits: RateLimits?) {
+    let home = "\(homeDir)/.mulmoterminal"
+    let activity = (try? Data(contentsOf: URL(fileURLWithPath: "\(home)/activity-state.json")))
+        .flatMap { try? JSONDecoder().decode([String: AgentActivity].self, from: $0) } ?? [:]
+    let cwdText = (try? String(contentsOfFile: "\(home)/dev-terminal-cwds.json", encoding: .utf8)) ?? ""
+    let cwds = parseSessionCwds(cwdText)
+    // 上流は一度に 200 件まで答える（ACTIVITY_IDS_LIMIT）。状態の記録があるものを先に、
+    // 残りはフォルダの控えの新しい順（ファイルは後ろほど新しい）で埋める。
+    let recent = cwdText.split(separator: "\n").reversed()
+        .compactMap { $0.split(separator: " ", maxSplits: 1).first.map(String.init) }
+    var ids = Array(activity.keys)
+    for id in recent where ids.count < 200 && activity[id] == nil && !ids.contains(id) { ids.append(id) }
+    ids = Array(ids.prefix(200))
+    struct LiveAnswer: Decodable { let live: [String] }
+    var live: Set<String> = []
+    if !ids.isEmpty,
+       let data = localGet(port: port, path: "/api/sessions/live?ids=\(ids.joined(separator: ","))"),
+       let answer = try? JSONDecoder().decode(LiveAnswer.self, from: data) {
+        live = Set(answer.live)
+    }
+    let limits = localGet(port: port, path: "/api/rate-limits")
+        .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
+    return (agentCells(activity: activity, cwds: cwds, live: live), limits)
+}
+
+/// MulmoTerminal にループバックで GET する。答えなければ nil。
+private func localGet(port: Int, path: String) -> Data? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
+    var request = URLRequest(url: url, timeoutInterval: 1)
+    request.setValue("localhost:\(port)", forHTTPHeaderField: "Host")
+    let done = DispatchSemaphore(value: 0)
+    var body: Data?
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        if (response as? HTTPURLResponse)?.statusCode == 200 { body = data }
+        done.signal()
+    }.resume()
+    _ = done.wait(timeout: .now() + 2)
+    return body
 }
 
 func portIsOpen(_ port: Int) -> Bool {
