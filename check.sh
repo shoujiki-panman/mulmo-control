@@ -1401,6 +1401,33 @@ printf '%s\n' "${GUIDE_USE}" | grep -q 'changed: model.guideToggled' \
   || fail "ガイドの「オン」「やめる」が、中継を立てる・止めるに繋がっていません（224）"
 ok "ガイドの行が、出ない窓と止まった理由を書き、ガイド付きの窓を開ける"
 
+# 204 アプリを更新したら、前のアプリが立てた中継を立て直す（Issue #233）。
+#
+# ガイドの本体は中継が毎回読み直すが、中継のコードは起動したときのまま。見張り（196）は
+# 答えるかしか見ないので、1.0.83 に更新したあとも 10/8 の中継が動き続け、中継側の直しが
+# 届かなかった。版を名乗ること自体は tests/guide-proxy-test.mjs が走らせて見ている。
+PROXY_HEADER_JS="$(sed -nE 's/^const VERSION_HEADER = "([^"]+)";.*/\1/p' "${PROXY_JS}")"
+PROXY_HEADER_SWIFT="$(sed -nE 's/^[[:space:]]*static let versionHeader = "([^"]+)".*/\1/p' "${ROOT}/Sources/GuideServer.swift")"
+[ -n "${PROXY_HEADER_JS}" ] && [ "${PROXY_HEADER_JS}" = "${PROXY_HEADER_SWIFT}" ] \
+  || fail "中継が名乗るヘッダー名が、中継（${PROXY_HEADER_JS:-なし}）とアプリ（${PROXY_HEADER_SWIFT:-なし}）で違います（233）"
+PROXY_CLASS="$(awk '/final class GuideProxy/,/^}$/' "${ROOT}/Sources/GuideServer.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+printf '%s\n' "${PROXY_CLASS}" | grep -q 'env\["GUIDE_APP_VERSION"\] = appVersion' \
+  || fail "中継に、立てたアプリの版を渡していません。どの中継も古く見えます（233）"
+# 止める前に、待ち受けているのが中継のスクリプトだと確かめる。人のプロセスには触らない。
+STALE_FN="$(printf '%s\n' "${PROXY_CLASS}" | awk '/func replaceIfStale\(/,/^    }$/')"
+printf '%s\n' "${STALE_FN}" | grep -q 'serving != version else { return true }' \
+  || fail "版が合っている中継まで止めています（233）"
+printf '%s\n' "${STALE_FN}" | grep -q 'Self.isProxyProcess(pid) else { return false }' \
+  || fail "34598 で待ち受けているのが中継だと確かめずに止めています（233）"
+CHECK_FN="$(awk '/    func checkGuideProxyVersion\(/,/^    }$/' "${ROOT}/Sources/main.swift" \
+  | grep -vE '^[[:space:]]*(//|/\*|\*)')"
+printf '%s\n' "${CHECK_FN}" | grep -q '!guideProxyVersionChecked' \
+  || fail "中継の版を巡回のたびに確かめています。起動ごとに1回で足ります（233 / 38）"
+printf '%s\n' "${REFRESH_FN}" | grep -q 'checkGuideProxyVersion()' \
+  || fail "起動したあと、中継の版を確かめていません。更新しても古い中継が残ります（233）"
+ok "アプリを更新したら、前のアプリが立てた中継を確かめてから立て直す"
+
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #
 # 同梱スキル（mulmoterminal-*）はガイドの表の日本語（2段）、本人やプロジェクトの

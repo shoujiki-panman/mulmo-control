@@ -56,8 +56,16 @@ func mulmoTerminalOpenURL(node: String?) -> String {
 func startGuideProxy(node: String) -> Bool {
     // シェルに渡す文字列ではなく Process に渡す本物のパスなので、tool()（引用符つき）は
     // 使えない。文字列に埋めずに、パスとして繋ぐ（#32 の検査が見ているのは埋め込み）。
-    let script = (toolsDir as NSString).appendingPathComponent("mulmoterminal-guide-proxy.mjs")
-    return GuideProxy.shared.ensure(node: node, script: script, upstreamPort: mtPort)
+    return GuideProxy.shared.ensure(node: node, script: guideProxyScript, upstreamPort: mtPort)
+}
+
+/// 前のアプリが立てた中継なら、今のアプリの中継に立て直す（Issue #233）。
+func replaceStaleGuideProxy(node: String) -> Bool {
+    GuideProxy.shared.replaceIfStale(node: node, script: guideProxyScript, upstreamPort: mtPort, version: appVersion)
+}
+
+private var guideProxyScript: String {
+    (toolsDir as NSString).appendingPathComponent(GuideProxy.scriptName)
 }
 
 private func tool(_ name: String) -> String { "\"\(toolsDir)/\(name)\"" }
@@ -713,6 +721,30 @@ final class ControlModel: ObservableObject {
         }
     }
 
+    /// 立っている中継の版を、**アプリの起動ごとに1回だけ**確かめる（Issue #233）。
+    ///
+    /// アプリを更新しても、前のアプリが立てた中継は動き続ける。`keepGuideProxy` は
+    /// 答えるかだけを見るので、それを使い続けて中継側の直しが届かなかった。
+    /// 更新すればアプリは起動し直すので、起動ごとに1回で足りる。巡回のたびに
+    /// 通信は増やさない（#38）。
+    private var guideProxyVersionChecked = false
+    func checkGuideProxyVersion() {
+        guard GuideServer.isOn, guideServing, !guideProxyVersionChecked, !guideProxyEnsuring else { return }
+        guideProxyVersionChecked = true
+        guideProxyEnsuring = true
+        let known = nodePath
+        Task.detached { [weak self] in
+            let node = known ?? commandPath("node")
+            let ok = node.map { replaceStaleGuideProxy(node: $0) } ?? false
+            await MainActor.run {
+                guard let self else { return }
+                self.guideProxyEnsuring = false
+                self.refreshGuideServing()
+                if !ok { self.guideProxyTrouble = "古い中継を立て直せませんでした" }
+            }
+        }
+    }
+
     /// 画面ガイドの行の「オン」「やめる」。押した結果をすぐ中継に映す。
     func guideToggled(_ on: Bool) {
         if on {
@@ -889,6 +921,7 @@ final class ControlModel: ObservableObject {
         mtRunning = portIsOpen(mtPort)
         refreshGuideServing()
         keepGuideProxy()
+        checkGuideProxyVersion()
         // 起動より先に読む。ポートも URL もここから決まるので、古いモードの
         // まま判定すると「起動したのに停止中と出る」になる。
         mcMode = MulmoClaudeMode.current()
