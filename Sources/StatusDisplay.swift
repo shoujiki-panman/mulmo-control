@@ -488,6 +488,16 @@ struct AgentCell: Equatable {
     let folder: String
     let waiting: Bool
     let working: Bool
+    /// 会話の題名（Claude のセルだけ取れる）。同じフォルダのセルが並んだとき見分ける。
+    var title: String? = nil
+}
+
+/// 会話の題名を、行に出せる形にする。1行目だけ・40字まで。題名の無い会話は nil。
+func sessionTitleLabel(_ raw: String?) -> String? {
+    guard let first = raw?.split(separator: "\n").first.map(String.init) else { return nil }
+    let trimmed = String(first.drop(while: { $0 == " " }))
+    if trimmed.isEmpty || trimmed == "(untitled session)" { return nil }
+    return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
 }
 
 /// `dev-terminal-cwds.json` を読む。1行に「id フォルダ」。フォルダには空白が入りうるので、
@@ -508,13 +518,15 @@ func parseSessionCwds(_ text: String) -> [String: String] {
 /// **`live` に無いものは出さない。** `activity-state.json` には終わったセッションの
 /// 記録も「返事待ち」のまま残っている（10/30 実測で 33 件のうち動いていたのは 0）。
 /// 両方が立っているときは返事待ちとして扱う（人の手が要るほうを取る）。
-func agentCells(activity: [String: AgentActivity], cwds: [String: String], live: Set<String>) -> [AgentCell] {
+func agentCells(activity: [String: AgentActivity], cwds: [String: String], live: Set<String>,
+                titles: [String: String] = [:]) -> [AgentCell] {
     let cells = live.map { id -> AgentCell in
         let state = activity[id]
         let waiting = state?.waiting == true
         let path = cwds[id] ?? ""
         let folder = path.split(separator: "/").last.map(String.init) ?? "フォルダ不明"
-        return AgentCell(id: id, folder: folder, waiting: waiting, working: !waiting && state?.working == true)
+        return AgentCell(id: id, folder: folder, waiting: waiting, working: !waiting && state?.working == true,
+                         title: sessionTitleLabel(titles[id]))
     }
     func rank(_ cell: AgentCell) -> Int { cell.waiting ? 0 : (cell.working ? 1 : 2) }
     return cells.sorted { (rank($0), $0.folder, $0.id) < (rank($1), $1.folder, $1.id) }

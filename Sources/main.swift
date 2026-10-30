@@ -3253,11 +3253,20 @@ struct AgentCellRow: View {
             Circle()
                 .fill(cell.waiting ? Palette.warn : (cell.working ? Palette.accent : Palette.secondaryText))
                 .frame(width: 8, height: 8)
-            Text(cell.folder)
-                .font(AppFont.rowTitle)
-                .foregroundStyle(Palette.primaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(cell.folder)
+                    .font(AppFont.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let title = cell.title {
+                    Text(title)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
             Spacer()
             Text(agentStateLabel(cell))
                 .font(AppFont.small)
@@ -4228,7 +4237,20 @@ func loadAgentSnapshot(port: Int) -> (cells: [AgentCell], limits: RateLimits?) {
     }
     let limits = localGet(port: port, path: "/api/rate-limits")
         .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
-    return (agentCells(activity: activity, cwds: cwds, live: live), limits)
+    // 会話の題名。同じフォルダのセルが並ぶと名前だけでは見分けられない（10/31 本人の画面で
+    // mulmoclaude が2行並んだ）。Claude の会話の一覧はセルと同じ id を持つ。
+    // 聞くのは今動いているセルのフォルダだけ（多くて数本）。
+    struct Listing: Decodable { struct Session: Decodable { let id: String; let title: String? }; let sessions: [Session] }
+    var titles: [String: String] = [:]
+    for cwd in Set(live.compactMap { cwds[$0] }) {
+        guard let query = cwd.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let data = localGet(port: port, path: "/api/sessions?cwd=\(query)"),
+              let listing = try? JSONDecoder().decode(Listing.self, from: data) else { continue }
+        for session in listing.sessions where live.contains(session.id) {
+            titles[session.id] = session.title
+        }
+    }
+    return (agentCells(activity: activity, cwds: cwds, live: live, titles: titles), limits)
 }
 
 /// セルの画面を文字で読む（Issue #235）。返事の欄を開いたときだけ呼ぶ（巡回では読まない）。

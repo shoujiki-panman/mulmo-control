@@ -765,6 +765,14 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  選択肢の画面の見分け \(title): 期待 \(expected)\n".utf8))
         }
+        // 会話の題名（Issue #235）
+        let titled = agentCells(activity: [:], cwds: ["a": "/x/mulmoclaude", "b": "/x/mulmoclaude"], live: ["a", "b"],
+                                titles: ["a": "1Password：パスワード一括変更・自動解約ツールの下調べ\n続き", "b": "(untitled session)"])
+        if titled.map(\.title) != ["1Password：パスワード一括変更・自動解約ツールの下調べ", nil]
+            || sessionTitleLabel(String(repeating: "あ", count: 50)) != String(repeating: "あ", count: 40) + "…" {
+            failures += 1
+            FileHandle.standardError.write(Data("  会話の題名の出し方が違います（実際 \(titled.map(\.title))）\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {
