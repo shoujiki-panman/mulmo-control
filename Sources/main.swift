@@ -775,6 +775,39 @@ final class ControlModel: ObservableObject {
         }
     }
 
+    // ── エージェントどうしで渡す（Issue #235）──
+    @Published var relayDeposits: [RelayDeposit] = []
+    @Published var handoffNote: String?
+    private var lastDepositsRead = Date.distantPast
+
+    /// 預かった会話の一覧を取り直す。パネルを開いているときに、1分に1回まで。
+    func refreshDeposits() {
+        guard relayInstalled, Date().timeIntervalSince(lastDepositsRead) >= 60 else { return }
+        lastDepositsRead = Date()
+        Task.detached { [weak self] in
+            let text = runRelay(["deposits"]) ?? ""
+            await MainActor.run { self?.relayDeposits = parseRelayDeposits(text) }
+        }
+    }
+
+    /// relay の出力をクリップボードに写す。**どこにも送らない。** 貼る先は本人が選ぶ。
+    func copyFromRelay(_ arguments: [String], done: String) {
+        handoffNote = "写しています…"
+        Task.detached { [weak self] in
+            let text = runRelay(arguments)
+            await MainActor.run {
+                guard let self else { return }
+                if let text, !text.isEmpty {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    self.handoffNote = done
+                } else {
+                    self.handoffNote = "写せませんでした（relay が答えませんでした）"
+                }
+            }
+        }
+    }
+
     /// Codex の使用量を CodexBar から取り直す。パネルを開いているときに、5分に1回まで。
     private func refreshCodexBar() {
         guard !codexBarLoading, Date().timeIntervalSince(lastCodexBarRead) >= Self.codexBarInterval else { return }
@@ -1008,6 +1041,7 @@ final class ControlModel: ObservableObject {
         if panelIsOpen {
             refreshToolPaths()
             refreshAgents()
+            refreshDeposits()
         }
         checkUpdatesSilentlyIfNeeded()
     }
@@ -2128,7 +2162,7 @@ struct ControlView: View {
             case .environment:
                 EnvironmentView(model: model)
             case .ai:
-                AgentsView()
+                AgentsView(model: model)
             }
             Hairline()
             HStack {
@@ -3147,6 +3181,8 @@ struct DetailBlock: View {
 /// 「ここで作業待ち見ないから要らない、パーソナルエージェントに特化して」で外した。
 /// 1つを1枚のカードにして、2列で並べる。数が増えても行で伸びるのは2枚ごと。
 struct AgentsView: View {
+    @ObservedObject var model: ControlModel
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("パーソナルエージェント")
@@ -3156,6 +3192,77 @@ struct AgentsView: View {
                 ForEach(CloudAgent.all, id: \.name) { agent in
                     CloudAgentCard(agent: agent)
                 }
+            }
+            if model.relayInstalled {
+                HandoffPanel(model: model)
+            }
+        }
+    }
+}
+
+/// エージェントどうしで渡す（Issue #235）。
+///
+/// 別の会社のエージェントは、互いの作業を見られない（X で「Grok Bot から Dots へ直接
+/// つなぐのは難しい」。Google ドライブを共有オフィスにして受け渡す人も出ている）。
+/// relay の写しを**クリップボードに置くだけ**で、どこにも送らない。貼る先は本人が選ぶ。
+/// 写しは relay の共有用（鍵の形の文字列を伏せ、手元のパスとコマンドを外す）。
+struct HandoffPanel: View {
+    @ObservedObject var model: ControlModel
+    private static let shownDeposits = 3
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("エージェントどうしで渡す")
+                .font(AppFont.section)
+                .foregroundStyle(Palette.primaryText)
+            SettingsGroup {
+                SettingsRow(showsSeparator: false) {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("最新の会話を写す")
+                                .font(AppFont.rowTitle)
+                                .foregroundStyle(Palette.primaryText)
+                            Text("鍵とパスを伏せて写します。貼る先を選んでください")
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                        Spacer()
+                        Button("写す") {
+                            model.copyFromRelay(["--print", "--share"], done: "写しました。渡したいエージェントに貼ってください")
+                        }
+                        .buttonStyle(.plain)
+                        .font(AppFont.small)
+                        .foregroundStyle(Palette.accentText)
+                    }
+                }
+                ForEach(model.relayDeposits.prefix(Self.shownDeposits), id: \.ref) { deposit in
+                    SettingsRow {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(deposit.title)
+                                    .font(AppFont.rowTitle)
+                                    .foregroundStyle(Palette.primaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Text("預かった会話・\(depositSourceLabel(deposit.source))・\(deposit.when)")
+                                    .font(AppFont.small)
+                                    .foregroundStyle(Palette.secondaryText)
+                            }
+                            Spacer()
+                            Button("写す") {
+                                model.copyFromRelay(["deposits", "show", deposit.ref], done: "写しました。渡したいエージェントに貼ってください")
+                            }
+                            .buttonStyle(.plain)
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.accentText)
+                        }
+                    }
+                }
+            }
+            if let note = model.handoffNote {
+                Text(note)
+                    .font(AppFont.small)
+                    .foregroundStyle(Palette.secondaryText)
             }
         }
     }
@@ -4072,6 +4179,30 @@ func servesMulmoClaude(port: Int) -> Bool {
 func loadRateLimits(port: Int) -> RateLimits? {
     localGet(port: port, path: "/api/rate-limits")
         .flatMap { try? JSONDecoder().decode(RateLimits.self, from: $0) }
+}
+
+/// relay を走らせて標準出力を返す（Issue #235）。無い・失敗なら nil。15秒で打ち切る。
+/// relay は node のスクリプトなので、node の置き場所を PATH に足して呼ぶ。
+func runRelay(_ arguments: [String]) -> String? {
+    guard let bin = relayCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: bin)
+    child.arguments = arguments
+    child.currentDirectoryURL = URL(fileURLWithPath: homeDir)
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = [localBin, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].joined(separator: ":")
+    child.environment = env
+    let pipe = Pipe()
+    child.standardOutput = pipe
+    child.standardError = FileHandle.nullDevice
+    do { try child.run() } catch { return nil }
+    let killer = DispatchWorkItem { if child.isRunning { child.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    child.waitUntilExit()
+    killer.cancel()
+    guard child.terminationStatus == 0 else { return nil }
+    return String(decoding: data, as: UTF8.self)
 }
 
 /// CodexBar の CLI で Codex の使用量を読む（Issue #235）。入っていなければ nil。

@@ -534,3 +534,41 @@ func resetCreditLine(count: Int?, expiresMonthDay: String?) -> String? {
     guard let expiresMonthDay else { return "無料リセット \(count)回" }
     return "無料リセット \(count)回・\(expiresMonthDay)まで"
 }
+
+// ── エージェントどうしで渡す（Issue #235）────────────────────────────
+
+/// relay に預けられた会話1本（`relay deposits` の1行）。
+struct RelayDeposit: Equatable {
+    let ref: String
+    let when: String
+    let source: String
+    let title: String
+}
+
+/// `relay deposits` の出力を読む。1行が「ref  MM-DD HH:MM  出典  題名」で、間は空白2つ以上。
+/// 題名にも空白が入りうるので、頭から3つ切ったら残りを題名にする。
+func parseRelayDeposits(_ text: String) -> [RelayDeposit] {
+    text.split(separator: "\n").compactMap { line in
+        var fields: [String] = []
+        var rest = Substring(line)
+        for _ in 0..<3 {
+            rest = rest.drop(while: { $0 == " " })
+            guard let gap = rest.range(of: "  ") else { return nil }
+            fields.append(String(rest[..<gap.lowerBound]))
+            rest = rest[gap.upperBound...]
+        }
+        let title = String(rest.drop(while: { $0 == " " }))
+        guard fields[0].count >= 8, !title.isEmpty else { return nil }
+        return RelayDeposit(ref: fields[0], when: fields[1], source: fields[2], title: title)
+    }
+}
+
+/// 出典の言葉。relay は ChatGPT（Dots を含む）からの投函を other と書く。
+func depositSourceLabel(_ source: String) -> String {
+    switch source {
+    case "claude-mobile": return "Claude（スマホ）"
+    case "claude-web": return "Claude（Web）"
+    case "other": return "ChatGPT ほか"
+    default: return source
+    }
+}

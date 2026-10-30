@@ -689,6 +689,20 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  無料リセットの言葉が違います\n".utf8))
         }
+        // relay に預けた会話の一覧（10/31 の実物の行）（Issue #235）
+        let deposits = parseRelayDeposits("""
+        7d96d293  10-16 15:31  other  ちゃまからの試し
+        2523ac94  09-27 14:27  claude-mobile  スマートグラス開発機・並列エージェント・Session Relay改善案
+        壊れた行
+        71e0894b  09-02 16:02  claude-mobile  日立イベント BS01-03「フィジカルAI時代の新・経営戦略〜HMAXで描く未来社会〜」参加
+        """)
+        if deposits.map(\.ref) != ["7d96d293", "2523ac94", "71e0894b"]
+            || deposits.first?.title != "ちゃまからの試し" || deposits.first?.when != "10-16 15:31"
+            || deposits.last?.title != "日立イベント BS01-03「フィジカルAI時代の新・経営戦略〜HMAXで描く未来社会〜」参加"
+            || depositSourceLabel("other") != "ChatGPT ほか" || depositSourceLabel("claude-mobile") != "Claude（スマホ）" {
+            failures += 1
+            FileHandle.standardError.write(Data("  relay の預かった会話の読み方が違います（実際 \(deposits)）\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {
