@@ -3179,14 +3179,14 @@ struct AgentsView: View {
                         VStack(spacing: 4) {
                             Image(systemName: agent.symbol)
                                 .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(agent.appURL != nil ? Palette.accentText : Palette.secondaryText)
+                                .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
                             Text(agent.name)
                                 .font(AppFont.small)
                                 .foregroundStyle(Palette.primaryText)
                                 .lineLimit(1)
                             Text(agent.buttonTitle)
                                 .font(AppFont.small)
-                                .foregroundStyle(agent.appURL != nil ? Palette.accentText : Palette.secondaryText)
+                                .foregroundStyle(agent.isUsable ? Palette.accentText : Palette.secondaryText)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -3434,8 +3434,11 @@ struct AllCellsRow: View {
 /// - Grok Bot の ID は `com.anysphere.sand`（名前から推せない）
 /// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）
 ///
-/// 入っていなければ「入手」で公式のページを開く。ダウンロード済みの dmg を探すのは
-/// やめた。macOS はアプリがダウンロードフォルダを覗くことを許していない。
+/// アプリが無くても Web で使えるものは、Web をそのまま「開く」（Muse は本人がブラウザで
+/// 使っている。muse.ai は Meta のヘルプと Facebook のプライバシーポリシーに繋がっている
+/// ことで確かめた）。Web が無くアプリも無ければ「入手」で公式のページを開く。
+/// ダウンロード済みの dmg を探すのはやめた。macOS はアプリがダウンロードフォルダを
+/// 覗くことを許していない。
 struct CloudAgent {
     let name: String
     let detail: String
@@ -3443,11 +3446,17 @@ struct CloudAgent {
     let bundleID: String
     /// アプリの中の行き先。無ければアプリを開くだけ。
     let deepLink: String?
+    /// アプリが無いときに使える Web 版。
+    let webURL: String?
+    /// アプリも Web も無いときの、入手のページ。
     let fallbackURL: String
 
     var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
 
-    var buttonTitle: String { appURL != nil ? "開く" : "入手" }
+    /// アプリか Web で、すぐ使えるか。
+    var isUsable: Bool { appURL != nil || webURL != nil }
+
+    var buttonTitle: String { isUsable ? "開く" : "入手" }
 
     func open() {
         if let appURL {
@@ -3456,23 +3465,23 @@ struct CloudAgent {
             } else {
                 NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
             }
-        } else if let url = URL(string: fallbackURL) {
+        } else if let url = URL(string: webURL ?? fallbackURL) {
             NSWorkspace.shared.open(url)
         }
     }
 
     static let all = [
         CloudAgent(name: "Claude", detail: "Anthropic のデスクトップアプリ", symbol: "asterisk",
-                   bundleID: "com.anthropic.claudefordesktop", deepLink: nil,
+                   bundleID: "com.anthropic.claudefordesktop", deepLink: nil, webURL: "https://claude.ai/",
                    fallbackURL: "https://claude.ai/download"),
         CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
-                   bundleID: "com.openai.codex", deepLink: "codex://dots",
+                   bundleID: "com.openai.codex", deepLink: "codex://dots", webURL: "https://chatgpt.com/",
                    fallbackURL: "https://chatgpt.com/"),
         CloudAgent(name: "Grok Bot", detail: "xAI のパーソナルエージェント", symbol: "bolt",
-                   bundleID: "com.anysphere.sand", deepLink: nil,
+                   bundleID: "com.anysphere.sand", deepLink: nil, webURL: nil,
                    fallbackURL: "https://x.ai/"),
         CloudAgent(name: "Muse", detail: "Meta のパーソナルエージェント", symbol: "sparkle",
-                   bundleID: "com.meta.endo", deepLink: nil,
+                   bundleID: "com.meta.endo", deepLink: nil, webURL: "https://muse.ai/",
                    fallbackURL: "https://ai.meta.com/muse/"),
     ]
 }
