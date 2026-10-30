@@ -26,6 +26,7 @@ class Element {
   removeAttribute(key) { this.attrs.delete(key); }
   matches(selector) {
     return selector.split(",").some((part) => {
+      if (part === "pre[data-code-block]") return this.tagName === "pre" && this.hasAttribute("data-code-block");
       if (part === "button") return this.tagName === "button";
       if (part === ".truncate") return this.getAttribute("class") === "truncate";
       const match = part.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
@@ -57,11 +58,12 @@ const document = {
     return visit(body) ?? null;
   },
   querySelector: (selector) => body.querySelector(selector),
+  querySelectorAll: () => [],
   addEventListener: (type, fn) => { listeners[type] = fn; },
 };
 const box = vm.createContext({
   document, Element, HTMLButtonElement: Button, Node: { TEXT_NODE: 3 },
-  window: { innerWidth: 1000, innerHeight: 800 },
+  window: { innerWidth: 1000, innerHeight: 800, addEventListener: () => {} },
   localStorage: { getItem: () => null, setItem: () => {} },
   fetch: async () => ({ ok: false }), setInterval: () => {}, setTimeout: () => {},
 });
@@ -111,3 +113,34 @@ assert.equal(copy.getAttribute("title"), "Copy code", "ガイドを切ったら�
 hover(history);
 assert.equal(shown(), null, "オフのときは表示しない");
 process.stdout.write("画面ガイド: v10 の履歴・スキル・コピー、説明の退避と復元、オン／オフを確認\n");
+
+// プレビュー用スクリプト: 親からの真偽値だけを受け、コピー処理には触れない。
+const previewListeners = {};
+const parentMessages = [];
+const parent = { postMessage: (message) => parentMessages.push(message) };
+const previewBox = vm.createContext({
+  document, Element, parent, innerWidth: 800, innerHeight: 600,
+  window: { addEventListener: (type, fn) => { previewListeners[type] = fn; } },
+});
+vm.runInContext(readFileSync(new URL("../guide/mulmoterminal-preview-guide.js", import.meta.url), "utf8"), previewBox);
+assert.equal(parentMessages[0].source, "mulmo-preview-guide-ready");
+const pre = new Element("pre", { "data-code-block": "0" });
+const previewCopy = new Button({ title: "Copy code" });
+previewCopy.previousElementSibling = pre;
+body.append(pre, previewCopy);
+hover(previewCopy);
+assert.equal(document.getElementById("mtg-preview-bubble"), null, "親の返事を待ってから表示する");
+previewListeners.message({ source: {}, data: { source: "mulmo-preview-guide-host", on: true } });
+hover(previewCopy);
+assert.equal(document.getElementById("mtg-preview-bubble"), null, "ほかの窓のオンを受けない");
+previewListeners.message({ source: parent, data: { source: "mulmo-preview-guide-host", on: true } });
+hover(previewCopy);
+const previewBubble = document.getElementById("mtg-preview-bubble");
+assert.match(previewBubble.textContent, /ファイルの内容/);
+assert.match(previewBubble.textContent, /確認画面/);
+assert.equal(previewCopy.hasAttribute("title"), false);
+previewListeners.message({ source: parent, data: { source: "mulmo-preview-guide-host", on: false } });
+assert.equal(previewBubble.style.display, "none");
+assert.equal(previewCopy.getAttribute("title"), "Copy code");
+assert.equal(previewCopy.listeners.click, undefined, "コピーのクリック処理を追加・変更しない");
+process.stdout.write("プレビュー: 親だけからオン／オフを受け、コピーの説明と標準 title の復元を確認\n");

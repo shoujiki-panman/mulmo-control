@@ -25,11 +25,11 @@
   // 同じ検査が見ている（入っている Mac のとき）。
   //
   // 知らない要素には何も出さない。埋めることより、嘘を出さないことを取る。
-  // v10.0.0 の配布物と照合。履歴・道具は個別ボタンからメニューへ移った。
+  // v11.5.0 の配布物と照合。履歴・道具は v10 で個別ボタンからメニューへ移った。
   const BY_TESTID = {
-    "cell-history-btn": ["送った指示・会話・作業の時系列を選ぶ履歴メニューです。", "前の返事を読み返したいときに。会話を横に出すにはセルを大きくします。"],
+    "cell-history-btn": ["送った指示・会話・作業の時系列を選ぶ履歴メニューです。", "前の返事を読み返したいときに。項目を選ぶと会話などを横に出せます。"],
     "cell-tools-btn": ["使った道具・Canvas・記録の表示や、別セルとの会話を選ぶメニューです。", "作ったものを確かめたいときや、ほかのセルへ結果を渡したいときに。"],
-    "cell-pane-menu-tools": ["エージェントが使った道具と、その結果を横に出します。", "何を実行したか確かめたいときに。灰色なら先にセルを大きくします。"],
+    "cell-pane-menu-tools": ["エージェントが使った道具と、その結果を横に出します。", "何を実行したか確かめたいときに。灰色で選べない場合はセルを大きくします。"],
     "cell-pane-menu-collections": ["このフォルダのコレクション（記録）を横に出します。", "このプロジェクトの記録を見ながら作業したいときに。"],
     "cell-pane-menu-timeline": ["このセッションが何をしてきたかの時系列です。", "長く走らせたあとに、どこで何をしたかを追いたいときに。"],
     "cell-pane-menu-restart": ["このセルのエージェントを起動し直します。", "モデルや Canvas の設定を変え、起動し直す必要があるときに。"],
@@ -37,6 +37,8 @@
     "files-changes-btn": ["ファイルの未コミットの変更を、元の内容と並べて表示します。", "エージェントがどこを直したか、保存する前に確かめたいときに。"],
     "files-history-btn": ["このファイルの git の履歴を開きます。", "以前の内容と比べたいときや、前の版へ戻したいときに。"],
     "files-outline-btn": ["Markdown の見出し一覧を開きます。選ぶとその場所へ移ります。", "長い文書で読みたい節を探すときに。"],
+    "files-recent-btn": ["このフォルダで最近開いたファイルの一覧です。選ぶとそのファイルを開きます。", "さっき見ていたファイルに戻りたいときに。前の版は「履歴」にあります。"],
+    "github-open-board": ["PR と issue を、未着手からマージ済みまでの列に並べたボードを開きます（実験的）。", "どれが止まっているか、CI やレビューの状態をまとめて見たいときに。"],
     "files-canvas-btn": ["開いているファイルを Canvas に表示します。", "ファイルを大きく表示して確かめたいときに。"],
     "palette-search-box": ["操作を名前で探すコマンドパレットを開きます。", "ボタンの場所が分からない操作を、言葉で探したいときに。"],
     "toolbar-help": ["MulmoTerminal の使い方をエージェントに相談します。", "操作の場所や設定の変え方を、その場で聞きたいときに。"],
@@ -357,7 +359,7 @@
     "このフォルダで使えるスキル（決まった手順の頼み方）の一覧を開きます。",
     "選ぶと、このセルのエージェントにそのスキルを実行させます。定型の作業を頼むときに。",
   ];
-  // 上流の server/skills/<名前>/SKILL.md の description を訳したもの（10.0.0）。
+  // 上流の server/skills/<名前>/SKILL.md の description を訳したもの（11.5.0）。
   const BY_SKILL = {
     "mulmoterminal-help": ["MulmoTerminal の機能や操作・設定を、実際の説明を調べて答える相談窓口です。", "使い方が分からないとき、どこで操作するか知りたいときに。"],
     "mulmoterminal-bug-report": [
@@ -399,6 +401,18 @@
     "mulmoterminal-theme": [
       "MulmoTerminal 全体の配色を自分で作り、設定のテーマ一覧に加えます。",
       "既成のテーマが暗すぎる・青すぎるとき、絵や写真・ブランドの色で作りたいときに。",
+    ],
+    "mulmoterminal-data-analysis": [
+      "CSV や Excel を分析し、数式の生きた表とグラフにして Canvas に出します。",
+      "表のデータを要約・比較したいとき、何が効いているかを知りたいときに。",
+    ],
+    "mulmoterminal-html-plan": [
+      "計画を、選択肢を試せる HTML のページにして横の画面に出します。決めた内容は送信で返せます。",
+      "案を見比べて決めたいとき、画面の案を見ながら仕様を決めたいときに。",
+    ],
+    "mulmoterminal-video-edit": [
+      "話しかけるだけで動画を切る・つなぐ・速さを変える・縦にし、字幕やテロップも付けます。",
+      "動画を手直ししたいときに。元のファイルは残し、隣に新しいファイルを書きます。",
     ],
   };
   /** 畳んだ説明の長さの上限。吹き出し（幅 300px）で5行ほど。 */
@@ -655,6 +669,19 @@
     show(text, event.clientX, event.clientY);
   }
 
+  // opaque origin のプレビューとは、オン／オフの真偽値だけをやり取りする。
+  function previewFrames() {
+    return [...document.querySelectorAll("iframe")].filter((frame) => {
+      try {
+        const src = new URL(frame.getAttribute("src"), location.href);
+        return src.origin === location.origin && src.pathname === "/api/files/browse/md" && src.searchParams.get("embed") === "1";
+      } catch { return false; }
+    });
+  }
+  function syncPreviews() {
+    for (const frame of previewFrames()) frame.contentWindow?.postMessage({ source: "mulmo-preview-guide-host", on }, "*");
+  }
+
   // ── 「?」ボタン ─────────────────────────────────────────────
   //
   // Mulmo Control を入れていない人でも切れるように、画面側にも口を残す。
@@ -686,6 +713,7 @@
   }
 
   function paint() {
+    syncPreviews();
     const button = document.getElementById("mtg-toggle");
     if (button === null) return;
     button.style.background = on ? "#2f7df6" : "rgba(120,120,128,0.35)";
@@ -695,6 +723,11 @@
 
   function start() {
     if (!isMulmoTerminal()) return;
+    window.addEventListener("message", (event) => {
+      if (event.data?.source !== "mulmo-preview-guide-ready") return;
+      const frame = previewFrames().find((one) => one.contentWindow === event.source);
+      frame?.contentWindow?.postMessage({ source: "mulmo-preview-guide-host", on }, "*");
+    });
     mountToggle();
     paint();
     // 上流の pointerover より先に英語の説明を預かり、吹き出しの重なりを防ぐ。

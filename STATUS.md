@@ -1,4 +1,4 @@
-# 進捗ボード — mulmo-control（2026-10-12）
+# 進捗ボード — mulmo-control（2026-10-30）
 
 ## ✅ 完了したこと
 
@@ -17,6 +17,12 @@
 - Skill メニューの `data-tip`、body へ移したメニュー、span 内の名前を読む。新しい同梱 `mulmoterminal-help` も日本語化。
 - 上流の `data-tip` と日本語の吹き出しが重ならないよう、表示中だけ預かって復元。上流が更新した値は上書きしない。
 - `guide-text-test.mjs` で 114 件・同梱 11 本を 10.0.0 の配布物と照合。`guide-dom-test.mjs` でメニューの表示・説明の復元・オン／オフを実行し、`check.sh` に追加。実 DOM（jsdom）でも確認。`./check.sh` 全検査・ユニバーサルビルド・署名検証が通過（手元ビルドは adhoc）。
+
+## 2026-10-30: MulmoTerminal 11.5.0 に合わせる
+
+- 10.0.0 対応のブランチが 10/14 から止まっている間に、上流は 11.5.0 まで進んだ。10.0.0 と 11.5.0 の配布物の `data-testid` を突き合わせた。ガイドが当てている印は1つも消えていなかった。
+- 11.5.0 で増えた同梱スキル3本（data-analysis / html-plan / video-edit）に日本語の説明が無く、`guide-text-test.mjs` が落ちていた。説明を足した。あわせて、ファイル欄の「最近開いたファイル」（`files-recent-btn`）と、GitHub 欄の「ボードを開く（実験的）」（`github-open-board`）にも説明を足した。印は 119 個で、すべて 11.5.0 の配布物に実在する。
+- 10/14 に作業途中だった Markdown プレビューのコピー説明（`guide/mulmoterminal-preview-guide.js`）も、11.5.0 で前提が変わっていないことを確かめた。確かめたのは CSP が `sandbox allow-scripts; script-src 'nonce-…'` のままで nonce が 16 バイトの base64url（22 字）であること、`?embed=1` の判定、`data-code-block` の印の3つ。`./check.sh` は全部通った。実ブラウザでの目視はしていない。
 
 ## 🔨 いまやっていること
 
