@@ -1466,7 +1466,14 @@ REFRESH_ALL="$(awk '/^    func refresh\(\) \{/,/^    }$/' "${ROOT}/Sources/main.
 if printf '%s\n' "${REFRESH_ALL}" | grep -q 'fetchCellScreen'; then
   fail "巡回のたびにセルの画面を読んでいます（235 / 38）"
 fi
-ok "パネルからの返事は返事待ちのセルだけ・公式の口で・画面は開いたときだけ読む"
+# 選択肢の画面に送ると Enter が選ばれている項目を決める（10/31：Codex の「Update now」）。
+# 送る直前に画面を読み直し、選択肢に見えたら送らない。見分け方は status-display-test が走らせる。
+REPLY_POP="$(awk '/^struct ReplyPopover/,/^}$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${REPLY_POP}" | awk '/private func send\(\)/,/^    }$/' | grep -q 'screenLooksLikeMenu' \
+  || fail "返事を送る直前に、選択肢の画面かどうかを見ていません。Enter が項目を決めてしまいます（235）"
+grep -q 'menuCases' "${ROOT}/tests/status-display-test.swift" \
+  || fail "選択肢の画面の見分け方を status-display-test で走らせていません（235）"
+ok "パネルからの返事は返事待ちのセルだけ・選択肢の画面には送らない・公式の口で・画面は開いたときだけ読む"
 
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #

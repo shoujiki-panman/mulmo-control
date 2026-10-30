@@ -610,3 +610,26 @@ func replyOutcome(status: Int?, reason: String?) -> String {
     default: return "送れませんでした（\(status ?? 0)）"
     }
 }
+
+/// セルの画面の終わりが、選択肢の画面に見えるか（Issue #235）。
+///
+/// 返事は「1行打って Enter」なので、選択肢の画面に送ると Enter がいま選ばれている
+/// 項目を決めてしまう。10/31 に Codex の「Update available」画面で、1番の
+/// 「Update now」が選ばれた状態だった。MulmoTerminal が断ってくれるのは Claude の
+/// 質問の画面（question-open）だけなので、それ以外はここで止める。
+/// - 選んでいる印のついた番号の行（`❯ 1.` `› 1.` `> 1.`）。Claude の許可の確認もこの形
+/// - 操作の案内（`enter continue` `esc skip` `enter to select` など）
+/// 普通の入力欄（`❯ ` の後ろに番号が無い）は選択肢ではない。
+func screenLooksLikeMenu(_ tail: String) -> Bool {
+    let hints = ["enter continue", "esc skip", "enter to select", "enter to confirm", "esc to cancel", "(y/n)", "[y/n]"]
+    let lower = tail.lowercased()
+    if hints.contains(where: lower.contains) { return true }
+    for line in tail.split(separator: "\n") {
+        var rest = line.drop(while: { $0 == " " })
+        guard let marker = rest.first, ["❯", "›", ">"].contains(marker) else { continue }
+        rest = rest.dropFirst().drop(while: { $0 == " " })
+        let digits = rest.prefix(while: { $0.isNumber })
+        if !digits.isEmpty, rest.dropFirst(digits.count).first == "." { return true }
+    }
+    return false
+}

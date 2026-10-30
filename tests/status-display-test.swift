@@ -752,6 +752,19 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  返事の結果 \(String(describing: status)) \(reason ?? ""): 期待 \(expected)\n".utf8))
         }
+        // 選択肢の画面には送らない（Issue #235）
+        let menuCases: [(String, String, Bool)] = [
+            ("Codex の更新の確認", "Update available · 0.162.1 → 0.164.0\n› 1. Update now (runs `sh -c ...`)\n  2. Skip\n  3. Skip until next version\n\n  enter continue · esc skip", true),
+            ("Claude の許可の確認", "Do you want to proceed?\n❯ 1. Yes\n  2. No, and tell Claude what to do differently", true),
+            ("はい／いいえ", "Overwrite file? (y/N)", true),
+            ("ふつうの入力欄", "● できたら「できた」と言ってください。\n\n❯ \n  ⏵⏵ auto mode on", false),
+            ("入力欄に番号の無い文", "❯ 1件目から進めて", false),
+            ("本文の箇条書き", "  1. 回る形になったら繰り返す\n  2. 解約も同じ", false),
+        ]
+        for (title, screen, expected) in menuCases where screenLooksLikeMenu(screen) != expected {
+            failures += 1
+            FileHandle.standardError.write(Data("  選択肢の画面の見分け \(title): 期待 \(expected)\n".utf8))
+        }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
             if actual != item.expected {

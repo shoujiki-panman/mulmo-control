@@ -3169,31 +3169,32 @@ struct AgentsView: View {
                     }
                 }
             }
-            Text("クラウドのエージェント")
+            Text("パーソナルエージェント")
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
-            SettingsGroup {
-                ForEach(Array(CloudAgent.all.enumerated()), id: \.element.name) { index, agent in
-                    SettingsRow(showsSeparator: index > 0) {
-                        HStack(spacing: 8) {
+            // 横1列の入口にする。行で並べると、エージェントが増えるたびにパネルが伸びる（#192）。
+            HStack(spacing: 8) {
+                ForEach(CloudAgent.all, id: \.name) { agent in
+                    Button { agent.open() } label: {
+                        VStack(spacing: 4) {
                             Image(systemName: agent.symbol)
-                                .foregroundStyle(Palette.accentText)
-                                .frame(width: 16)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(agent.name)
-                                    .font(AppFont.rowTitle)
-                                    .foregroundStyle(Palette.primaryText)
-                                Text(agent.detail)
-                                    .font(AppFont.small)
-                                    .foregroundStyle(Palette.secondaryText)
-                            }
-                            Spacer()
-                            Button(agent.buttonTitle) { agent.open() }
-                                .buttonStyle(.plain)
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(agent.appURL != nil ? Palette.accentText : Palette.secondaryText)
+                            Text(agent.name)
                                 .font(AppFont.small)
-                                .foregroundStyle(Palette.accentText)
+                                .foregroundStyle(Palette.primaryText)
+                                .lineLimit(1)
+                            Text(agent.buttonTitle)
+                                .font(AppFont.small)
+                                .foregroundStyle(agent.appURL != nil ? Palette.accentText : Palette.secondaryText)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .help(agent.detail)
                 }
             }
         }
@@ -3290,18 +3291,23 @@ struct ReplyPopover: View {
     @State private var text = ""
     @State private var sending = false
     @State private var outcome: String?
+    /// 画面が選択肢に見えるあいだは送らない（`screenLooksLikeMenu`）。
+    @State private var isMenu = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(cell.folder)
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
-            // 終わりの14行だけを出す。スクロールにはしない（ガード202）。
+            // 画面の終わりを出す。**下に揃えて上を切る**（10/31 に本人の画面で、行の折り返しで
+            // 頭の4行しか入らず、肝心の最後の一言が「…」で切れていた）。スクロールにはしない（ガード202）。
             Text(screen)
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(Palette.secondaryText)
-                .lineLimit(14)
-                .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                .frame(height: 170, alignment: .bottomLeading)
+                .clipped()
                 .textSelection(.enabled)
                 .padding(6)
             .background(Palette.panelFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -3309,8 +3315,9 @@ struct ReplyPopover: View {
                 TextField("返事を書く（Enter で送る）", text: $text)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(send)
+                    .disabled(isMenu)
                 Button("送る", action: send)
-                    .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isMenu || sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             HStack {
                 if let outcome {
@@ -3335,7 +3342,10 @@ struct ReplyPopover: View {
         Task.detached {
             let raw = fetchCellScreen(port: mtPort, id: id)
             await MainActor.run {
-                screen = raw.map { screenTail($0, lines: 14) } ?? "画面を読めませんでした"
+                let tail = raw.map { screenTail($0, lines: 14) }
+                screen = tail ?? "画面を読めませんでした"
+                isMenu = tail.map(screenLooksLikeMenu) ?? false
+                if isMenu { outcome = "選択肢の画面です。MulmoTerminal で選んでください" }
             }
         }
     }
@@ -3346,6 +3356,15 @@ struct ReplyPopover: View {
         sending = true
         let id = cell.id
         Task.detached {
+            // 送る直前にもう一度画面を見る。開いてから選択肢が出ていることがある。
+            if let raw = fetchCellScreen(port: mtPort, id: id), screenLooksLikeMenu(screenTail(raw, lines: 14)) {
+                await MainActor.run {
+                    sending = false
+                    isMenu = true
+                    outcome = "選択肢の画面です。MulmoTerminal で選んでください"
+                }
+                return
+            }
             let result = postCellReply(port: mtPort, id: id, text: line)
             await MainActor.run {
                 sending = false
@@ -3405,15 +3424,18 @@ struct AllCellsRow: View {
     }
 }
 
-/// クラウドで動くエージェント（Issue #235）。Mac の上には見張れるものが無いので、
-/// 入口だけを置く。
+/// クラウドで動くパーソナルエージェント（Issue #235）。Mac の上には見張れるものが
+/// 無いので、入口だけを置く。
 ///
 /// アプリは**置き場所ではなくバンドル ID で探す**。最初は `/Applications/〇〇.app` を
-/// 決め打ちしたら、どちらも外れた（10/31 実測）：
+/// 決め打ちしたら外れた（10/31 実測）：
 /// - Dots は ChatGPT アプリ（ID は `com.openai.codex`）の中にある。アプリを開くだけでは
 ///   Dots に着かないので、アプリが持つ `codex://dots` で開く
-/// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）。ダウンロードしただけで
-///   アプリケーションに入れていない Mac があったので、そのときは dmg を開いて入れ方へ導く
+/// - Grok Bot の ID は `com.anysphere.sand`（名前から推せない）
+/// - Muse の ID は `com.meta.endo`（Muse-8.0.dmg の Info.plist）
+///
+/// 入っていなければ「入手」で公式のページを開く。ダウンロード済みの dmg を探すのは
+/// やめた。macOS はアプリがダウンロードフォルダを覗くことを許していない。
 struct CloudAgent {
     let name: String
     let detail: String
@@ -3421,25 +3443,11 @@ struct CloudAgent {
     let bundleID: String
     /// アプリの中の行き先。無ければアプリを開くだけ。
     let deepLink: String?
-    /// ダウンロード済みのディスクイメージの名前の頭（~/Downloads を探す）。
-    let dmgPrefix: String?
     let fallbackURL: String
 
     var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
 
-    /// ダウンロード済みで、まだ入れていないディスクイメージ。
-    var downloadedImage: URL? {
-        guard appURL == nil, let dmgPrefix else { return nil }
-        let downloads = URL(fileURLWithPath: "\(homeDir)/Downloads")
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) ?? []
-        return names.filter { $0.hasPrefix(dmgPrefix) && $0.hasSuffix(".dmg") }.sorted().last
-            .map { downloads.appendingPathComponent($0) }
-    }
-
-    var buttonTitle: String {
-        if appURL != nil { return "開く" }
-        return downloadedImage != nil ? "入れる" : "入手"
-    }
+    var buttonTitle: String { appURL != nil ? "開く" : "入手" }
 
     func open() {
         if let appURL {
@@ -3448,19 +3456,23 @@ struct CloudAgent {
             } else {
                 NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
             }
-        } else if let image = downloadedImage {
-            NSWorkspace.shared.open(image)
         } else if let url = URL(string: fallbackURL) {
             NSWorkspace.shared.open(url)
         }
     }
 
     static let all = [
+        CloudAgent(name: "Claude", detail: "Anthropic のデスクトップアプリ", symbol: "asterisk",
+                   bundleID: "com.anthropic.claudefordesktop", deepLink: nil,
+                   fallbackURL: "https://claude.ai/download"),
         CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
-                   bundleID: "com.openai.codex", deepLink: "codex://dots", dmgPrefix: nil,
+                   bundleID: "com.openai.codex", deepLink: "codex://dots",
                    fallbackURL: "https://chatgpt.com/"),
+        CloudAgent(name: "Grok Bot", detail: "xAI のパーソナルエージェント", symbol: "bolt",
+                   bundleID: "com.anysphere.sand", deepLink: nil,
+                   fallbackURL: "https://x.ai/"),
         CloudAgent(name: "Muse", detail: "Meta のパーソナルエージェント", symbol: "sparkle",
-                   bundleID: "com.meta.endo", deepLink: nil, dmgPrefix: "Muse",
+                   bundleID: "com.meta.endo", deepLink: nil,
                    fallbackURL: "https://ai.meta.com/muse/"),
     ]
 }
