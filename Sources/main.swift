@@ -3185,6 +3185,13 @@ struct CloudAgentCard: View {
                     .foregroundStyle(Palette.secondaryText)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                let tagColor = agent.japan.map { $0 ? Palette.ok : Palette.warn } ?? Palette.secondaryText
+                Text(agent.availability)
+                    .font(AppFont.small)
+                    .foregroundStyle(tagColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(tagColor.opacity(0.15), in: Capsule())
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
@@ -3213,7 +3220,13 @@ struct CloudAgentCard: View {
 /// 覗くことを許していない。
 struct CloudAgent {
     let name: String
+    /// 得意なこと（1行）。どれに何を頼むかで迷う人が多い（比較記事が多数出ている）。
     let detail: String
+    /// 日本で使えるか。「日本で使えるのはどれ？」と迷う人が多い。
+    /// true＝使える（緑）、false＝まだ（橙）、nil＝公式に書かれていない（灰）。
+    let japan: Bool?
+    /// 札の言葉。
+    let availability: String
     let symbol: String
     /// Mac のアプリ。Web とスマホにしか無いもの（Claude Duet）は nil。
     let bundleID: String?
@@ -3244,18 +3257,26 @@ struct CloudAgent {
     }
 
     static let all = [
-        // Claude Duet（10/21 に研究プレビュー）。Mac のアプリは無く、パソコンでは claude.ai で開く。
-        // 米国の Pro / Max の待ちリスト制（解説記事より。公式ページは未確認）。
-        CloudAgent(name: "Duet", detail: "Claude のパーソナルエージェント", symbol: "asterisk",
+        // 札と得意なことの出どころ（10/31 に確かめた）:
+        // - Duet：Anthropic の紹介ページとサポート記事。米国の Pro / Max・待ちリスト。
+        //   Mac のアプリは無く、パソコンでは claude.ai で開く
+        // - Dots：OpenAI のヘルプ（EEA・スイス・英国の Pro だけ除外）。本人が 10/3 から日本で使っている
+        // - Grok Bot：xAI の紹介ページ（ベータ）。日本での提供は公式に書かれていない
+        // - Muse：10/23 に日本で開始（報道・Meta の日本向け発表として引用）。本人が日本で使っている
+        CloudAgent(name: "Duet", detail: "メールと予定から先回りして動く", japan: false,
+                   availability: "日本はまだ（米国のみ）", symbol: "asterisk",
                    bundleID: nil, deepLink: nil, webURL: "https://claude.ai/",
                    fallbackURL: "https://claude.ai/"),
-        CloudAgent(name: "Dots", detail: "ChatGPT の常駐エージェント", symbol: "circle.grid.2x1",
+        CloudAgent(name: "Dots", detail: "アプリをつないで仕事を進める", japan: true,
+                   availability: "日本で使える（Pro）", symbol: "circle.grid.2x1",
                    bundleID: "com.openai.codex", deepLink: "codex://dots", webURL: "https://chatgpt.com/",
                    fallbackURL: "https://chatgpt.com/"),
-        CloudAgent(name: "Grok Bot", detail: "xAI のパーソナルエージェント", symbol: "bolt",
+        CloudAgent(name: "Grok Bot", detail: "自分の PC を持ち、裏で作業を続ける", japan: nil,
+                   availability: "ベータ", symbol: "bolt",
                    bundleID: "com.anysphere.sand", deepLink: nil, webURL: nil,
                    fallbackURL: "https://x.ai/"),
-        CloudAgent(name: "Muse", detail: "Meta のパーソナルエージェント", symbol: "sparkle",
+        CloudAgent(name: "Muse", detail: "予定・メールと、予約や買い物", japan: true,
+                   availability: "日本で使える（10/23〜）", symbol: "sparkle",
                    bundleID: "com.meta.endo", deepLink: nil, webURL: "https://muse.ai/",
                    fallbackURL: "https://ai.meta.com/muse/"),
     ]
