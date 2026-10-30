@@ -775,36 +775,18 @@ final class ControlModel: ObservableObject {
         }
     }
 
-    // ── エージェントどうしで渡す（Issue #235）──
-    @Published var relayDeposits: [RelayDeposit] = []
-    @Published var handoffNote: String?
-    private var lastDepositsRead = Date.distantPast
+    // ── エージェントの伝言板（Issue #235）──
+    /// nil は「この relay に伝言板が無い」（古い relay）。空の配列は「伝言が無い」。
+    @Published var boardMessages: [BoardMessage]?
+    private var lastBoardRead = Date.distantPast
 
-    /// 預かった会話の一覧を取り直す。パネルを開いているときに、1分に1回まで。
-    func refreshDeposits() {
-        guard relayInstalled, Date().timeIntervalSince(lastDepositsRead) >= 60 else { return }
-        lastDepositsRead = Date()
+    /// 伝言板を読み直す。パネルを開いているときに、30秒に1回まで。
+    func refreshBoard() {
+        guard relayInstalled, Date().timeIntervalSince(lastBoardRead) >= 30 else { return }
+        lastBoardRead = Date()
         Task.detached { [weak self] in
-            let text = runRelay(["deposits"]) ?? ""
-            await MainActor.run { self?.relayDeposits = parseRelayDeposits(text) }
-        }
-    }
-
-    /// relay の出力をクリップボードに写す。**どこにも送らない。** 貼る先は本人が選ぶ。
-    func copyFromRelay(_ arguments: [String], done: String) {
-        handoffNote = "写しています…"
-        Task.detached { [weak self] in
-            let text = runRelay(arguments)
-            await MainActor.run {
-                guard let self else { return }
-                if let text, !text.isEmpty {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    self.handoffNote = done
-                } else {
-                    self.handoffNote = "写せませんでした（relay が答えませんでした）"
-                }
-            }
+            let output = runRelay(["board", "read", "--hours", "72"])
+            await MainActor.run { self?.boardMessages = output.map(parseBoardMessages) }
         }
     }
 
@@ -1041,7 +1023,7 @@ final class ControlModel: ObservableObject {
         if panelIsOpen {
             refreshToolPaths()
             refreshAgents()
-            refreshDeposits()
+            refreshBoard()
         }
         checkUpdatesSilentlyIfNeeded()
     }
@@ -3193,79 +3175,72 @@ struct AgentsView: View {
                     CloudAgentCard(agent: agent)
                 }
             }
-            if model.relayInstalled {
-                HandoffPanel(model: model)
+            if let messages = model.boardMessages {
+                BoardPanel(messages: messages)
             }
         }
     }
 }
 
-/// エージェントどうしで渡す（Issue #235）。
+/// エージェントの伝言板（Issue #235）。
 ///
 /// 別の会社のエージェントは、互いの作業を見られない（X で「Grok Bot から Dots へ直接
 /// つなぐのは難しい」。Google ドライブを共有オフィスにして受け渡す人も出ている）。
-/// relay の写しを**クリップボードに置くだけ**で、どこにも送らない。貼る先は本人が選ぶ。
-/// 写しは relay の共有用（鍵の形の文字列を伏せ、手元のパスとコマンドを外す）。
-struct HandoffPanel: View {
-    @ObservedObject var model: ControlModel
-    private static let shownDeposits = 3
+/// relay は受け口の中に伝言板を置き、Dots・Claude Code・Codex が `relay board` で書いて
+/// 読み合う（session-relay #28 / #29、10/31）。ここでは**誰が誰に何を書いたかを見るだけ**。
+/// 最初はクリップボードに写す形にしたが、relay 側が伝言板に変わったので置き換えた。
+struct BoardPanel: View {
+    let messages: [BoardMessage]
+    private static let shown = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("エージェントどうしで渡す")
+            Text("エージェントの伝言板")
                 .font(AppFont.section)
                 .foregroundStyle(Palette.primaryText)
             SettingsGroup {
-                SettingsRow(showsSeparator: false) {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("最新の会話を写す")
-                                .font(AppFont.rowTitle)
-                                .foregroundStyle(Palette.primaryText)
-                            Text("鍵とパスを伏せて写します。貼る先を選んでください")
-                                .font(AppFont.small)
-                                .foregroundStyle(Palette.secondaryText)
-                        }
-                        Spacer()
-                        Button("写す") {
-                            model.copyFromRelay(["--print", "--share"], done: "写しました。渡したいエージェントに貼ってください")
-                        }
-                        .buttonStyle(.plain)
-                        .font(AppFont.small)
-                        .foregroundStyle(Palette.accentText)
+                if messages.isEmpty {
+                    SettingsRow(showsSeparator: false) {
+                        Text("この3日の伝言はありません")
+                            .font(AppFont.small)
+                            .foregroundStyle(Palette.secondaryText)
                     }
                 }
-                ForEach(model.relayDeposits.prefix(Self.shownDeposits), id: \.ref) { deposit in
-                    SettingsRow {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(deposit.title)
+                // 新しいものを上に。
+                ForEach(Array(messages.suffix(Self.shown).reversed().enumerated()), id: \.offset) { index, message in
+                    SettingsRow(showsSeparator: index > 0) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(boardRouteLabel(message))
                                     .font(AppFont.rowTitle)
                                     .foregroundStyle(Palette.primaryText)
                                     .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Text("預かった会話・\(depositSourceLabel(deposit.source))・\(deposit.when)")
+                                Spacer()
+                                Text(boardTimeLabel(message.at))
                                     .font(AppFont.small)
                                     .foregroundStyle(Palette.secondaryText)
                             }
-                            Spacer()
-                            Button("写す") {
-                                model.copyFromRelay(["deposits", "show", deposit.ref], done: "写しました。渡したいエージェントに貼ってください")
-                            }
-                            .buttonStyle(.plain)
-                            .font(AppFont.small)
-                            .foregroundStyle(Palette.accentText)
+                            Text(message.text)
+                                .font(AppFont.small)
+                                .foregroundStyle(Palette.secondaryText)
+                                .lineLimit(2)
+                                .truncationMode(.tail)
                         }
                     }
                 }
             }
-            if let note = model.handoffNote {
-                Text(note)
-                    .font(AppFont.small)
-                    .foregroundStyle(Palette.secondaryText)
-            }
         }
     }
+}
+
+/// 伝言の時刻を「10/31 01:17」にする（この Mac の時刻で）。読めなければそのまま。
+func boardTimeLabel(_ iso: String) -> String {
+    let parser = ISO8601DateFormatter()
+    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "M/d HH:mm"
+    return formatter.string(from: date)
 }
 
 /// パーソナルエージェント1つのカード。押すとアプリ（無ければ Web、それも無ければ入手のページ）を開く。

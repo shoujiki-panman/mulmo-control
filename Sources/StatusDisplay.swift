@@ -535,40 +535,35 @@ func resetCreditLine(count: Int?, expiresMonthDay: String?) -> String? {
     return "無料リセット \(count)回・\(expiresMonthDay)まで"
 }
 
-// ── エージェントどうしで渡す（Issue #235）────────────────────────────
+// ── エージェントの伝言板（Issue #235）──────────────────────────────
 
-/// relay に預けられた会話1本（`relay deposits` の1行）。
-struct RelayDeposit: Equatable {
-    let ref: String
-    let when: String
-    let source: String
-    let title: String
+/// relay の伝言板の1件（`relay board read` の1行）。
+struct BoardMessage: Equatable {
+    let at: String
+    let from: String
+    let to: String
+    let text: String
 }
 
-/// `relay deposits` の出力を読む。1行が「ref  MM-DD HH:MM  出典  題名」で、間は空白2つ以上。
-/// 題名にも空白が入りうるので、頭から3つ切ったら残りを題名にする。
-func parseRelayDeposits(_ text: String) -> [RelayDeposit] {
-    text.split(separator: "\n").compactMap { line in
-        var fields: [String] = []
-        var rest = Substring(line)
-        for _ in 0..<3 {
-            rest = rest.drop(while: { $0 == " " })
-            guard let gap = rest.range(of: "  ") else { return nil }
-            fields.append(String(rest[..<gap.lowerBound]))
-            rest = rest[gap.upperBound...]
-        }
-        let title = String(rest.drop(while: { $0 == " " }))
-        guard fields[0].count >= 8, !title.isEmpty else { return nil }
-        return RelayDeposit(ref: fields[0], when: fields[1], source: fields[2], title: title)
+/// `relay board read` の出力を読む。伝言は「- 時刻 | 送り手 → 宛先 | 本文」の行。
+/// 本文に「 | 」が入っても切らない（頭から2つだけ切る）。見出しの行は読み飛ばす。
+func parseBoardMessages(_ output: String) -> [BoardMessage] {
+    output.split(separator: "\n").compactMap { line in
+        guard line.hasPrefix("- ") else { return nil }
+        let body = line.dropFirst(2)
+        guard let first = body.range(of: " | ") else { return nil }
+        let at = String(body[..<first.lowerBound])
+        let rest = body[first.upperBound...]
+        guard let second = rest.range(of: " | ") else { return nil }
+        let route = rest[..<second.lowerBound]
+        let text = String(rest[second.upperBound...])
+        guard let arrow = route.range(of: " → ") else { return nil }
+        return BoardMessage(at: at, from: String(route[..<arrow.lowerBound]),
+                            to: String(route[arrow.upperBound...]), text: text)
     }
 }
 
-/// 出典の言葉。relay は ChatGPT（Dots を含む）からの投函を other と書く。
-func depositSourceLabel(_ source: String) -> String {
-    switch source {
-    case "claude-mobile": return "Claude（スマホ）"
-    case "claude-web": return "Claude（Web）"
-    case "other": return "ChatGPT ほか"
-    default: return source
-    }
+/// 時刻（ISO 8601）を「10/31 01:17」の形にする材料。表示は main 側（時差の扱いが要る）。
+func boardRouteLabel(_ message: BoardMessage) -> String {
+    message.to == "all" ? "\(message.from) → みんな" : "\(message.from) → \(message.to)"
 }

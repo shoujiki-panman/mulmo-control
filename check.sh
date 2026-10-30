@@ -1454,18 +1454,14 @@ printf '%s\n' "${OPEN_BLOCK}" | grep -q 'refreshAgents()' \
 # アプリはバンドル ID で探す（置き場所の決め打ちは外れた）。
 awk '/^struct CloudAgent/,/^}$/' "${ROOT}/Sources/main.swift" | grep -q 'urlForApplication(withBundleIdentifier:' \
   || fail "パーソナルエージェントのアプリを、置き場所で探しています（235）"
-# エージェントどうしで渡す：クリップボードに置くだけで、どこにも送らない。写しは relay の共有用
-# （鍵の形の文字列を伏せ、手元のパスとコマンドを外す）。
-HANDOFF="$(awk '/^struct HandoffPanel/,/^}$/' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${HANDOFF}" | grep -q '"--print", "--share"' \
-  || fail "最新の会話を、共有用（鍵を伏せる）でない形で写しています（235）"
-COPY_FN="$(awk '/    func copyFromRelay\(/,/^    }$/' "${ROOT}/Sources/main.swift")"
-printf '%s\n' "${COPY_FN}" | grep -q 'NSPasteboard.general.setString' \
-  || fail "渡す欄がクリップボードに写していません（235）"
-if printf '%s\n' "${COPY_FN}" | grep -qE 'URLSession|URLRequest|httpMethod'; then
-  fail "渡す欄がどこかへ送っています。クリップボードに置くだけの約束です（235）"
+# エージェントの伝言板は見るだけ。パネルから書かない（書くのはエージェント自身・relay board post）。
+BOARD_ALL="$(awk '/^struct BoardPanel/,/^}$/' "${ROOT}/Sources/main.swift")$(awk '/    func refreshBoard\(/,/^    }$/' "${ROOT}/Sources/main.swift")"
+printf '%s\n' "${BOARD_ALL}" | grep -q '"board", "read"' \
+  || fail "伝言板を relay board read で読んでいません（235）"
+if grep -q '"board", "post"' "${ROOT}/Sources/main.swift"; then
+  fail "パネルから伝言板に書いています。見るだけの約束です（235）"
 fi
-ok "エージェントのタブ：既存の3タブはそのまま・名前は切れない・パーソナルエージェントだけ・渡す欄はクリップボードだけ・使用量は環境タブで開いている間だけ"
+ok "エージェントのタブ：既存の3タブはそのまま・名前は切れない・パーソナルエージェントと伝言板（見るだけ）・使用量は環境タブで開いている間だけ"
 
 # 198 Skill メニューの各スキルに日本語の説明を出す（Issue #226）。
 #

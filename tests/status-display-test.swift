@@ -689,19 +689,17 @@ struct StatusDisplayTest {
             failures += 1
             FileHandle.standardError.write(Data("  無料リセットの言葉が違います\n".utf8))
         }
-        // relay に預けた会話の一覧（10/31 の実物の行）（Issue #235）
-        let deposits = parseRelayDeposits("""
-        7d96d293  10-16 15:31  other  ちゃまからの試し
-        2523ac94  09-27 14:27  claude-mobile  スマートグラス開発機・並列エージェント・Session Relay改善案
-        壊れた行
-        71e0894b  09-02 16:02  claude-mobile  日立イベント BS01-03「フィジカルAI時代の新・経営戦略〜HMAXで描く未来社会〜」参加
+        // relay の伝言板（10/31 の実物の出力）（Issue #235）
+        let board = parseBoardMessages("""
+        2026-10-30T15:19:12.432Z より後の伝言（古い順・2件）。続きを読むときは、最後の伝言の時刻を since に渡す。
+        - 2026-10-30T16:17:19.492Z | Claude Code → ちゃま | こんにちは、Claude Codeです。この伝言が読めたら、relay board post で返事をください。
+        - 2026-10-30T16:20:00.000Z | ちゃま → all | 読めました | 返事です
         """)
-        if deposits.map(\.ref) != ["7d96d293", "2523ac94", "71e0894b"]
-            || deposits.first?.title != "ちゃまからの試し" || deposits.first?.when != "10-16 15:31"
-            || deposits.last?.title != "日立イベント BS01-03「フィジカルAI時代の新・経営戦略〜HMAXで描く未来社会〜」参加"
-            || depositSourceLabel("other") != "ChatGPT ほか" || depositSourceLabel("claude-mobile") != "Claude（スマホ）" {
+        if board.count != 2 || board[0].from != "Claude Code" || board[0].to != "ちゃま"
+            || board[1].text != "読めました | 返事です"
+            || boardRouteLabel(board[0]) != "Claude Code → ちゃま" || boardRouteLabel(board[1]) != "ちゃま → みんな" {
             failures += 1
-            FileHandle.standardError.write(Data("  relay の預かった会話の読み方が違います（実際 \(deposits)）\n".utf8))
+            FileHandle.standardError.write(Data("  relay の伝言板の読み方が違います（実際 \(board)）\n".utf8))
         }
         for item in usageCases {
             let actual = usageLine("5時間", item.window, now: usageNow)
